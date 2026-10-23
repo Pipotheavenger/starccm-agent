@@ -8,6 +8,7 @@ starccm/
 ├── CLAUDE.md          brief del proyecto (manda sobre todo lo demás)
 ├── PRIMER-PROMPT.md   prompts para arrancar las sesiones de trabajo
 ├── mcp_server.py      el MCP (11 tools) + --selftest
+├── ui/                interfaz web local (FastAPI + una página): chat, galería de casos, solver, escena en vivo
 ├── .env.example       variables: clave PoD, puerto, núcleos (copiar a .env, que no va a git)
 ├── .mcp.json          registro del MCP para Claude Code si se abre esta carpeta sola
 ├── recipes/           snippets Java que ya funcionaron (memoria del agente)
@@ -41,6 +42,42 @@ starccm/
 ```
 
 Ejecutar fuera del sandbox del tool Bash (desde la terminal del PC o con el MCP).
+
+## Interfaz web: `ui/`
+
+Puerto 8767 (8765 es la de cfturbo). Arranque: preview `starccm-ui` de `.claude/launch.json` de la
+raíz, o a mano:
+
+```bash
+starccm\.venv\Scripts\python -m uvicorn --app-dir starccm ui.server:app --port 8767
+```
+
+| archivo | qué tiene |
+|---|---|
+| `ui/server.py` | FastAPI: página, casos, estado del solver, escena en vivo, chat SSE; `--selftest` (HTTP, sin solver ni CLI, ~3 s) |
+| `ui/index.html` · `ui/app.js` · `ui/style.css` | marcado, lógica (módulo ES, sin build) y estilos (mismos tokens que cfturbo/ui) |
+
+Paneles: **Casos** (`cases/<caso>/`: RESUMEN.md renderizado, escenas PNG de `images/`, curva de
+`reports/convergencia.csv` con H y M frente a iteración, uno por gráfico, y criterio < 0,5 %),
+**Solver** (`.server.json` + cola de `agent.log`, botón «Apagar solver»), **En vivo** (escena grande:
+STAR-CCM+ en modo servidor no tiene ventana; se exporta un PNG a demanda, ~10 s, con auto cada 60 s)
+y **Chat** (Claude Code CLI con cwd en `starccm/` y el MCP `starccm` del `.mcp.json` de la raíz).
+
+| método y ruta | qué hace |
+|---|---|
+| `GET /api/cases` · `/api/cases/{caso}` | lista de casos (título, fecha, escenas, última fila de convergencia) y detalle (RESUMEN.md, escenas, csv) |
+| `GET /files/{caso}/images/{png}` · `/scenes/{png}` | escenas de un caso y de `cases/_scenes/` (destino por defecto de `export_scene`) |
+| `GET /api/status` | `alive pid port sim started np idle_min idle_limit_min stale stopping chatting log[]` |
+| `POST /api/server/stop {save}` | `server_stop` del MCP importado como módulo (este proceso corre fuera del sandbox del tool Bash) |
+| `GET /api/live?case=` | PNG exportados, los más nuevos primero |
+| `POST /api/scene {name, case}` | `export_scene` al `images/` del caso; 409 sin solver vivo o mientras el chat trabaja |
+| `GET /api/scenes` | nombres de escenas del .sim (`inspect("scenes")`) |
+| `POST /api/chat {message, session_id, case}` | SSE: `status init text tool tool_result ping raw result error stopped done`; un chat a la vez |
+| `POST /api/chat/stop` | mata la CLI y sus hijos |
+
+Reglas: la UI nunca arranca el solver (lo hace Claude con `server_start` desde el chat); un solo chat
+a la vez; mientras el chat trabaja no se inyectan macros desde la UI (el candado del MCP es por
+proceso). Errores siempre `{"detail": "texto"}`.
 
 ## Primera comprobación con el solver real
 

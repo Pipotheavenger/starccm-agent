@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>STAR-CCM+ · Agente</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<header class="topbar">
+  <h1 class="brand" title="Claude opera STAR-CCM+; aquí se ven los casos y el estado del solver">STAR-CCM+ <span>Agente</span></h1>
+  <span class="sp"></span>
+  <span id="solver" role="status" aria-live="polite"><span class="dot"></span><span>Conectando…</span></span>
+  <button class="sm danger" id="stopsolver" hidden title="Guarda el .sim y apaga el servidor de STAR-CCM+ (server_stop)">Apagar solver</button>
+  <button class="sm icon" id="theme" title="Cambiar tema claro / oscuro" aria-label="Cambiar tema">◐</button>
+</header>
+<div id="offline" class="offline-band" role="alert" hidden><span id="offlinetxt">Sin conexión con el servidor local.</span><button class="sm" id="retry">Reintentar</button></div>
+
+<main class="app">
+  <aside class="explorer" aria-label="Casos">
+    <section class="pane-sec grow">
+      <h2 class="sec-h">Casos <span id="ccount" class="mut"></span></h2>
+      <div id="cases" class="cases" role="listbox" aria-label="Casos"></div>
+    </section>
+    <section class="pane-sec" id="solverpane">
+      <h2 class="sec-h">Solver <span class="sp"></span><span id="solvertag"></span></h2>
+      <table class="kv" id="solverkv"><tbody></tbody></table>
+      <details class="log"><summary>agent.log</summary><pre id="agentlog" class="mono"></pre></details>
+    </section>
+  </aside>
+
+  <section class="stage">
+    <div class="runbar">
+      <span class="runname" id="casetitle">Sin caso</span>
+      <span id="casemeta" class="mut mono"></span>
+      <span class="sp"></span>
+      <div class="tabs" role="tablist" aria-label="Vistas">
+        <button role="tab" data-tab="resumen" aria-selected="true">Resumen</button>
+        <button role="tab" data-tab="escenas" aria-selected="false">Escenas <span class="badge" id="bimg"></span></button>
+        <button role="tab" data-tab="conv" aria-selected="false">Convergencia <span class="badge" id="bconv"></span></button>
+        <button role="tab" data-tab="live" aria-selected="false" title="Escena grande exportada del solver vivo (PNG a demanda, ~10 s cada una)">En vivo <span class="dot" id="livedot" hidden></span></button>
+      </div>
+    </div>
+    <div class="stage-body">
+      <section class="tabpane" id="tab-resumen" role="tabpanel"><div id="resumen" class="md"><p class="mut">Elige un caso a la izquierda.</p></div></section>
+      <section class="tabpane" id="tab-escenas" role="tabpanel" hidden><div id="scenes" class="scenes"></div></section>
+      <section class="tabpane" id="tab-conv" role="tabpanel" hidden><div id="conv"></div></section>
+      <section class="tabpane live" id="tab-live" role="tabpanel" hidden>
+        <div class="livebar">
+          <input id="scenename" list="scenelist" placeholder="nombre de la escena (p.ej. presion)" aria-label="Escena" title="Nombre exacto o prefijo de una escena del .sim abierto">
+          <datalist id="scenelist"></datalist>
+          <button class="sm" id="listscenes" title="Pregunta al solver qué escenas tiene (inspect, ~10 s)">Listar</button>
+          <button class="sm pri" id="refreshscene" title="Exporta la escena a PNG desde el solver vivo (~10 s)">Actualizar</button>
+          <label class="check small"><input type="checkbox" id="liveauto"> cada 60 s</label>
+          <span class="sp"></span>
+          <span id="livestate" class="mut small" aria-live="polite"></span>
+        </div>
+        <div id="liveview"><div class="empty mut">Sin escenas exportadas todavía. Con el solver vivo, escribe el nombre de una escena y pulsa Actualizar; o pide a Claude que exporte una.</div></div>
+        <div id="livestrip" class="strip"></div>
+      </section>
+    </div>
+  </section>
+
+  <aside class="chatcol" aria-label="Chat">
+    <div class="chat-head">
+      <span id="chatstate" aria-live="polite"></span><span class="sp"></span>
+      <button class="sm" id="newchat">Nueva conversación</button>
+      <button class="sm danger" id="stopchat" disabled>Detener</button>
+    </div>
+    <div id="chatlog"><div class="chat-empty" id="chatempty"><p title="Claude usa las tools del MCP starccm (server_start, run_java, iterate, export_scene…)">«¿está vivo el solver?» · «resume el caso cursocfturbo» · «abre sims/cursocfturbo.sim y exporta la escena de presión»</p></div></div>
+    <div class="quick" id="quick">
+      <button class="sm" data-q="¿Está vivo el servidor de STAR-CCM+? Dame server_status y, si está vivo, inspect('reports').">Estado</button>
+      <button class="sm" data-q="Resume el caso seleccionado: geometría, malla, física, resultados (H, M, eficiencia, balance de masa) en una tabla.">Resumen</button>
+      <button class="sm" data-q="Busca en recipe_search las recetas de bomba y dime en una tabla qué paso cubre cada una.">Recetas</button>
+    </div>
+    <div id="chatin"><textarea id="chattext" aria-label="Mensaje para Claude" placeholder="Mensaje para Claude" title="Enter envía · Shift+Enter salto de línea · ↑ recupera el último"></textarea><button class="pri" id="send">Enviar</button></div>
+  </aside>
+</main>
+<div id="lightbox" hidden><img alt=""><div class="lb-cap"></div></div>
+<div id="toast" role="status" aria-live="polite"></div>
+<script type="module" src="/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,581 @@
+"""Interfaz web local del agente STAR-CCM+ (starccm/ui).
+
+Uso:  starccm\\.venv\\Scripts\\python -m uvicorn --app-dir starccm ui.server:app --port 8767
+      (o el preview "starccm-ui" definido en .claude/launch.json de la raíz)
+      starccm\\.venv\\Scripts\\python starccm\\ui\\server.py --selftest   -> prueba HTTP sin solver ni CLI
+
+Qué hace:
+  - GET  /, /app.js, /style.css        -> la página (sin build, sin frameworks)
+  - GET  /api/cases                     -> casos de cases/<caso>/ (título, fecha, escenas, última fila de convergencia)
+  - GET  /api/cases/{caso}              -> RESUMEN.md, lista de escenas PNG y reports/convergencia.csv como tabla
+  - GET  /files/{caso}/images/{png}     -> una escena
+  - GET  /api/status                    -> estado del solver: .server.json (pid, puerto, sim), minutos de
+                                           inactividad, cola de agent.log, chat en curso
+  - POST /api/server/stop {save}        -> server_stop del MCP (importado como módulo: este proceso corre fuera
+                                           del sandbox del tool Bash, así que puede hablar con el solver)
+  - POST /api/chat {message, session_id} -> lanza `claude -p` con cwd en starccm/ y el MCP «starccm» del
+                                           .mcp.json de la raíz; eventos por SSE (status, init, text, tool,
+                                           tool_result, ping, raw, result, error, stopped, done)
+  - POST /api/chat/stop                 -> mata la CLI del chat y sus hijos
+Errores: siempre JSON {"detail": "texto"}. Un chat a la vez; un apagado a la vez.
+La UI nunca lanza el solver: eso lo hace Claude desde el chat (server_start del MCP).
+"""
+from __future__ import annotations
+
+import csv
+import json
+import logging
+import os
+import queue
+import re
+import shutil
+import subprocess
+import sys
+import threading
+import time
+from collections import deque
+from contextlib import asynccontextmanager
+from pathlib import Path
+
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
+from pydantic import BaseModel, Field
+
+HERE = Path(__file__).resolve().parent          # starccm/ui
+ROOT = HERE.parent                              # starccm/
+REPO = ROOT.parent                              # raíz del repo (.mcp.json)
+sys.path.insert(0, str(ROOT))
+import mcp_server as scc  # noqa: E402  (no arranca nada al importar; solo lee .env)
+
+CASES = ROOT / "cases"
+AGENT_LOG = ROOT / "agent.log"
+PNG_SIG = bytes([0x89]) + b"PNG\r\n\x1a\n"
+
+log = logging.getLogger("starccm-ui")
+if not log.handlers:
+    _h = logging.StreamHandler()
+    _h.setFormatter(logging.Formatter("%(asctime)s %(levelname)s starccm-ui: %(message)s", "%H:%M:%S"))
+    log.addHandler(_h)
+    log.setLevel(logging.INFO)
+    log.propagate = False  # uvicorn pone un handler en el root: sin esto cada línea sale dos veces
+
+
+class _QuietPoll(logging.Filter):
+    RX = re.compile(r'"GET /(api/status|api/cases|files/)[^"]*" (200|304)')
+
+    def filter(self, rec: logging.LogRecord) -> bool:
+        return not self.RX.search(rec.getMessage())
+
+
+logging.getLogger("uvicorn.access").addFilter(_QuietPoll())
+
+CHAT_LOCK = threading.Lock()
+STOP_LOCK = threading.Lock()
+CHAT_PROC: dict = {"p": None, "stopped": False}
+CLAUDE_BIN = os.environ.get("STARCCM_CLAUDE_BIN") or shutil.which("claude") or "claude"
+CHAT_SYSTEM = (
+    "Operas desde el panel web del agente STAR-CCM+ (starccm/ui). El usuario ve a tu lado la galería de "
+    "casos (RESUMEN.md, escenas PNG, curva de convergencia) y el estado del solver, que se refrescan solos. "
+    "Responde en español, corto, con tablas para números. Antes de escribir Java: recipe_search primero, "
+    "docs_search segundo. Un solo servidor a la vez (server_start reutiliza el vivo); al terminar un bloque "
+    "de trabajo largo guarda con save. Si te piden resumen, comparación o explicación, solo lees y respondes "
+    "(no lances iterate ni server_start). Las escenas van a cases/<caso>/images/ y el historial a "
+    "cases/<caso>/reports/convergencia.csv para que la galería los muestre. "
+    "Termina siempre con una línea: qué quedó hecho y qué cambió."
+)
+
+
+def _clean_env() -> dict[str, str]:
+    """La CLI se autentica sola (llavero), no hereda la sesión anidada de Claude Code."""
+    return {k: v for k, v in os.environ.items() if not k.startswith("CLAUDE")}
+
+
+def _kill_tree(p: subprocess.Popen) -> None:
+    if os.name == "nt":
+        subprocess.run(["taskkill", "/PID", str(p.pid), "/T", "/F"], capture_output=True)
+    if p.poll() is None:
+        p.kill()
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    yield
+    p = CHAT_PROC.get("p")
+    if p and p.poll() is None:
+        CHAT_PROC["stopped"] = True
+        _kill_tree(p)
+        log.info("apagado: chat detenido (pid %s)", p.pid)
+    # el solver NO se apaga aquí: lo apaga el usuario (botón) o el watchdog del MCP
+
+
+app = FastAPI(title="starccm-ui", lifespan=lifespan)
+
+
+@app.exception_handler(RequestValidationError)
+async def _validation(_req: Request, exc: RequestValidationError) -> JSONResponse:
+    msgs = []
+    for e in exc.errors():
+        loc = ".".join(str(x) for x in e.get("loc", ()) if x not in ("body", "query", "path"))
+        msgs.append(f"{loc}: {e.get('msg')}" if loc else str(e.get("msg")))
+    return JSONResponse({"detail": "petición inválida · " + "; ".join(msgs)}, status_code=422)
+
+
+@app.exception_handler(Exception)
+async def _unexpected(_req: Request, exc: Exception) -> JSONResponse:
+    return JSONResponse({"detail": f"error interno: {type(exc).__name__}: {exc}"}, status_code=500)
+
+
+# ---------------------------------------------------------------- página
+@app.get("/", response_class=HTMLResponse)
+def index() -> str:
+    return (HERE / "index.html").read_text(encoding="utf-8")
+
+
+@app.get("/app.js")
+def app_js() -> FileResponse:
+    return FileResponse(HERE / "app.js", media_type="text/javascript", headers={"Cache-Control": "no-cache"})
+
+
+@app.get("/style.css")
+def style_css() -> FileResponse:
+    return FileResponse(HERE / "style.css", media_type="text/css", headers={"Cache-Control": "no-cache"})
+
+
+# ---------------------------------------------------------------- casos
+def _safe(name: str) -> str:
+    if not name or len(name) > 100 or not re.fullmatch(r"[A-Za-z0-9_\-.]+", name) or ".." in name:
+        raise HTTPException(400, "nombre inválido")
+    return name
+
+
+def _case_dir(name: str) -> Path:
+    d = CASES / _safe(name)
+    if not d.is_dir() or name.startswith(("_", ".")):
+        raise HTTPException(404, f"no existe el caso {name}")
+    return d
+
+
+def _num(s: str):
+    try:
+        return float(s)
+    except (TypeError, ValueError):
+        return None
+
+
+def _convergencia(d: Path) -> dict | None:
+    f = d / "reports" / "convergencia.csv"
+    if not f.is_file():
+        return None
+    with open(f, encoding="utf-8", newline="") as fh:
+        rows = list(csv.reader(fh))
+    if not rows:
+        return None
+    cols = [c.strip() for c in rows[0]]
+    data = [[_num(x) for x in r] for r in rows[1:] if r and any(x.strip() for x in r)]
+    return {"columns": cols, "rows": data[:5000], "file": "reports/convergencia.csv"}
+
+
+def _images(d: Path) -> list[dict]:
+    out = []
+    for p in sorted((d / "images").glob("*.png")) if (d / "images").is_dir() else []:
+        out.append({"file": p.name, "label": p.stem.replace("_", " "), "size": p.stat().st_size,
+                    "mtime": int(p.stat().st_mtime)})
+    return out
+
+
+def _title(d: Path) -> str:
+    r = d / "RESUMEN.md"
+    if r.is_file():
+        for line in r.read_text(encoding="utf-8", errors="replace").splitlines():
+            if line.startswith("#"):
+                return line.lstrip("#").strip()
+    return d.name
+
+
+def _case_row(d: Path) -> dict:
+    r = d / "RESUMEN.md"
+    conv = _convergencia(d)
+    last = None
+    if conv and conv["rows"]:
+        last = dict(zip(conv["columns"], conv["rows"][-1]))
+    return {"name": d.name, "title": _title(d), "has_resumen": r.is_file(),
+            "date": time.strftime("%Y-%m-%d %H:%M", time.localtime(r.stat().st_mtime if r.is_file() else d.stat().st_mtime)),
+            "n_images": len(_images(d)), "last": last}
+
+
+@app.get("/api/cases")
+def cases() -> list[dict]:
+    if not CASES.is_dir():
+        return []
+    ds = [d for d in CASES.iterdir() if d.is_dir() and not d.name.startswith(("_", "."))]
+    rows = [_case_row(d) for d in ds]
+    rows.sort(key=lambda r: r["date"], reverse=True)
+    return rows
+
+
+@app.get("/api/cases/{name}")
+def case(name: str) -> dict:
+    d = _case_dir(name)
+    r = d / "RESUMEN.md"
+    return {**_case_row(d), "resumen": r.read_text(encoding="utf-8", errors="replace") if r.is_file() else "",
+            "images": _images(d), "convergencia": _convergencia(d), "dir": str(d)}
+
+
+@app.get("/files/{name}/images/{fname}")
+def image(name: str, fname: str) -> FileResponse:
+    d = _case_dir(name)
+    if not re.fullmatch(r"[A-Za-z0-9_\-.]+\.png", fname) or ".." in fname:
+        raise HTTPException(400, "archivo inválido")
+    f = d / "images" / fname
+    if not f.is_file():
+        raise HTTPException(404, "no existe la escena")
+    return FileResponse(f, media_type="image/png", headers={"Cache-Control": "private, max-age=60"})
+
+
+# ---------------------------------------------------------------- en vivo: escenas exportadas del solver
+SCENES_DIR = CASES / "_scenes"
+SCENE_LOCK = threading.Lock()
+
+
+def _png_rows(d: Path, src: str, url: str) -> list[dict]:
+    if not d.is_dir():
+        return []
+    return [{"file": p.name, "label": p.stem.replace("_", " "), "src": src, "url": f"{url}/{p.name}",
+             "mtime": int(p.stat().st_mtime), "size": p.stat().st_size} for p in d.glob("*.png")]
+
+
+@app.get("/api/live")
+def live(case: str | None = None) -> dict:
+    """PNG exportados, los más nuevos primero: images/ del caso y cases/_scenes/ (destino por defecto de export_scene)."""
+    rows = _png_rows(SCENES_DIR, "_scenes", "/scenes")
+    if case:
+        d = _case_dir(case)
+        rows += _png_rows(d / "images", case, f"/files/{case}/images")
+    rows.sort(key=lambda r: r["mtime"], reverse=True)
+    return {"scenes": rows[:40]}
+
+
+@app.get("/scenes/{fname}")
+def scene_png(fname: str) -> FileResponse:
+    if not re.fullmatch(r"[A-Za-z0-9_\-.]+\.png", fname) or ".." in fname:
+        raise HTTPException(400, "archivo inválido")
+    f = SCENES_DIR / fname
+    if not f.is_file():
+        raise HTTPException(404, "no existe la escena")
+    return FileResponse(f, media_type="image/png", headers={"Cache-Control": "no-cache"})
+
+
+def _solver_alive() -> bool:
+    st = scc._state()
+    return bool(st.get("pid")) and scc._pid_alive(st["pid"]) and scc._port_open(st.get("port", 0))
+
+
+def _solver_busy_409() -> None:
+    if not _solver_alive():
+        raise HTTPException(409, "no hay solver vivo: pide a Claude que lo arranque (server_start)")
+    # ponytail: el candado del MCP es por proceso; si Claude está inyectando una macro desde el chat,
+    # un segundo cliente batch chocaría con la suya. Mientras el chat trabaja, no se toca el solver desde aquí.
+    if CHAT_LOCK.locked():
+        raise HTTPException(409, "Claude está usando el solver ahora; espera a que termine")
+
+
+class SceneReq(BaseModel):
+    name: str = Field(min_length=1, max_length=100)
+    case: str | None = Field(None, max_length=100)
+    width: int = Field(1600, ge=200, le=4000)
+    height: int = Field(1000, ge=200, le=4000)
+
+
+@app.post("/api/scene")
+def api_scene(req: SceneReq) -> dict:
+    """Exporta la escena a PNG desde el solver vivo (~10 s: arranque del cliente batch)."""
+    _solver_busy_409()
+    if not SCENE_LOCK.acquire(blocking=False):
+        raise HTTPException(409, "ya se está exportando una escena")
+    try:
+        path = str(_case_dir(req.case) / "images" / f"{scc._safe(req.name)}.png") if req.case else ""
+        r = scc.export_scene(req.name, path, req.width, req.height)
+        log.info("escena %s -> %s (%s s, ok=%s)", req.name, r.get("png"), r.get("seconds"), r.get("ok"))
+        if not r.get("ok"):
+            raise HTTPException(500, f"export_scene falló: {r.get('exception') or 'sin PNG'}")
+        p = Path(r["png"])
+        return {**r, "file": p.name, "url": (f"/files/{req.case}/images/{p.name}" if req.case else f"/scenes/{p.name}"),
+                "mtime": int(p.stat().st_mtime)}
+    finally:
+        SCENE_LOCK.release()
+
+
+@app.get("/api/scenes")
+def api_scenes() -> dict:
+    """Nombres de las escenas del .sim abierto (inspect('scenes'), ~10 s)."""
+    _solver_busy_409()
+    with SCENE_LOCK:
+        r = scc.inspect("scenes")
+    return {"ok": r.get("ok"), "seconds": r.get("seconds"), "names": [s["name"] for s in r.get("scene", [])],
+            **({"exception": r["exception"]} if r.get("exception") else {})}
+
+
+# ---------------------------------------------------------------- estado del solver
+def _last_activity() -> float | None:
+    """Última macro inyectada (macros/Agent_*.java) o el arranque del servidor. El MCP mide la inactividad
+    en su propio proceso; aquí se estima por el disco."""
+    ts = []
+    macros = ROOT / "macros"
+    if macros.is_dir():
+        files = sorted(macros.glob("Agent_*.java"), key=lambda p: p.stat().st_mtime)
+        if files:
+            ts.append(files[-1].stat().st_mtime)
+    if scc.STATE_FILE.is_file():
+        ts.append(scc.STATE_FILE.stat().st_mtime)
+    return max(ts) if ts else None
+
+
+def _log_tail(n: int = 12) -> list[str]:
+    if not AGENT_LOG.is_file():
+        return []
+    with open(AGENT_LOG, "rb") as f:
+        f.seek(0, 2)
+        f.seek(max(0, f.tell() - 20_000))
+        lines = f.read().decode("utf-8", "replace").splitlines()
+    return [ln[:300] for ln in lines[-n:]]
+
+
+@app.get("/api/status")
+def status() -> dict:
+    st = scc._state()
+    pid = st.get("pid")
+    alive = bool(pid) and scc._pid_alive(pid) and scc._port_open(st.get("port", 0))
+    last = _last_activity()
+    return {"alive": alive, "pid": pid, "port": st.get("port"), "host": st.get("host"), "sim": st.get("sim"),
+            "started": st.get("started"), "np": st.get("np"), "startup_seconds": st.get("startup_seconds"),
+            "idle_min": round((time.time() - last) / 60, 1) if (alive and last) else None,
+            "idle_limit_min": scc.IDLE_MIN, "stale": bool(pid) and not alive,
+            "stopping": STOP_LOCK.locked(), "chatting": CHAT_LOCK.locked(),
+            "log": _log_tail(), "claude": CLAUDE_BIN, "state_file": str(scc.STATE_FILE)}
+
+
+class StopReq(BaseModel):
+    save: bool = True
+
+
+@app.post("/api/server/stop")
+def api_server_stop(req: StopReq) -> dict:
+    if not STOP_LOCK.acquire(blocking=False):
+        raise HTTPException(409, "ya se está apagando")
+    try:
+        t0 = time.time()
+        r = scc.server_stop(save=req.save)
+        r["seconds"] = round(time.time() - t0, 1)
+        log.info("solver: stop -> %s", {k: v for k, v in r.items() if k != "stdout"})
+        return r
+    finally:
+        STOP_LOCK.release()
+
+
+# ---------------------------------------------------------------- chat con Claude Code CLI
+class ChatReq(BaseModel):
+    message: str = Field(min_length=1, max_length=20000)
+    session_id: str | None = Field(None, pattern=r"^[A-Za-z0-9-]{1,64}$")
+    case: str | None = Field(None, max_length=100)
+
+
+def _sse(obj: dict) -> str:
+    return "data: " + json.dumps(obj, ensure_ascii=False) + "\n\n"
+
+
+def _chat_events(req: ChatReq):
+    if not CHAT_LOCK.acquire(blocking=False):
+        yield _sse({"kind": "error", "text": "ya hay una conversación en curso; espera o pulsa Detener"})
+        return
+    p = None
+    try:
+        prompt = req.message
+        if req.case:
+            prompt = f"(Caso seleccionado en el panel: cases/{req.case})\n{prompt}"
+        cmd = [CLAUDE_BIN, "-p", prompt, "--output-format", "stream-json", "--verbose",
+               "--mcp-config", str(REPO / ".mcp.json"), "--strict-mcp-config",
+               "--allowedTools", "mcp__starccm__*,Read,Glob,Grep",
+               "--disallowedTools", "Bash,Write,Edit,NotebookEdit,WebFetch,WebSearch",
+               "--append-system-prompt", CHAT_SYSTEM, "--max-turns", "40"]
+        if req.session_id:
+            cmd += ["--resume", req.session_id]
+        try:
+            p = subprocess.Popen(cmd, cwd=ROOT, env=_clean_env(), stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                                 stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace")
+        except OSError as e:
+            yield _sse({"kind": "error", "text": f"no pude lanzar la CLI de Claude Code ({CLAUDE_BIN}): {e}"})
+            return
+        CHAT_PROC["p"] = p
+        CHAT_PROC["stopped"] = False
+        log.info("chat: CLI lanzada (pid %s%s)", p.pid, ", continúa sesión" if req.session_id else "")
+        hidden: set[str] = set()
+        q: queue.Queue = queue.Queue()
+        threading.Thread(target=lambda: ([q.put(ln) for ln in p.stdout], q.put(None)), daemon=True).start()
+        err_tail: deque[str] = deque(maxlen=40)
+        err_thread = threading.Thread(target=lambda: [err_tail.append(ln) for ln in p.stderr], daemon=True)
+        err_thread.start()
+        yield _sse({"kind": "status", "text": "Claude Code arrancando…"})
+        t0 = time.time()
+        while True:
+            try:
+                line = q.get(timeout=15)
+            except queue.Empty:
+                yield _sse({"kind": "ping", "t": round(time.time() - t0)})
+                continue
+            if line is None:
+                break
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                o = json.loads(line)
+            except ValueError:
+                yield _sse({"kind": "raw", "text": line[:500]})
+                continue
+            t = o.get("type")
+            if t == "system" and o.get("subtype") == "init":
+                yield _sse({"kind": "init", "session_id": o.get("session_id"), "model": o.get("model"),
+                            "mcp": o.get("mcp_servers")})
+            elif t == "assistant":
+                for b in o.get("message", {}).get("content", []):
+                    if b.get("type") == "text" and b.get("text"):
+                        yield _sse({"kind": "text", "text": b["text"]})
+                    elif b.get("type") == "tool_use":
+                        name = b.get("name", "")
+                        if not name.startswith("mcp__starccm__"):
+                            hidden.add(b.get("id", ""))
+                            continue
+                        yield _sse({"kind": "tool", "name": name.replace("mcp__starccm__", ""), "input": b.get("input")})
+            elif t == "user":
+                for b in o.get("message", {}).get("content", []):
+                    if isinstance(b, dict) and b.get("type") == "tool_result" and b.get("tool_use_id") not in hidden:
+                        c = b.get("content")
+                        txt = c if isinstance(c, str) else " ".join(x.get("text", "") for x in c if isinstance(x, dict))
+                        yield _sse({"kind": "tool_result", "text": scc._redact(txt)[:800], "is_error": bool(b.get("is_error"))})
+            elif t == "result":
+                yield _sse({"kind": "result", "subtype": o.get("subtype"), "session_id": o.get("session_id"),
+                            "turns": o.get("num_turns"), "seconds": round(time.time() - t0),
+                            "text": o.get("result") if o.get("subtype") != "success" else None})
+        rc = p.wait()
+        err_thread.join(timeout=2)
+        err = scc._redact("".join(err_tail).strip())
+        log.info("chat: terminó rc=%s en %.0f s%s", rc, time.time() - t0, " (detenido)" if CHAT_PROC.get("stopped") else "")
+        if CHAT_PROC.get("stopped"):
+            yield _sse({"kind": "stopped", "text": "Detenido por el usuario"})
+        elif rc not in (0, None) and err:
+            yield _sse({"kind": "error", "text": err[-800:]})
+        yield _sse({"kind": "done", "rc": rc})
+    finally:
+        if p is not None and p.poll() is None:
+            log.info("chat: conexión cerrada con la CLI en marcha; la detengo")
+            _kill_tree(p)
+        CHAT_PROC["p"] = None
+        CHAT_LOCK.release()
+
+
+@app.post("/api/chat")
+def api_chat(req: ChatReq) -> StreamingResponse:
+    return StreamingResponse(_chat_events(req), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
+@app.post("/api/chat/stop")
+def api_chat_stop() -> dict:
+    p = CHAT_PROC["p"]
+    if p and p.poll() is None:
+        CHAT_PROC["stopped"] = True
+        _kill_tree(p)
+        log.info("chat: detenido por el usuario (pid %s)", p.pid)
+        return {"stopped": True}
+    return {"stopped": False}
+
+
+# ---------------------------------------------------------------- selftest
+def _selftest() -> int:
+    """Levanta uvicorn en un puerto libre y recorre los endpoints. Sin solver, sin licencia, sin CLI."""
+    import socket
+    import urllib.error
+    import urllib.request
+
+    import uvicorn
+
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        port = s.getsockname()[1]
+    server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning"))
+    threading.Thread(target=server.run, daemon=True).start()
+    base = f"http://127.0.0.1:{port}"
+    for _ in range(50):
+        if scc._port_open(port):
+            break
+        time.sleep(0.1)
+    fails: list[str] = []
+
+    def check(cond, msg):
+        print(("  ok   " if cond else "  FAIL ") + msg)
+        if not cond:
+            fails.append(msg)
+
+    def get(path, raw=False):
+        try:
+            with urllib.request.urlopen(base + path, timeout=10) as r:
+                b = r.read()
+                return r.status, (b if raw else json.loads(b) if r.headers.get_content_type() == "application/json" else b.decode("utf-8", "replace"))
+        except urllib.error.HTTPError as e:
+            return e.code, json.loads(e.read() or b"{}")
+
+    def post(path, body):
+        req = urllib.request.Request(base + path, data=json.dumps(body).encode(), headers={"content-type": "application/json"}, method="POST")
+        try:
+            with urllib.request.urlopen(req, timeout=120) as r:
+                return r.status, json.loads(r.read())
+        except urllib.error.HTTPError as e:
+            return e.code, json.loads(e.read() or b"{}")
+
+    print(f"selftest: starccm-ui en {base}")
+    c, body = get("/")
+    check(c == 200 and "STAR-CCM+" in body, "GET / sirve la página")
+    check(get("/app.js")[0] == 200 and get("/style.css")[0] == 200, "GET /app.js y /style.css")
+    c, rows = get("/api/cases")
+    names = [r["name"] for r in rows] if c == 200 else []
+    check(c == 200 and isinstance(rows, list), f"GET /api/cases -> {len(names)} casos {names}")
+    if "cursocfturbo" in names:
+        c, d = get("/api/cases/cursocfturbo")
+        check(c == 200 and d["resumen"].startswith("#"), "caso cursocfturbo: RESUMEN.md")
+        check(len(d["images"]) >= 3, f"caso cursocfturbo: {len(d['images'])} escenas")
+        conv = d["convergencia"] or {}
+        check(conv and {"iter", "H", "M"} <= set(conv["columns"]) and len(conv["rows"]) >= 1,
+              f"caso cursocfturbo: convergencia {len(conv.get('rows', []))} filas")
+        if d["images"]:
+            c, png = get(f"/files/cursocfturbo/images/{d['images'][0]['file']}", raw=True)
+            check(c == 200 and png.startswith(PNG_SIG), "GET /files/.../images/<png> es un PNG")
+    c, _ = get("/api/cases/no_existe")
+    check(c == 404, "caso inexistente -> 404")
+    c, _ = get("/files/cursocfturbo/images/..%2F..%2FRESUMEN.md")
+    check(c in (400, 404), "ruta con .. rechazada")
+    c, lv = get("/api/live?case=cursocfturbo" if "cursocfturbo" in names else "/api/live")
+    check(c == 200 and isinstance(lv.get("scenes"), list), f"GET /api/live -> {len(lv.get('scenes', []))} PNG")
+    c, st = get("/api/status")
+    check(c == 200 and "alive" in st and "log" in st and "idle_limit_min" in st, f"GET /api/status (alive={st.get('alive')})")
+    if st.get("alive"):
+        print("  skip server/stop: hay un solver vivo de verdad; no lo toco")
+    else:
+        c, r = post("/api/server/stop", {"save": True})
+        check(c == 200 and r.get("stopped") is False, "POST /api/server/stop sin servidor -> stopped=false")
+        c, r = post("/api/scene", {"name": "presion"})
+        check(c == 409 and "solver" in r.get("detail", ""), "POST /api/scene sin servidor -> 409")
+    c, r = post("/api/chat/stop", {})
+    check(c == 200 and r.get("stopped") is False, "POST /api/chat/stop sin chat -> stopped=false")
+    c, r = post("/api/chat", {"message": ""})
+    check(c == 422 and "detail" in r, "POST /api/chat con mensaje vacío -> 422 JSON")
+    server.should_exit = True
+    print(f"selftest: {len(fails)} fallos" if fails else "selftest: todo en verde")
+    return 1 if fails else 0
+
+
+if __name__ == "__main__":
+    if "--selftest" in sys.argv:
+        sys.exit(_selftest())
+    import uvicorn
+    uvicorn.run(app, host="127.0.0.1", port=int(os.environ.get("STARCCM_UI_PORT", "8767")))

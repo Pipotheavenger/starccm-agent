@@ -35,6 +35,7 @@ Claude Code ──MCP stdio──> mcp_server.py ──> starccm+ -server -port 
                                ├── sims/      .sim de trabajo y logs del servidor (ignorado por git)
                                ├── macros/    cada macro inyectada + su salida .out (ignorado por git)
                                ├── tests/     starccm+ falso para el selftest
+                               ├── ui/        interfaz web local (puerto 8767): chat, casos, solver, escena en vivo
                                └── vm/        bootstrap de la MV Linux (futuro)
 ```
 
@@ -103,6 +104,19 @@ Reglas del servidor:
 - Siempre trabajar sobre una copia en `sims/`, nunca sobre el .sim original del usuario.
 - Config por env o por `starccm/.env` (ver `.env.example`): `STARCCM_PODKEY`, `STARCCM_LICPATH`,
   `STARCCM_PORT`, `STARCCM_NP`, `STARCCM_IDLE_MIN`, `STARCCM_HOME`, `STARCCM_EXE`.
+
+## Interfaz web: `ui/`
+
+`ui/server.py` (FastAPI) + `ui/index.html` + `ui/app.js` + `ui/style.css`, sin build. Preview
+`starccm-ui` (`.claude/launch.json` de la raíz, puerto 8767). Endpoints y paneles: `README.md`.
+Comprobación: `python ui/server.py --selftest` (HTTP contra los casos, sin solver ni CLI).
+Reglas: la UI solo **lee** (casos, `.server.json`, `agent.log`) y pide al MCP importado como módulo
+dos cosas: `server_stop` (botón) y `export_scene`/`inspect("scenes")` (pestaña «En vivo»). Nunca
+arranca el solver ni inyecta macros mientras el chat trabaja (el candado del MCP es por proceso).
+El chat lanza `claude -p` con cwd `starccm/` y solo las tools `mcp__starccm__*`, Read, Glob, Grep.
+Se verificó el 2026-10-23 en el preview: galería `cursocfturbo` (resumen, 3 escenas, convergencia),
+chat con `server_status` (10 s) y 409 correcto en «Actualizar» sin solver. La exportación en vivo
+contra el solver real queda por probar (cuesta licencia PoD).
 
 ## Memoria
 
