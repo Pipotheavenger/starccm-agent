@@ -16,16 +16,16 @@
 }
 :root[data-theme="light"]{
   --bg:#f4f6f9; --panel:#ffffff; --panel-2:#eef2f6; --field:#ffffff; --line:#d5dce5;
-  --fg:#14202c; --mut:#5a6878; --acc:#0a6fb8; --acc-ink:#ffffff; --cmp:#0f8f80;
-  --ok:#1f883d; --warn:#9a6700; --err:#cf222e; --saved:#7c4dce; --viewer-bg:#e9edf2;
+  --fg:#14202c; --mut:#526070; --acc:#0862a5; --acc-ink:#ffffff; --cmp:#0b7368;
+  --ok:#18712f; --warn:#875a00; --err:#b4232c; --saved:#6c3fbf; --viewer-bg:#e9edf2;   /* contraste ≥ 4,5 sobre sus fondos */
   --ok-bg:#dcf3e2; --warn-bg:#fbefd0; --err-bg:#fde2e2; --acc-bg:#dcecf9; --saved-bg:#eee5fb; --sel-bg:#e3eefa;
   color-scheme:light;
 }
 @media (prefers-color-scheme:light){
   :root:not([data-theme="dark"]){
     --bg:#f4f6f9; --panel:#ffffff; --panel-2:#eef2f6; --field:#ffffff; --line:#d5dce5;
-    --fg:#14202c; --mut:#5a6878; --acc:#0a6fb8; --acc-ink:#ffffff; --cmp:#0f8f80;
-    --ok:#1f883d; --warn:#9a6700; --err:#cf222e; --saved:#7c4dce; --viewer-bg:#e9edf2;
+    --fg:#14202c; --mut:#526070; --acc:#0862a5; --acc-ink:#ffffff; --cmp:#0b7368;
+    --ok:#18712f; --warn:#875a00; --err:#b4232c; --saved:#6c3fbf; --viewer-bg:#e9edf2;   /* contraste ≥ 4,5 sobre sus fondos */
     --ok-bg:#dcf3e2; --warn-bg:#fbefd0; --err-bg:#fde2e2; --acc-bg:#dcecf9; --saved-bg:#eee5fb; --sel-bg:#e3eefa;
     color-scheme:light;
   }
@@ -287,4 +287,89 @@ details.opts[open]{padding-bottom:var(--s2)}
   .props-foot #runmsg{flex-basis:100%}
   .offline-band{position:sticky;top:0}
   .runbar .runname{max-width:60vw}
+}
+
+/* ------------------------------------------------------------------ ronda 2 (agents/out/ux_2.md) */
+/* D-N1: con overflow:hidden la tarjeta es contenedor de scroll, su alto mínimo automático cae a 0 y las
+   filas del grid se quedan cortas (tarjetas solapadas). overflow:clip recorta igual sin ese efecto. */
+.gallery{grid-auto-rows:max-content;align-items:stretch}   /* tarjetas de una fila con el mismo alto */
+.card-run{overflow:clip}
+.card-run .meta{min-height:64px}
+.card-run .errline{-webkit-line-clamp:1}
+.card-run .thumb{aspect-ratio:16/10}
+.card-run:focus-visible{outline:2px solid var(--acc);outline-offset:2px}
+.card-run .cmpbtn{opacity:.55}
+.card-run:hover .cmpbtn,.card-run:focus .cmpbtn,.card-run:focus-within .cmpbtn{opacity:1}
+/* densidad «Lista» (P2-3): una columna, miniatura pequeña a la izquierda */
+.gallery.compact{grid-template-columns:minmax(0,1fr);gap:4px}
+.card-run .meta{flex:1;min-width:0}
+@media (min-width:1100px) and (max-width:1279px){ .gallery{grid-template-columns:minmax(0,1fr)} }
+.gallery.compact .card-run{flex-direction:row}
+.gallery.compact .card-run .thumb{width:64px;height:40px;aspect-ratio:auto;flex:none;font-size:0}
+.gallery.compact .card-run .meta{min-height:0;padding:4px 8px}
+.gallery.compact .card-run .ribbon{top:2px;left:4px;font-size:12px}
+.gallery.compact .card-run .errline{display:none}
+.gallery.compact .card-run .thumb{width:48px;height:36px}
+.gallery.compact .card-run .sub{flex-wrap:nowrap;overflow:hidden;white-space:nowrap}
+.gallery.compact .card-run .sub span:first-child{display:none}   /* la fecha va en el title de la tarjeta */
+@media (min-width:1100px) and (max-width:1279px){
+  .card-run .thumb{width:72px;height:54px;aspect-ratio:auto}
+  .card-run .meta{min-height:0}
+  .runbar .long{display:none}            /* «Siguiendo la última» → «Siguiendo», «Abrir carpeta» → «carpeta» */
+}
+.chip .badge{background:transparent;padding:0 2px;min-width:0}
+
+/* D-N3: el nombre no cede; cede la fecha/duración */
+.runbar .runname{flex:0 0 auto;max-width:32ch}
+.runbar #runtag{display:inline-flex;gap:4px;flex:none;white-space:nowrap}
+.runbar #runmeta{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis}
+.runbar #followchip,.runbar .savegrp,.runbar #openfolder,.runbar #rethumb{flex:none}
+
+#viewer .empty{z-index:1}   /* el lienzo se añade después y lo tapaba */
+/* banda de error al abrir una corrida (dentro del visor) */
+.err-band{position:absolute;top:44px;left:50%;transform:translateX(-50%);z-index:4;display:flex;gap:var(--s2);align-items:center;
+  max-width:90%;padding:4px 8px 4px 12px;border-radius:var(--r);background:var(--err-bg);color:var(--err);border:1px solid var(--err);font-size:12px}
+
+/* con pantalla alta el pie (Ejecutar) sube hasta justo debajo de las opciones, sin hueco muerto entre medias;
+   con poco alto la tabla hace scroll y el pie sigue fijo abajo */
+@media (min-width:1100px){ .props-scroll{flex:0 1 auto} }
+/* pie de propiedades: resumen de lo que se va a lanzar */
+#runsum{font-size:12px;color:var(--mut);min-height:16px}
+#runsum b.warn{color:var(--warn)}
+#runmsg.warn{color:var(--warn)}
+#params input.bad{border-color:var(--err);color:var(--err)}
+.check.off{opacity:.55;cursor:default}
+
+/* chat vacío: ayuda centrada con los botones rápidos dentro */
+.chat-empty{margin:auto;max-width:520px;text-align:center;color:var(--mut);font-size:13px;display:flex;flex-direction:column;gap:var(--s2);align-items:center}
+.chat-empty p{margin:0}
+.chat-empty .quick{padding:0;justify-content:center}
+.m hr{border:0;border-top:1px solid var(--line);margin:6px 0}
+
+/* popover de atajos */
+.popover{position:fixed;top:calc(var(--top-h) + 4px);right:var(--s4);z-index:30;width:min(440px,calc(100vw - 32px));max-height:calc(100vh - 80px);overflow:auto;
+  background:var(--panel);border:1px solid var(--line);border-radius:var(--r-lg);box-shadow:0 10px 30px #0008;padding:var(--s3)}
+.popover dl{display:grid;grid-template-columns:auto 1fr;gap:6px 12px;margin:0;font-size:13px}
+.popover dt{white-space:nowrap;color:var(--mut)} .popover dd{margin:0}
+kbd{font:12px var(--mono);padding:0 5px;border:1px solid var(--line);border-bottom-width:2px;border-radius:var(--r-sm);background:var(--panel-2);color:var(--fg)}
+#helpbtn{min-height:24px;width:28px}
+
+/* accesibilidad: ningún texto visible por debajo de 12 px */
+.tag,.badge,.hint,th,.files-group,.cmp-sec,.card-run .sub,.opts .note,.card-run .chipw,.card-run .errline,
+ul.ev li span,.m.tool,.sec-h,.card-run .ab,.card-run .thumb,#params td:first-child .mut{font-size:12px}
+
+/* < 1100: dock antes que propiedades y explorador; tira de galería compacta */
+@media (max-width:1099px){
+  .app{grid-template-areas:"runbar" "viewer" "dock" "props" "explorer"}
+  .dock{height:320px}
+  #viewer{height:48vh}
+  .card-run .errline{display:none}
+  #savemsg br{display:none}
+  .gallery,.gallery.compact{display:flex}
+  .card-run,.gallery.compact .card-run{flex:0 0 140px;flex-direction:column}
+  .gallery.compact .card-run .thumb{width:auto;height:auto;aspect-ratio:16/10;font-size:12px}
+  .card-run .sub{display:none}
+  .card-run .meta{min-height:0}
+  #density{display:none}
+  .popover{top:var(--s2)}
 }
