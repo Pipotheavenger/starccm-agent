@@ -192,6 +192,9 @@ Turbina: mismo flujo, cambia el signo del momento y el objetivo es potencia extr
   `region.getValues().get(MotionSpecification.class).setReferenceFrame(frame)`. `RotatingMotion` no
   expone la velocidad directamente.
 - 2026-10-23 · Expresiones entre reportes: `${{nombreReport}}` (p.ej. `${{pt_outReport}}`).
+- 2026-10-23 · Caso cursocfturbo (bomba CFturbo, D2 270 mm, 250 m³/h, 2980 rpm): 370 k celdas,
+  converge en 400 iteraciones (82 s/100 con 4 procesos): H 78,8 m, M 192,5 N·m, η 89,4 %, balance
+  de masa 0 %. Guion reproducible `cases/cursocfturbo/pump.py`; recetas `bomba-*.java`.
 - 2026-10-23 · Caso cilindro (r 50 mm, L 0,5 m, 11 463 celdas poliédricas + prismas, agua 1 m/s,
   SST): 100 iteraciones, residuales 1e-6, Q_in = −Q_out = 7,755 kg/s. Recetas de cada paso guardadas.
   `cases/cilindro/RESUMEN.md`.

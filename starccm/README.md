@@ -26,6 +26,22 @@ starccm/
 4. El MCP está registrado en el `.mcp.json` de la raíz del repo (servidor `starccm`). Reiniciar la
    sesión de Claude Code para que aparezcan las tools `server_start`, `run_java`, etc.
 
+## Casos
+
+- `cases/cilindro/`: tubo de prueba de la fontanería (RESUMEN.md, imagen de la malla).
+- `cases/cursocfturbo/`: bomba centrífuga exportada por CFturbo (3 STEP + `.cfturbo-ccm` en `cad/`).
+  `pump.py` es el guion del caso: cada paso es un cuerpo Java que se precompila con `javac`, se
+  inyecta con `run_java` y se guarda como receta `recipes/bomba-<paso>.java` cuando funciona.
+
+```bash
+.venv\Scripts\python cases\cursocfturbo\pump.py --compile      # solo javac de todos los pasos
+.venv\Scripts\python cases\cursocfturbo\pump.py --steps all    # importar … malla contra el solver
+.venv\Scripts\python cases\cursocfturbo\pump.py --run 2000     # itera en bloques de 100 hasta converger
+.venv\Scripts\python cases\cursocfturbo\pump.py --scenes       # presión en álabes, velocidad, y+ → images/
+```
+
+Ejecutar fuera del sandbox del tool Bash (desde la terminal del PC o con el MCP).
+
 ## Primera comprobación con el solver real
 
 En Claude Code: `server_start()` → `run_java('sim.println("PING");')` → `server_stop()`.
