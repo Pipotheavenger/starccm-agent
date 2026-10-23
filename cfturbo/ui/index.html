@@ -1,0 +1,273 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CFturbo · Controlador</title>
+<style>
+  :root{--bg:#0f141a;--panel:#161d26;--line:#263241;--fg:#e6edf3;--mut:#8b9bb0;--acc:#4cc2ff;--ok:#3fb950;--warn:#d29922;--err:#f85149;--mono:ui-monospace,Consolas,monospace}
+  *{box-sizing:border-box} html,body{height:100%;margin:0}
+  body{background:var(--bg);color:var(--fg);font:14px/1.4 system-ui,Segoe UI,sans-serif;display:grid;grid-template-rows:auto 1fr;}
+  header{display:flex;gap:14px;align-items:center;padding:10px 16px;border-bottom:1px solid var(--line);background:var(--panel)}
+  header h1{font-size:16px;margin:0;font-weight:600} header .sp{flex:1}
+  .dot{width:10px;height:10px;border-radius:50%;background:var(--mut);display:inline-block;margin-right:6px}
+  main{display:grid;grid-template-columns:330px 1fr 340px;gap:0;min-height:0}
+  aside,section{min-height:0;overflow:auto}
+  aside{background:var(--panel);border-right:1px solid var(--line);padding:12px}
+  aside.r{border-right:0;border-left:1px solid var(--line)}
+  .card{border:1px solid var(--line);border-radius:8px;padding:10px 12px;margin-bottom:12px}
+  .card h2{font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:var(--mut);margin:0 0 8px}
+  label{display:block;font-size:12px;color:var(--mut);margin-top:6px}
+  input,select,textarea,button{font:inherit;color:var(--fg);background:#0b1016;border:1px solid var(--line);border-radius:6px;padding:6px 8px;width:100%}
+  input[type=checkbox]{width:auto;margin-right:6px}
+  .row{display:flex;gap:8px} .row>*{flex:1}
+  button{cursor:pointer;background:#1d2a3a} button.pri{background:var(--acc);color:#04202e;border-color:var(--acc);font-weight:600}
+  .big{font-size:26px;font-weight:700;font-family:var(--mono)} .mut{color:var(--mut)} .mono{font-family:var(--mono);font-size:12px}
+  .req::after{content:" *";color:var(--err)}
+  #viewer{position:relative;background:#0b1016;overflow:hidden;min-height:300px}
+  #viewer canvas{position:absolute;inset:0;width:100% !important;height:100% !important;display:block}
+  #vtools{position:absolute;top:10px;left:10px;display:flex;flex-wrap:wrap;gap:6px;max-width:70%}
+  #vtools label{display:inline-flex;align-items:center;background:rgba(22,29,38,.85);border:1px solid var(--line);border-radius:6px;padding:4px 8px;margin:0;color:var(--fg);cursor:pointer}
+  #vmsg{position:absolute;bottom:10px;left:10px;color:var(--mut);font-size:12px;background:rgba(22,29,38,.85);padding:4px 8px;border-radius:6px}
+  table{width:100%;border-collapse:collapse;font-size:12px} td,th{padding:4px 6px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top} th{color:var(--mut);font-weight:500}
+  tr.sel td{background:#1d2a3a} tr.run{cursor:pointer}
+  .tag{display:inline-block;padding:1px 7px;border-radius:10px;font-size:11px;font-weight:600}
+  .ok{background:#14301d;color:var(--ok)} .warn{background:#332a12;color:var(--warn)} .error{background:#3a1a1c;color:var(--err)} .running{background:#163247;color:var(--acc)}
+  ul.ev{list-style:none;padding:0;margin:0} ul.ev li{padding:4px 0;border-bottom:1px dashed var(--line)} ul.ev li span{color:var(--mut);font-family:var(--mono);font-size:11px;margin-right:8px}
+  .msg{font-size:12px;padding:4px 6px;border-radius:4px;margin:3px 0} .msg.warn{background:#332a12} .msg.error{background:#3a1a1c}
+  textarea{height:150px;font-family:var(--mono);font-size:12px;resize:vertical}
+  @media (max-width:1100px){main{grid-template-columns:1fr;grid-template-rows:auto 60vh auto} aside{border:0;border-bottom:1px solid var(--line)}}
+</style>
+<script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"}}</script>
+</head>
+<body>
+<header>
+  <h1>CFturbo · Controlador</h1>
+  <span class="mut">Claude Code decide, CFturbo construye, aquí lo ves</span>
+  <span class="sp"></span>
+  <span id="status"><span class="dot"></span><span class="mut">conectando…</span></span>
+</header>
+<main>
+  <aside>
+    <div class="card">
+      <h2>Proyecto base</h2>
+      <select id="project"></select>
+      <div id="pinfo" class="mono mut" style="margin-top:6px"></div>
+    </div>
+    <div class="card">
+      <h2>Punto de diseño <span class="mut" style="text-transform:none;letter-spacing:0">(obligatorio)</span></h2>
+      <div class="row">
+        <div><label class="req">Caudal Q (m³/h)</label><input id="Q" type="number" step="any"></div>
+        <div><label class="req">Altura H (m)</label><input id="H" type="number" step="any"></div>
+      </div>
+      <div class="row">
+        <div><label class="req">Velocidad n (rpm)</label><input id="n" type="number" step="any"></div>
+        <div><label class="req">Fluido</label><select id="fluid"><option>agua 20 °C</option><option>agua 60 °C</option><option>otro (describir)</option></select></div>
+      </div>
+      <label>Uso</label>
+      <select id="mode"><option value="bomba">Bomba</option><option value="pat">Bomba como turbina (PAT)</option></select>
+      <div style="margin-top:10px;display:flex;align-items:baseline;gap:10px"><span class="big" id="nq">–</span><span class="mut">nq</span><span id="nqtipo" class="mut"></span></div>
+      <div class="mono mut" id="phid"></div>
+    </div>
+    <div class="card">
+      <h2>Atajos opcionales</h2>
+      <div class="row">
+        <div><label>d2 (mm)</label><input id="d2" type="number" step="any" placeholder="auto"></div>
+        <div><label>b2 (mm)</label><input id="b2" type="number" step="any" placeholder="auto"></div>
+      </div>
+      <div class="row">
+        <div><label>Nº álabes</label><input id="nBl" type="number" step="1" placeholder="auto"></div>
+        <div><label>Psi</label><input id="Psi" type="number" step="any" placeholder="auto"></div>
+      </div>
+      <label>Nombre de la corrida</label><input id="rname" placeholder="v1">
+      <label>Exportar</label>
+      <div class="row"><label><input type="checkbox" id="exCCM" checked>STAR-CCM+ (STEP)</label><label><input type="checkbox" id="exSTL" checked>STL (visor)</label></div>
+      <label>Instrucción libre</label><input id="free" placeholder="p.ej. prueba 3 variantes de álabes">
+    </div>
+    <div class="card">
+      <h2>Prompt para Claude Code</h2>
+      <textarea id="prompt" readonly></textarea>
+      <div class="row" style="margin-top:8px"><button class="pri" id="copy">Copiar prompt</button></div>
+      <div class="mut" style="font-size:12px;margin-top:6px">Pégalo en Claude Code (carpeta <span class="mono">cfturbo</span>). Esta página se actualiza sola cuando aparece la corrida.</div>
+    </div>
+  </aside>
+
+  <section id="viewer">
+    <div id="vtools"></div>
+    <div id="vmsg">sin geometría</div>
+  </section>
+
+  <aside class="r">
+    <div class="card">
+      <h2>Hitos <span id="runtitle" class="mono" style="text-transform:none;letter-spacing:0"></span></h2>
+      <ul class="ev" id="events"><li class="mut">esperando corrida…</li></ul>
+      <div id="msgs"></div>
+    </div>
+    <div class="card">
+      <h2>Pedido vs realizado</h2>
+      <table id="realized"><tbody><tr><td class="mut">–</td></tr></tbody></table>
+    </div>
+    <div class="card">
+      <h2>Corridas</h2>
+      <table id="runs"><thead><tr><th>Nombre</th><th>Hora</th><th>d2</th><th>nBl</th><th>Estado</th></tr></thead><tbody></tbody></table>
+    </div>
+  </aside>
+</main>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { STLLoader } from 'three/addons/loaders/STLLoader.js';
+
+const $ = id => document.getElementById(id);
+const st = { projects: [], project: null, info: null, runs: [], run: null, pinned: false, meshes: new Map(), showCaps: false };
+
+// ---------------------------------------------------------------- nq y prompt
+function nq() {
+  const Q = +$('Q').value, H = +$('H').value, n = +$('n').value;
+  if (!(Q > 0 && H > 0 && n > 0)) { $('nq').textContent = '–'; $('nqtipo').textContent = ''; $('phid').textContent = ''; return null; }
+  const v = n * Math.sqrt(Q / 3600) / Math.pow(H, .75);
+  const tipo = v < 10 ? 'radial muy lenta' : v < 30 ? 'radial lenta' : v < 50 ? 'radial normal' : v < 80 ? 'radial rápida / semiaxial' : v < 160 ? 'flujo mixto' : 'axial';
+  $('nq').textContent = v.toFixed(1); $('nqtipo').textContent = tipo;
+  $('phid').textContent = `P hidráulica ≈ ${(998.2 * 9.80665 * Q / 3600 * H / 1000).toFixed(2)} kW`;
+  return v;
+}
+function prompt() {
+  const v = nq(); const p = st.project || '<proyecto>';
+  const opt = [];
+  for (const k of ['d2', 'b2', 'nBl', 'Psi']) if ($(k).value) opt.push(`${k}${k === 'd2' || k === 'b2' ? '_mm' : ''}=${$(k).value}`);
+  const ex = [$('exCCM').checked && 'StarCCM', $('exSTL').checked && 'OpenFOAM'].filter(Boolean).join(', ') || 'ninguno';
+  const modo = $('mode').value === 'pat' ? 'La máquina se usará como turbina (PAT): diseña la bomba equivalente y dilo explícitamente.' : '';
+  const t = `Lee CLAUDE.md. Proyecto base: ${p}.
+Punto de diseño: Q=${$('Q').value || '?'} m³/h, H=${$('H').value || '?'} m, n=${$('n').value || '?'} rpm, ${$('fluid').value}${v ? ` (nq ≈ ${v.toFixed(1)})` : ''}. ${modo}
+${opt.length ? 'Fija estos parámetros: ' + opt.join(', ') + '. Los demás con criterio de turbomáquinas.' : 'Propón las dimensiones con criterio de turbomáquinas.'}
+Corre cft_run con name="${$('rname').value || 'v1'}" y exports [${ex}]. ${$('free').value}
+Entrega: tabla pedido vs realizado, correcciones de CFturbo, avisos y rutas de los STEP. Si algo falla, lee cft_log y corrige.`;
+  $('prompt').value = t.replace(/\n\n+/g, '\n');
+}
+for (const id of ['Q', 'H', 'n', 'fluid', 'mode', 'd2', 'b2', 'nBl', 'Psi', 'rname', 'exCCM', 'exSTL', 'free']) $(id).addEventListener('input', prompt);
+$('copy').onclick = async () => {
+  try { await navigator.clipboard.writeText($('prompt').value); } catch { $('prompt').select(); document.execCommand('copy'); }
+  $('copy').textContent = 'Copiado ✓'; setTimeout(() => $('copy').textContent = 'Copiar prompt', 1500);
+};
+
+// ---------------------------------------------------------------- proyectos
+async function loadProjects() {
+  st.projects = await (await fetch('/api/projects')).json();
+  $('project').innerHTML = st.projects.map(p => `<option value="${p.name}">${p.name}</option>`).join('') || '<option value="">(sin proyectos en projects/)</option>';
+  if (st.projects.length) { st.project = st.projects[0].name; await loadInfo(); }
+  prompt();
+}
+async function loadInfo() {
+  if (!st.project) return;
+  st.info = await (await fetch('/api/project/' + encodeURIComponent(st.project))).json();
+  const dp = st.info.design_point || {}, d = st.info.dims || {};
+  if (!$('Q').value) $('Q').value = dp.Q_m3h ?? ''; if (!$('H').value) $('H').value = dp.H_m ?? ''; if (!$('n').value) $('n').value = dp.n_rpm ?? '';
+  $('pinfo').textContent = `${st.info.project_type} · ${(st.info.components || []).map(c => c.caption).join(' + ')} · d2 ${fmt(d.d2_mm)} mm · b2 ${fmt(d.b2_mm)} mm · ${d.nBl ?? '?'} álabes`;
+  prompt();
+}
+$('project').onchange = e => { st.project = e.target.value; loadInfo(); };
+const fmt = x => x == null ? '?' : (+x).toFixed(1);
+
+// ---------------------------------------------------------------- corridas
+async function poll() {
+  try {
+    const runs = await (await fetch('/api/runs?limit=40')).json();
+    $('status').innerHTML = '<span class="dot" style="background:var(--ok)"></span><span class="mut">conectado · ' + runs.length + ' corridas</span>';
+    const changed = JSON.stringify(runs.map(r => r.id + r.status)) !== JSON.stringify(st.runs.map(r => r.id + r.status));
+    st.runs = runs; if (changed) renderRuns();
+    if (runs.length && (!st.run || (!st.pinned && runs[0].id !== st.run.id) || (st.run && runs[0].id === st.run.id && runs[0].status !== st.run.status))) selectRun(runs[0].id);
+  } catch { $('status').innerHTML = '<span class="dot" style="background:var(--err)"></span><span class="mut">sin conexión</span>'; }
+}
+function renderRuns() {
+  $('runs').querySelector('tbody').innerHTML = st.runs.map(r => {
+    const d = r.info?.dims || {};
+    return `<tr class="run ${st.run && st.run.id === r.id ? 'sel' : ''}" data-id="${r.id}"><td>${r.name}</td><td class="mono">${(r.started || '').slice(11, 19)}</td><td>${fmt(d.d2_mm)}</td><td>${d.nBl ?? ''}</td><td><span class="tag ${r.status}">${r.status}</span></td></tr>`;
+  }).join('');
+  for (const tr of $('runs').querySelectorAll('tr.run')) tr.onclick = () => { st.pinned = tr.dataset.id !== st.runs[0]?.id; selectRun(tr.dataset.id); };
+}
+async function selectRun(id) {
+  const r = await (await fetch('/api/runs/' + id)).json();
+  const same = st.run && st.run.id === r.id;
+  st.run = r; renderRuns();
+  $('runtitle').textContent = r.name + ' · ' + (r.started || '').slice(0, 19).replace('T', ' ');
+  $('events').innerHTML = (r.events || []).map(e => `<li><span>${e.t.slice(11, 19)}</span>${e.msg}</li>`).join('') || '<li class="mut">sin hitos</li>';
+  $('msgs').innerHTML = (r.errors || []).map(m => `<div class="msg error">${m}</div>`).join('') + (r.warnings || []).map(m => `<div class="msg warn">${m}</div>`).join('');
+  const keys = Object.keys(r.edits || {});
+  $('realized').querySelector('tbody').innerHTML = keys.length ? '<tr><th>clave</th><th>pedido</th><th>realizado (SI)</th></tr>' + keys.map(k =>
+    `<tr><td class="mono">${k}</td><td>${r.edits[k]}</td><td class="mono" style="color:${r.corrected?.[k] ? 'var(--warn)' : 'inherit'}">${r.realized?.[k] ?? '–'}${r.corrected?.[k] ? ' ⚠ corregido' : ''}</td></tr>`).join('')
+    : '<tr><td class="mut">sin cambios de parámetros</td></tr>';
+  if (!same || r.status !== 'running') loadGeometry(r);
+}
+
+// ---------------------------------------------------------------- visor 3D
+const V = $('viewer');
+const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true }); V.appendChild(renderer.domElement);
+const scene = new THREE.Scene(); scene.background = new THREE.Color(0x0b1016);
+const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 100000);
+const controls = new OrbitControls(camera, renderer.domElement); controls.enableDamping = true; controls.dampingFactor = .12;
+let dirty = true, lastTick = 0;
+const render = () => { dirty = true; };
+controls.addEventListener('change', render);
+function tick() {
+  lastTick = performance.now();
+  if (controls.update()) dirty = true;      // true mientras el amortiguado sigue moviendo la cámara
+  if (dirty) { renderer.render(scene, camera); dirty = false; }
+}
+(function raf() { requestAnimationFrame(raf); tick(); })();
+// Respaldo a 30 fps: en el panel incrustado de la app el rAF puede no dispararse
+setInterval(() => { if (performance.now() - lastTick > 40) tick(); }, 33);
+scene.add(new THREE.HemisphereLight(0xffffff, 0x334455, 1.6));
+const dl = new THREE.DirectionalLight(0xffffff, 1.8); dl.position.set(1, 1, 2); scene.add(dl);
+const dl2 = new THREE.DirectionalLight(0xffffff, 0.8); dl2.position.set(-1, -2, -1); scene.add(dl2);
+scene.add(new THREE.AxesHelper(50));
+const group = new THREE.Group(); scene.add(group);
+renderer.setPixelRatio(Math.min(devicePixelRatio || 1, 2));
+let lastW = 0, lastH = 0;
+function resize() {
+  const w = V.clientWidth, h = V.clientHeight;
+  if (!w || !h || (w === lastW && h === lastH)) return;   // evita el bucle lienzo -> scrollbar -> lienzo
+  lastW = w; lastH = h;
+  renderer.setSize(w, h, false); camera.aspect = w / h; camera.updateProjectionMatrix(); render();
+}
+new ResizeObserver(resize).observe(V); resize();
+const COLORS = { Stator: 0x7aa2f7, Impeller: 0xff9e64, Volute: 0x9ece6a, ext: 0x565f89 };
+const colorFor = c => c.includes('ext') ? COLORS.ext : c.includes('Impeller') ? COLORS.Impeller : c.includes('Volute') ? COLORS.Volute : COLORS.Stator;
+const loader = new STLLoader();
+async function loadGeometry(r) {
+  group.clear(); st.meshes.clear();
+  const geo = (r.geometry || []).filter(g => g.kind === 'stl');
+  if (!geo.length) { $('vmsg').textContent = r.status === 'running' ? 'CFturbo trabajando…' : 'esta corrida no tiene STL (exporta con OpenFOAM)'; $('vtools').innerHTML = ''; return; }
+  $('vmsg').textContent = `cargando ${geo.length} superficies…`;
+  const comps = [...new Set(geo.map(g => g.component))];
+  $('vtools').innerHTML = comps.map(c => `<label><input type="checkbox" data-c="${c}" ${c.includes('ext') ? '' : 'checked'}><span style="color:#${colorFor(c).toString(16).padStart(6, '0')}">■</span>&nbsp;${c}</label>`).join('') +
+    `<label><input type="checkbox" id="caps" ${st.showCaps ? 'checked' : ''}>tapas (in/out)</label>`;
+  for (const cb of $('vtools').querySelectorAll('input[data-c]')) cb.onchange = applyVis;
+  $('caps').onchange = e => { st.showCaps = e.target.checked; applyVis(); };
+  let n = 0;
+  await Promise.all(geo.map(g => new Promise(res => loader.load(`/files/${r.id}/${encodeURIComponent(g.file)}`, bg => {
+    bg.computeVertexNormals();
+    const m = new THREE.Mesh(bg, new THREE.MeshStandardMaterial({ color: colorFor(g.component), metalness: .1, roughness: .6, side: THREE.DoubleSide, transparent: g.component.includes('Volute') || g.component.includes('Stator'), opacity: g.component.includes('Impeller') ? 1 : .7 }));
+    m.userData = g; group.add(m); st.meshes.set(g.file, m); n++; $('vmsg').textContent = `cargadas ${n}/${geo.length}`; render(); res();
+  }, undefined, () => res()))));
+  applyVis(); fit();
+  $('vmsg').textContent = `${r.name}: ${comps.join(', ')} · arrastra para orbitar, rueda para zoom`;
+}
+function applyVis() {
+  const on = new Set([...$('vtools').querySelectorAll('input[data-c]:checked')].map(i => i.dataset.c));
+  for (const m of st.meshes.values()) { const b = (m.userData.boundary || '').toLowerCase(); m.visible = on.has(m.userData.component) && (st.showCaps || !(b.includes('inflow') || b.includes('outflow'))); }
+  render();
+}
+function fit() {
+  const box = new THREE.Box3(); for (const m of st.meshes.values()) if (m.visible) box.expandByObject(m);
+  if (box.isEmpty()) return;
+  const c = box.getCenter(new THREE.Vector3()), s = box.getSize(new THREE.Vector3()).length();
+  controls.target.copy(c); camera.position.copy(c).add(new THREE.Vector3(s * .6, -s * .8, s * .6)); camera.near = s / 500; camera.far = s * 20; camera.updateProjectionMatrix();
+  camera.lookAt(c); controls.update(); renderer.render(scene, camera);
+}
+
+window.__cft = { st, group, camera, controls, scene, fit, renderer };  // depuración desde la consola
+loadProjects(); poll(); setInterval(poll, 3000);
+</script>
+</body>
+</html>

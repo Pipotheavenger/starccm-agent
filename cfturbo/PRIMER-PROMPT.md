@@ -1,36 +1,41 @@
-# Primer prompt para Claude Code en el PC Windows con CFturbo
+# Cómo usar el agente CFturbo (PC Windows)
 
-Antes: corre `bootstrap.ps1`, y en CFturbo crea la plantilla batch de una bomba
-(PROJECT > Batch mode/Optimization, activa parámetros, Add aliases..., guarda en
-`projects\<bomba>\<bomba>.cft-batch`).
+Preparado el 2026-10-23. Entorno en `cfturbo\.venv`, MCP registrado en `cfturbo\.mcp.json`,
+proyecto base `projects\primera-bomba\primera-bomba.cft` (nq ≈ 37, 227 m³/h, 70 m, 3600 rpm).
 
----
+## Cada sesión
 
-Lee CLAUDE.md completo.
+1. Abre Claude Code en esta carpeta (`starccm-agent` o `cfturbo`). Las tools `cft_*` aparecen solas.
+2. Arranca la interfaz: preview `cfturbo-ui`, o en PowerShell desde `starccm-agent`:
+   `cfturbo\.venv\Scripts\python -m uvicorn --app-dir cfturbo ui.server:app --port 8765`
+   y abre http://localhost:8765.
+3. En la interfaz llena Q, H, n, fluido y los atajos que quieras, pulsa "Copiar prompt" y pégalo
+   en Claude Code. La interfaz se actualiza sola cuando aparece la corrida.
 
-Hoy validamos el MCP contra CFturbo real. Orden:
-
-1. Confirma que las tools `cft_*` aparecen en esta sesión y que `$env:CFTURBO_EXE` existe.
-2. `cft_params` sobre `projects\<bomba>\<bomba>.cft-batch`. Muéstrame la tabla de parámetros.
-3. `cft_run` sin cambios (updates vacío) con export `General`. Debe producir un STEP y un
-   `.cft-res`. Si falla, lee `cft_log` y arregla `mcp_server.py` hasta que pase. Anota en
-   CLAUDE.md > Lecciones cualquier diferencia entre el XML real y lo que asume el servidor.
-4. Cambia un parámetro pequeño (p.ej. número de álabes +1) y corre otra vez. Confirma que el
-   STEP cambió y que `realized` refleja el cambio.
-5. Pide un valor fuera de rango a propósito y confirma que `corrected` lo reporta.
-6. Exporta una vez con `StarCCM` y dime qué archivos genera; esos son los que irán a la MV.
-7. Guarda una receta con lo que aprendiste del formato del batch de esta versión.
-
-Reglas de hoy: antes de tocar código corre el selftest; cada paso termina con dos líneas de
-estado; no me preguntes salvo bloqueo.
+## Prompt de ejemplo (lo que genera la interfaz)
 
 ---
 
-# Segundo prompt: primer diseño guiado
+Lee CLAUDE.md. Proyecto base: primera-bomba.
+Punto de diseño: Q=227 m³/h, H=70 m, n=3600 rpm, agua 20 °C (nq ≈ 37.4).
+Propón las dimensiones con criterio de turbomáquinas.
+Corre cft_run con name="v1" y exports [StarCCM, OpenFOAM].
+Entrega: tabla pedido vs realizado, correcciones de CFturbo, avisos y rutas de los STEP. Si algo falla, lee cft_log y corrige.
 
 ---
 
-Lee CLAUDE.md. Plantilla: `projects\<bomba>\<bomba>.cft-batch`.
-Quiero esta bomba para <Q> m3/h, <H> m, <n> rpm, agua. Propón 3 variantes moviendo ángulo de
-salida, número de álabes y ancho de salida con criterio de turbomáquinas, córrelas, y dame una
-tabla con pedidos, realizados, Output y el STEP de cada una. Recomienda una y explica en 3 líneas.
+## Prompt de variantes
+
+---
+
+Lee CLAUDE.md. Proyecto base: primera-bomba. Quiero 3 variantes para 250 m³/h, 60 m, 3600 rpm,
+agua: mueve d2, b2 y número de álabes con criterio de turbomáquinas, corre cada una con
+cft_run (nombres v_a, v_b, v_c), y dame una tabla comparativa con pedido, realizado, avisos y
+STEP. Recomienda una y explica en 3 líneas.
+
+---
+
+## Cuando haya nuevo proyecto base
+
+Crea la bomba en la GUI de CFturbo (punto de diseño nuevo, 3 componentes), guárdala como
+`projects\<nombre>\<nombre>.cft` y aparecerá en la interfaz y en `cft_projects`.

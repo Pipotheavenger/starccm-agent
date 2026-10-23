@@ -19,7 +19,7 @@ if (-not $py) { winget install -e --id Python.Python.3.12 --silent; $env:Path = 
 python --version
 if (-not (Test-Path .venv)) { python -m venv .venv }
 .\.venv\Scripts\pip install -q --upgrade pip
-.\.venv\Scripts\pip install -q "mcp[cli]" anthropic
+.\.venv\Scripts\pip install -q "mcp[cli]" fastapi "uvicorn[standard]"
 
 # ---------------------------------------------------------------- Claude Code
 if (-not (Get-Command claude -ErrorAction SilentlyContinue)) {
@@ -49,8 +49,8 @@ Log "Listo"
 Write-Host @"
 
 Siguiente:
-  1. Abre CFturbo, carga una bomba, PROJECT > Batch mode/Optimization, activa los parámetros
-     que quieras exponer, pulsa 'Add aliases...', y guarda como projects\<bomba>\<bomba>.cft-batch
+  1. Copia una bomba base de CFturbo como projects\<bomba>\<bomba>.cft (no hace falta plantilla batch)
   2. claude            (login la primera vez)
-  3. pega PRIMER-PROMPT.md
+  3. interfaz: .venv\Scripts\python -m uvicorn ui.server:app --port 8765  ->  http://localhost:8765
+  4. sigue PRIMER-PROMPT.md
 "@

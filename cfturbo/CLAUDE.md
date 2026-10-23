@@ -1,59 +1,98 @@
 # cfturbo-agent
 
-Agente que diseña impulsores y volutas de bombas y turbinas con CFturbo en lenguaje natural.
+Agente que diseña impulsores y volutas de bombas con CFturbo en lenguaje natural.
 CFturbo es el generador paramétrico de geometría. Claude decide qué parámetros mover y lee
 qué pasó. La evaluación CFD la hace el agente hermano de STAR-CCM+ (carpeta `..`, en la MV Linux).
+No hay API de Anthropic en este PC: el cerebro es Claude Code (esta sesión) vía MCP, y la
+interfaz controladora (`ui/`) solo muestra estado, hitos y geometría, y genera el prompt que el
+usuario pega aquí.
 
-## Cómo se opera CFturbo (no hay API)
+## Cómo se opera CFturbo (verificado 2026-10-23, CFturbo 2026.1.1.128)
 
-- Solo modo batch: `cfturbo.exe -batch archivo.cft-batch [-verbose] [-log archivo.log]`.
-- El `.cft-batch` es XML: `<CFturboFile><CFturboBatchProject InputFile="bomba.cft"><Updates>…</Updates>
-  <Output>…</Output><BatchAction Name="Export"/><BatchAction Name="Save"/>`.
-- `Updates` lleva los parámetros a cambiar. Solo se pueden cambiar los que en la GUI están
-  editables (p.ej. dimensiones principales requieren desactivar el cálculo automático).
-  Si pides un valor fuera de rango, CFturbo lo corrige solo; el `.cft-res` trae el valor realizado.
-- `Output` trae valores derivados (área de garganta mínima, ángulos calculados). Sirven de restricción.
-- Export: interfaz `General` (STEP/IGES según lo configurado en el proyecto), `StarCCM`, `OpenFOAM`,
-  `Report`, `PerformanceData`. La configuración de cada interfaz se guarda en el `.cft`, no en el batch.
-- La plantilla `.cft-batch` se genera UNA vez desde la GUI (PROJECT > Batch mode/Optimization) con
-  los parámetros activados y con alias. Es el "esquema" que el agente lee con `cft_params`.
-- Crear una bomba desde cero (punto de diseño nuevo) no se puede en batch. Eso lo hace el usuario
-  en la GUI en 5 minutos, o el agente edita el `.cft` directamente (es XML) bajo su responsabilidad.
+- Solo modo batch: `CFturbo.exe -batch archivo.cft-batch -log archivo.log`. Sin GUI. rc=0 limpio,
+  1 con avisos, 2 con errores. Primera corrida ~30-70 s (arranque), siguientes ~5-10 s.
+- El `.cft` es XML plano. **Se edita directamente** (d2, b2, dS, dH, Psi, nBl, Q, H, n, …) sobre
+  una copia en `work/`, y CFturbo regenera la geometría al abrirlo en batch. Probado: d2
+  0.2063→0.215 m y nBl 6→7 se conservan en el `.cft` guardado y el STL del impulsor crece.
+- El bloque `<Updates>` del batch solo lo acepta CFturbo si la plantilla salió de la GUI
+  (PROJECT > Batch mode/Optimization). No se usa. Si algún día hay plantilla, se puede añadir.
+- Export en batch: `<BatchAction Name="Export">` con hijos `WorkingDir`, `BaseFileName`,
+  `ExportInterface Type="Enum"` y `ExportComponents Type="Array1"` cuyos `<Value>` **deben traer
+  `Caption="[Nombre]"`** y valor = `Index`+1 del componente. Sin `Caption` solo exporta el primero.
+  - `StarCCM` → `<base>_Co1..3.stp` (+ `_Co3_Extension.stp`), `<base>.cfturbo-ccm` (condiciones de
+    frontera, rpm, caudal másico) y `CFturbo2StarCCM.java`. Esto es lo que va a la MV.
+  - `OpenFOAM` → un STL ASCII por superficie (`BladePS`, `Hub`, `Shroud`, `Spiral`…). Es lo que
+    pinta el visor. Granularidad en `Export_Interfaces/TOpenFOAMInterface/STLData` del `.cft`.
+  - `General` → `.geo-xml` (solo puntos hub/shroud); STEP/IGES requieren configurarlo en la GUI.
+- `Save` → `<OutputFile>`; el `.cft-res` se escribe junto al `.cft` de entrada. Los hints
+  (acoplamientos, extensiones, licencia) van al `<nombre>.log` que CFturbo crea solo, no al `-log`.
+- Cambiar el punto de diseño (Q, H, n) con `AutoUpdate=True` recalcula d2/b2/dS pero puede romper
+  el meridiano ("Secondary flow path intersects hub solid"). Para puntos de diseño muy distintos
+  al proyecto base, mejor que el usuario cree la bomba base en la GUI (5 min) y se guarde en
+  `projects/<nombre>/<nombre>.cft`.
+- Licencia local Uniandes (hasta 2027-02-10): impulsor radial y axial de bomba, impulsor radial de
+  compresor, estator, voluta, bladerunner. **Turbinas Francis/Kaplan sin licencia** ("Runner: No
+  running license available"). Turbinas solo como bomba-como-turbina (PAT) hasta tener el módulo.
 
-## MCP: `mcp_server.py` (ya escrito, selftest incluido)
+## MCP: `mcp_server.py` (stdio, registrado en `.mcp.json`; selftest incluido)
 
 | tool | qué hace |
 |---|---|
-| `cft_params(batch_template)` | lista parámetros: ruta, alias, valor, rango, unidad |
-| `cft_run(batch_template, updates, name, export_interface, save_cft)` | corre batch, devuelve realizados, correcciones, Output, exportados |
-| `cft_log(run_dir)` | cola del log de CFturbo |
+| `cft_projects()` | proyectos base en `projects/<nombre>/<nombre>.cft` |
+| `cft_info(project)` | punto de diseño (Q m³/h, H m, n rpm, nq), fluido, componentes, d2/b2/dS/dH/Psi/nBl |
+| `cft_params(project, filter)` | alias con valor actual + hojas del XML que cumplan el regex (para parámetros sin alias) |
+| `cft_run(project, edits, name, exports, save)` | copia a `work/<name>_<ts>/`, edita, corre, exporta; devuelve `realized`, `corrected`, `warnings`, `errors`, archivos |
+| `cft_runs(limit)` | últimas corridas (`run.json`) |
+| `cft_log(run_dir)` | cola del log |
+| `cft_nq(Q_m3h, H_m, n_rpm)` | nq y tipo de máquina orientativo |
 | `cft_recipe_search` / `cft_recipe_save` | memoria |
 
-Cada corrida vive en `work/<name>_<timestamp>/` con su batch, res, log, .cft y exportes.
+Claves de `edits`: alias SI (`Q` m³/s, `H` m, `n` 1/s, `d2` `b2` `dS` `dH` m, `Psi`, `nBl`,
+`AutoUpdate`, `volute_d_out`), con unidad (`Q_m3h`, `H_m`, `n_rpm`, `d2_mm`, `b2_mm`, `dS_mm`,
+`dH_mm`), o un sufijo/regex de ruta del XML tal como lo lista `cft_params`.
 `python mcp_server.py --selftest` debe pasar siempre antes de un commit.
+
+## Interfaz controladora: `ui/`
+
+`ui/server.py` (FastAPI) + `ui/index.html` (three.js). Arranque: preview `cfturbo-ui`
+(`.claude/launch.json` en la raíz) o
+`cfturbo\.venv\Scripts\python -m uvicorn --app-dir cfturbo ui.server:app --port 8765`.
+Muestra: formulario de punto de diseño con nq en vivo y atajos opcionales → botón que genera el
+prompt para pegar en Claude Code; hitos y avisos de la última corrida; pedido vs realizado;
+visor 3D de los STL (por componente, tapas ocultables); tabla de corridas. Se refresca sola
+cada 3 s leyendo `work/*/run.json`. No llama a CFturbo ni a Claude.
 
 ## Flujo estándar
 
-1. Usuario da punto de diseño: Q, H, n, fluido, tipo (centrífuga, mixta, turbina).
-2. Si no hay `projects/<bomba>/<bomba>.cft-batch`, pedir al usuario que lo cree en la GUI
-   (bomba base + Batch mode/Optimization + aliases). No intentar sustituirlo.
-3. `cft_params` para ver qué hay. Resumir al usuario en una tabla: alias, valor, rango.
-4. Diseño: proponer cambios con criterio de turbomáquinas (Euler, ángulos, número de álabes,
-   b2/d2, área de garganta) y correr `cft_run` con export `General` (STEP) o `StarCCM`.
-5. Reportar: realizados vs pedidos, correcciones de CFturbo, Output, ruta del export.
-6. Si hay MV con STAR-CCM+: entregar el STEP o el caso al agente CFD y cerrar el loop con sus
-   resultados (H, eficiencia). Hasta entonces, usar `PerformanceData` y `Report` de CFturbo
-   como estimación 1D.
-7. Guardar receta por cada combinación que funcionó o lección aprendida.
+1. Usuario da punto de diseño: Q, H, n, fluido, uso (bomba o PAT). `cft_nq` para clasificar.
+2. `cft_projects` + `cft_info` del proyecto base más cercano en nq. Si no hay ninguno razonable,
+   pedir al usuario que cree la bomba base en la GUI y la guarde en `projects/`.
+3. Proponer cambios con criterio de turbomáquinas (Euler, b2/d2, Psi, número de álabes, ángulos)
+   y correr `cft_run` con nombre descriptivo. Varias variantes = varias corridas.
+4. Reportar en tabla: pedido vs realizado, correcciones de CFturbo, avisos, rutas de los STEP.
+   Si CFturbo corrige un valor, decirlo; no asumir que se aplicó lo pedido.
+5. Entregar `work/<corrida>/` (STEP + `.cfturbo-ccm` + `.java`) al agente CFD de la MV y cerrar el
+   loop con H y eficiencia. Hasta entonces, estimación 1D con las dimensiones.
+6. Guardar receta por cada combinación que funcionó o lección aprendida.
 
 ## Reglas
 
-- Nunca editar el `.cft` original del usuario; `cft_run` guarda copias en `work/`.
-- Si CFturbo corrige un valor, decirlo explícitamente; no asumir que se aplicó lo pedido.
-- Rutas de Windows con `\\` o raw strings; la plantilla referencia el `.cft` en relativo, el
-  servidor lo resuelve a absoluto.
-- Español, corto, números en tablas. Estilo mínimo: un archivo, sin clases de más.
+- Nunca editar el `.cft` de `projects/`; `cft_run` siempre trabaja sobre la copia en `work/`.
+- Rutas de Windows absolutas en el batch. Unidades del `.cft`: SI (m, m³/s, 1/s).
+- Español, corto, números en tablas. Estilo mínimo: un archivo de MCP, sin clases de más.
 
 ## Lecciones
 
-(se llena con el uso)
+- 2026-10-23: `CFturbo.exe -batch` funciona sin GUI; rc 0/1/2 = limpio/avisos/errores.
+- 2026-10-23: `ExportComponents` sin `Caption` en cada `<Value>` exporta solo el primer componente,
+  pidas lo que pidas. Con `Caption` salen todos. Formato de atributos de la doc de optiSLang
+  (Version 9) falla con "Parsing batch action nodes failed".
+- 2026-10-23: `<Updates>` escrito a mano se descarta ("Only batchprojects from the current version
+  support updating a project"). Solución: editar el `.cft` copiado, no el batch.
+- 2026-10-23: los avisos del proyecto no van al archivo de `-log` sino al `<nombre>.log` que
+  CFturbo crea junto al batch. Leer todos los `.log` de la corrida.
+- 2026-10-23: `pip install mcp` trae la 2.x, donde `mcp.server.fastmcp.FastMCP` ya no existe; es
+  `mcp.server.mcpserver.MCPServer` (misma API). El servidor importa una u otra. Aplica también al
+  `mcp_server.py` de la MV.
+- 2026-10-23: el visor three.js no orienta la cámara si la pestaña está oculta (sin rAF); hay que
+  llamar `controls.update()` y renderizar una vez tras cargar.
