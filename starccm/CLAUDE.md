@@ -126,8 +126,12 @@ la página muestra: `images/*.png`, `reports/convergencia.csv` y las superficies
 `exportar-superficies-ensight.java` o `POST /api/surface`).
 Verificado el 2026-10-23 en el preview sin solver: visor con un dataset sintético (colores, leyenda,
 volar a una frontera, pestañas de escena, corte), chat con `server_status` (10 s), Salida con la última
-macro real, 409 correctos. Por probar con el solver real (cuesta licencia PoD): `/api/surface`
-(la receta compila con javac), `/api/scene`, `/api/scenes`, `/api/tree?refresh=1`, `/api/open_gui`.
+macro real, 409 correctos. Verificados contra el solver real el 2026-10-23 12:02 (otra sesión, servidor
+con `cursocfturbo.sim`): `/api/status` vivo, `/api/tree?refresh=1` (9,9 s, regiones estator/rotor/voluta),
+`POST /api/scene` (9,1 s, PNG regenerado), `/api/scenes` (3 escenas), `/api/progress` con la macro y su
+`.out`, `POST /api/server/stop` (guardó 158 MB y apagó). Por probar con el solver real: `/api/surface`
+(la receta compila con javac) y `/api/open_gui`. Los `confirm()` del navegador no aparecen en el panel
+embebido de la app: toda confirmación va dentro de la página (segundo clic «¿Seguro?»).
 
 ## Memoria
 

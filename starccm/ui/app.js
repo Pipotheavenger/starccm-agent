@@ -427,8 +427,15 @@ async function poll() {
   catch (e) { $('offline').hidden = false; $('offlinetxt').textContent = 'Sin conexión con el servidor local: ' + e.message; }
 }
 $('retry').onclick = poll; setInterval(poll, 5000);
+// confirm() del navegador no aparece en el panel embebido de la app: confirmación en la página (segundo clic)
+function armed(btn, label, ms = 5000) {
+  if (btn.dataset.armed) { clearTimeout(+btn.dataset.t); delete btn.dataset.armed; btn.textContent = btn.dataset.orig; return true; }
+  btn.dataset.orig = btn.textContent; btn.dataset.armed = '1'; btn.textContent = label;
+  btn.dataset.t = setTimeout(() => { delete btn.dataset.armed; btn.textContent = btn.dataset.orig; }, ms);
+  return false;
+}
 $('stopsolver').onclick = async () => {
-  if (!confirm('¿Guardar el .sim y apagar el servidor de STAR-CCM+?')) return;
+  if (!armed($('stopsolver'), '¿Guardar y apagar? Pulsa otra vez')) return;
   $('stopsolver').disabled = true; $('solver').innerHTML = '<span class="dot busy"></span><span>apagando solver…</span>';
   try { const r = await api('/api/server/stop', { save: true }); toast(r.stopped ? `Solver apagado en ${r.seconds} s${r.saved ? ' · guardado ' + r.saved.split(/[\\/]/).pop() : ''}${r.forced ? ' (forzado)' : ''}` : 'No había servidor', r.stopped ? 'ok' : 'warn'); }
   catch (e) { toast('No pude apagar: ' + e.message, 'error'); }
@@ -436,7 +443,7 @@ $('stopsolver').onclick = async () => {
 };
 $('opengui').onclick = async () => {
   if (!st.case) return;
-  if (!confirm(`Abrir sims/${st.case}.sim en la GUI de STAR-CCM+.\nLa licencia Power-on-Demand cobra por hora de sesión. ¿Continuar?`)) return;
+  if (!armed($('opengui'), 'PoD cobra por hora · ¿abrir? Pulsa otra vez', 6000)) return;
   $('opengui').disabled = true;
   try { const r = await api('/api/open_gui', { case: st.case }); toast(`GUI lanzada (pid ${r.pid}); tarda unos segundos en abrir`, 'ok'); }
   catch (e) { toast(e.message, 'error'); }
@@ -494,10 +501,9 @@ async function sendChat(retry = false) {
 $('send').onclick = () => sendChat();
 $('chattext').addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendChat(); } else if (e.key === 'ArrowUp' && !$('chattext').value && st.lastMsg) { e.preventDefault(); $('chattext').value = st.lastMsg; } });
 $('stopchat').onclick = () => { $('stopchat').disabled = true; $('chatstate').textContent = 'deteniendo…'; api('/api/chat/stop', {}).then(j => { if (!j.stopped) $('chatstate').textContent = 'no había nada que detener'; }).catch(e => { $('chatstate').textContent = 'no pude detener: ' + e.message; }); };
-let newchatT = 0;
-$('newchat').onclick = () => { const b = $('newchat');
-  if (!b.dataset.armed) { b.dataset.armed = '1'; b.textContent = '¿Seguro?'; newchatT = setTimeout(() => { delete b.dataset.armed; b.textContent = 'Nueva'; }, 4000); return; }
-  clearTimeout(newchatT); delete b.dataset.armed; b.textContent = 'Nueva'; st.session = null; LS.set('scc_session', null);
+$('newchat').onclick = () => {
+  if (!armed($('newchat'), '¿Seguro?', 4000)) return;
+  st.session = null; LS.set('scc_session', null);
   for (const m of $('chatlog').querySelectorAll('.m')) m.remove(); placeQuick(); $('chatstate').textContent = 'nueva conversación'; };
 for (const b of $('quick').querySelectorAll('[data-q]')) b.onclick = () => { $('chattext').value = b.dataset.q.replace('<caso>', st.case || 'caso'); sendChat(); };
 st.session = LS.get('scc_session'); if (st.session) $('chatstate').textContent = `sesión ${st.session.slice(0, 8)} (continúa)`;
