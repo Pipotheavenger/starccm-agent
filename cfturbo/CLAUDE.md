@@ -57,10 +57,18 @@ Claves de `edits`: alias SI (`Q` m³/s, `H` m, `n` 1/s, `d2` `b2` `dS` `dH` m, `
 `ui/server.py` (FastAPI) + `ui/index.html` (three.js). Arranque: preview `cfturbo-ui`
 (`.claude/launch.json` en la raíz) o
 `cfturbo\.venv\Scripts\python -m uvicorn --app-dir cfturbo ui.server:app --port 8765`.
-Muestra: formulario de punto de diseño con nq en vivo y atajos opcionales → botón que genera el
-prompt para pegar en Claude Code; hitos y avisos de la última corrida; pedido vs realizado;
-visor 3D de los STL (por componente, tapas ocultables); tabla de corridas. Se refresca sola
-cada 3 s leyendo `work/*/run.json`. No llama a CFturbo ni a Claude.
+Muestra: tabla de parámetros (base vs corrida seleccionada vs nuevo) con nq en vivo; botón
+**Ejecutar** que corre CFturbo directamente (`POST /api/run` → `run_batch` en un hilo, una corrida a
+la vez), partiendo del proyecto base o del `_out.cft` de la corrida seleccionada; hitos, avisos y
+correcciones; archivos exportados con descarga y "Abrir carpeta"; visor 3D de los STL (por
+componente, tapas ocultables); tabla de corridas. Se refresca sola cada 3 s leyendo `work/*/run.json`.
+**Chat con Claude Code** (`POST /api/chat`, SSE): el servidor lanza `claude -p <msg> --output-format
+stream-json --mcp-config .mcp.json --strict-mcp-config --allowedTools "mcp__cfturbo__*,Read,Glob,Grep"
+--append-system-prompt … --resume <sesión>` con el entorno limpio de variables `CLAUDE*` (para que
+use su propio login, no la sesión anidada). Usa la suscripción del usuario, sin API key. Requiere
+`claude auth login` hecho una vez en una terminal; si el token caducó la CLI responde "401 OAuth
+access token is invalid". Sin `--bare` (desactiva el llavero). `CFT_CLAUDE_BIN` permite apuntar a una
+CLI simulada para probar el panel.
 
 ## Flujo estándar
 

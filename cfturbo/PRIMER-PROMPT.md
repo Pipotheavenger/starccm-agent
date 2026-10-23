@@ -9,8 +9,13 @@ proyecto base `projects\primera-bomba\primera-bomba.cft` (nq ≈ 37, 227 m³/h, 
 2. Arranca la interfaz: preview `cfturbo-ui`, o en PowerShell desde `starccm-agent`:
    `cfturbo\.venv\Scripts\python -m uvicorn --app-dir cfturbo ui.server:app --port 8765`
    y abre http://localhost:8765.
-3. En la interfaz llena Q, H, n, fluido y los atajos que quieras, pulsa "Copiar prompt" y pégalo
-   en Claude Code. La interfaz se actualiza sola cuando aparece la corrida.
+3. En la interfaz tienes tres formas de trabajar, y las tres actualizan el visor solas:
+   - **Ejecutar**: escribe valores en la columna "Nuevo" (d2, b2, nBl, Q, H, n…) y pulsa
+     "▶ Ejecutar en CFturbo". Marca "Partir de la corrida seleccionada" para iterar sobre un resultado.
+   - **Pedir a Claude**: mismos valores, pero Claude revisa con criterio de turbomáquinas y corre.
+   - **Chat**: lenguaje natural ("resumen de la última corrida", "3 variantes de álabes", "compara v1
+     y v2"). Lo ejecuta Claude Code por detrás con las tools cft_*. Una sola vez, en una terminal:
+     `claude auth login` (si el chat responde "401 OAuth access token is invalid", repítelo).
 
 ## Prompt de ejemplo (lo que genera la interfaz)
 

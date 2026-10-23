@@ -223,6 +223,8 @@ def project_info(name_or_path: str) -> dict:
             "dS_mm": (_get(leaves, "dS") or 0) * 1000 or None,
             "dH_mm": (_get(leaves, "dH") or 0) * 1000 or None,
             "Psi": _get(leaves, "Psi"), "nBl": _get(leaves, "nBl"),
+            "b2_d2": _get(leaves, "b2_d2"), "EtaH": _get(leaves, "EtaH"),
+            "volute_d_out_mm": (_get(leaves, "volute_d_out") or 0) * 1000 or None,
             "AutoUpdate": _get_text(leaves, "AutoUpdate"),
         },
     }

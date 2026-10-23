@@ -11,105 +11,106 @@
   header{display:flex;gap:14px;align-items:center;padding:10px 16px;border-bottom:1px solid var(--line);background:var(--panel)}
   header h1{font-size:16px;margin:0;font-weight:600} header .sp{flex:1}
   .dot{width:10px;height:10px;border-radius:50%;background:var(--mut);display:inline-block;margin-right:6px}
-  main{display:grid;grid-template-columns:330px 1fr 340px;gap:0;min-height:0}
-  aside,section{min-height:0;overflow:auto}
-  aside{background:var(--panel);border-right:1px solid var(--line);padding:12px}
+  main{display:grid;grid-template-columns:360px 1fr 340px;min-height:0}
+  aside{min-height:0;overflow:auto;background:var(--panel);border-right:1px solid var(--line);padding:12px}
   aside.r{border-right:0;border-left:1px solid var(--line)}
+  #center{display:grid;grid-template-rows:1fr 340px;min-height:0}
   .card{border:1px solid var(--line);border-radius:8px;padding:10px 12px;margin-bottom:12px}
-  .card h2{font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:var(--mut);margin:0 0 8px}
+  .card h2{font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:var(--mut);margin:0 0 8px;display:flex;align-items:center;gap:8px}
+  .card h2 .sp{flex:1}
   label{display:block;font-size:12px;color:var(--mut);margin-top:6px}
   input,select,textarea,button{font:inherit;color:var(--fg);background:#0b1016;border:1px solid var(--line);border-radius:6px;padding:6px 8px;width:100%}
   input[type=checkbox]{width:auto;margin-right:6px}
-  .row{display:flex;gap:8px} .row>*{flex:1}
-  button{cursor:pointer;background:#1d2a3a} button.pri{background:var(--acc);color:#04202e;border-color:var(--acc);font-weight:600}
-  .big{font-size:26px;font-weight:700;font-family:var(--mono)} .mut{color:var(--mut)} .mono{font-family:var(--mono);font-size:12px}
-  .req::after{content:" *";color:var(--err)}
-  #viewer{position:relative;background:#0b1016;overflow:hidden;min-height:300px}
+  .row{display:flex;gap:8px;align-items:flex-end} .row>*{flex:1}
+  button{cursor:pointer;background:#1d2a3a;width:auto} button.pri{background:var(--acc);color:#04202e;border-color:var(--acc);font-weight:600} button:disabled{opacity:.5;cursor:default}
+  button.sm{padding:3px 8px;font-size:12px}
+  .big{font-size:24px;font-weight:700;font-family:var(--mono)} .mut{color:var(--mut)} .mono{font-family:var(--mono);font-size:12px}
+  #viewer{position:relative;background:#0b1016;overflow:hidden;min-height:260px}
   #viewer canvas{position:absolute;inset:0;width:100% !important;height:100% !important;display:block}
-  #vtools{position:absolute;top:10px;left:10px;display:flex;flex-wrap:wrap;gap:6px;max-width:70%}
+  #vtools{position:absolute;top:10px;left:10px;z-index:2;display:flex;flex-wrap:wrap;gap:6px;max-width:75%}
+  #vmsg{z-index:2}
   #vtools label{display:inline-flex;align-items:center;background:rgba(22,29,38,.85);border:1px solid var(--line);border-radius:6px;padding:4px 8px;margin:0;color:var(--fg);cursor:pointer}
   #vmsg{position:absolute;bottom:10px;left:10px;color:var(--mut);font-size:12px;background:rgba(22,29,38,.85);padding:4px 8px;border-radius:6px}
-  table{width:100%;border-collapse:collapse;font-size:12px} td,th{padding:4px 6px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top} th{color:var(--mut);font-weight:500}
+  table{width:100%;border-collapse:collapse;font-size:12px} td,th{padding:4px 6px;border-bottom:1px solid var(--line);text-align:left;vertical-align:middle} th{color:var(--mut);font-weight:500}
+  td.num{font-family:var(--mono);text-align:right} th.num{text-align:right}
+  table input{padding:3px 6px;font-family:var(--mono);font-size:12px;text-align:right}
   tr.sel td{background:#1d2a3a} tr.run{cursor:pointer}
   .tag{display:inline-block;padding:1px 7px;border-radius:10px;font-size:11px;font-weight:600}
   .ok{background:#14301d;color:var(--ok)} .warn{background:#332a12;color:var(--warn)} .error{background:#3a1a1c;color:var(--err)} .running{background:#163247;color:var(--acc)}
   ul.ev{list-style:none;padding:0;margin:0} ul.ev li{padding:4px 0;border-bottom:1px dashed var(--line)} ul.ev li span{color:var(--mut);font-family:var(--mono);font-size:11px;margin-right:8px}
   .msg{font-size:12px;padding:4px 6px;border-radius:4px;margin:3px 0} .msg.warn{background:#332a12} .msg.error{background:#3a1a1c}
-  textarea{height:150px;font-family:var(--mono);font-size:12px;resize:vertical}
-  @media (max-width:1100px){main{grid-template-columns:1fr;grid-template-rows:auto 60vh auto} aside{border:0;border-bottom:1px solid var(--line)}}
+  ul.files{list-style:none;padding:0;margin:0;font-size:12px} ul.files li{padding:2px 0} ul.files a{color:var(--acc);text-decoration:none;font-family:var(--mono)}
+  /* chat */
+  #chat{display:grid;grid-template-rows:auto 1fr auto;border-top:1px solid var(--line);background:var(--panel);min-height:0}
+  #chat h2{font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:var(--mut);margin:0;padding:8px 12px;display:flex;gap:8px;align-items:center;border-bottom:1px solid var(--line)}
+  #chatlog{overflow:auto;padding:10px 12px;display:flex;flex-direction:column;gap:8px}
+  .m{max-width:92%;padding:8px 10px;border-radius:10px;white-space:pre-wrap;font-size:13px;line-height:1.45}
+  .m.user{align-self:flex-end;background:#1d3a52} .m.bot{align-self:flex-start;background:#1b2430;border:1px solid var(--line)}
+  .m.tool{align-self:flex-start;background:transparent;border:1px dashed var(--line);color:var(--mut);font-family:var(--mono);font-size:11px;padding:4px 8px}
+  .m.err{align-self:stretch;background:#3a1a1c;font-size:12px}
+  .m table{margin:6px 0;background:#0b1016}
+  #chatin{display:flex;gap:8px;padding:8px 12px;border-top:1px solid var(--line)} #chatin textarea{height:54px;resize:none;flex:1}
+  .quick{display:flex;gap:6px;flex-wrap:wrap;padding:0 12px 8px}
+  @media (max-width:1100px){main{grid-template-columns:1fr;grid-template-rows:auto auto auto} #center{grid-template-rows:60vh 380px} aside{border:0;border-bottom:1px solid var(--line)}}
 </style>
 <script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"}}</script>
 </head>
 <body>
 <header>
   <h1>CFturbo · Controlador</h1>
-  <span class="mut">Claude Code decide, CFturbo construye, aquí lo ves</span>
+  <span class="mut">Claude decide, CFturbo construye, aquí lo ves y lo ejecutas</span>
   <span class="sp"></span>
   <span id="status"><span class="dot"></span><span class="mut">conectando…</span></span>
 </header>
 <main>
   <aside>
     <div class="card">
-      <h2>Proyecto base</h2>
+      <h2>Proyecto base <span class="sp"></span><span id="pnq" class="mono mut"></span></h2>
       <select id="project"></select>
       <div id="pinfo" class="mono mut" style="margin-top:6px"></div>
     </div>
     <div class="card">
-      <h2>Punto de diseño <span class="mut" style="text-transform:none;letter-spacing:0">(obligatorio)</span></h2>
-      <div class="row">
-        <div><label class="req">Caudal Q (m³/h)</label><input id="Q" type="number" step="any"></div>
-        <div><label class="req">Altura H (m)</label><input id="H" type="number" step="any"></div>
+      <h2>Parámetros <span class="sp"></span><button class="sm" id="clear">Limpiar</button></h2>
+      <table id="params"><thead><tr><th>Parámetro</th><th class="num">Base</th><th class="num" id="runcol">Corrida</th><th class="num">Nuevo</th></tr></thead><tbody></tbody></table>
+      <div class="mono mut" style="margin-top:6px">nq nuevo: <span id="nqnew">–</span> <span id="nqtipo"></span></div>
+      <label><input type="checkbox" id="autoupd">Recalcular d2, b2, dS desde Q/H/n (AutoUpdate)</label>
+      <label><input type="checkbox" id="fromrun">Partir de la corrida seleccionada, no del proyecto base</label>
+      <div class="row" style="margin-top:8px">
+        <div><label>Nombre</label><input id="rname" placeholder="v2"></div>
+        <div><label>Exportar</label><div style="display:flex;gap:10px;padding-top:4px"><label style="margin:0"><input type="checkbox" id="exCCM" checked>STEP</label><label style="margin:0"><input type="checkbox" id="exSTL" checked>STL</label></div></div>
       </div>
-      <div class="row">
-        <div><label class="req">Velocidad n (rpm)</label><input id="n" type="number" step="any"></div>
-        <div><label class="req">Fluido</label><select id="fluid"><option>agua 20 °C</option><option>agua 60 °C</option><option>otro (describir)</option></select></div>
-      </div>
-      <label>Uso</label>
-      <select id="mode"><option value="bomba">Bomba</option><option value="pat">Bomba como turbina (PAT)</option></select>
-      <div style="margin-top:10px;display:flex;align-items:baseline;gap:10px"><span class="big" id="nq">–</span><span class="mut">nq</span><span id="nqtipo" class="mut"></span></div>
-      <div class="mono mut" id="phid"></div>
-    </div>
-    <div class="card">
-      <h2>Atajos opcionales</h2>
-      <div class="row">
-        <div><label>d2 (mm)</label><input id="d2" type="number" step="any" placeholder="auto"></div>
-        <div><label>b2 (mm)</label><input id="b2" type="number" step="any" placeholder="auto"></div>
-      </div>
-      <div class="row">
-        <div><label>Nº álabes</label><input id="nBl" type="number" step="1" placeholder="auto"></div>
-        <div><label>Psi</label><input id="Psi" type="number" step="any" placeholder="auto"></div>
-      </div>
-      <label>Nombre de la corrida</label><input id="rname" placeholder="v1">
-      <label>Exportar</label>
-      <div class="row"><label><input type="checkbox" id="exCCM" checked>STAR-CCM+ (STEP)</label><label><input type="checkbox" id="exSTL" checked>STL (visor)</label></div>
-      <label>Instrucción libre</label><input id="free" placeholder="p.ej. prueba 3 variantes de álabes">
-    </div>
-    <div class="card">
-      <h2>Prompt para Claude Code</h2>
-      <textarea id="prompt" readonly></textarea>
-      <div class="row" style="margin-top:8px"><button class="pri" id="copy">Copiar prompt</button></div>
-      <div class="mut" style="font-size:12px;margin-top:6px">Pégalo en Claude Code (carpeta <span class="mono">cfturbo</span>). Esta página se actualiza sola cuando aparece la corrida.</div>
+      <div class="row" style="margin-top:10px"><button class="pri" id="runbtn">▶ Ejecutar en CFturbo</button><button id="askbtn" title="Pide a Claude que lo haga con criterio">Pedir a Claude</button></div>
+      <div id="runmsg" class="mut" style="font-size:12px;margin-top:6px"></div>
     </div>
   </aside>
 
-  <section id="viewer">
-    <div id="vtools"></div>
-    <div id="vmsg">sin geometría</div>
+  <section id="center">
+    <div id="viewer"><div id="vtools"></div><div id="vmsg">sin geometría</div></div>
+    <div id="chat">
+      <h2>Chat con Claude Code <span class="sp"></span><span id="chatstate" class="mut" style="text-transform:none;letter-spacing:0"></span><button class="sm" id="newchat">Nueva conversación</button><button class="sm" id="stopchat" disabled>Detener</button></h2>
+      <div id="chatlog"><div class="m bot mut">Escribe en lenguaje natural: «diseña una variante con 7 álabes y d2 215 mm», «dame un resumen de la última corrida», «compara v1 y v2». Claude usa las tools cft_* y la página se actualiza sola.</div></div>
+      <div class="quick">
+        <button class="sm" data-q="Dame un resumen de la última corrida: punto de diseño, dimensiones principales, avisos y archivos exportados.">Resumen</button>
+        <button class="sm" data-q="Propón 3 variantes del proyecto base moviendo d2, b2 y número de álabes con criterio de turbomáquinas, córrelas y dame una tabla comparativa.">3 variantes</button>
+        <button class="sm" data-q="Compara las dos últimas corridas: parámetros, avisos y diferencias.">Comparar</button>
+      </div>
+      <div id="chatin"><textarea id="chattext" placeholder="Escribe y pulsa Enter (Shift+Enter = salto de línea)"></textarea><button class="pri" id="send">Enviar</button></div>
+    </div>
   </section>
 
   <aside class="r">
     <div class="card">
-      <h2>Hitos <span id="runtitle" class="mono" style="text-transform:none;letter-spacing:0"></span></h2>
+      <h2>Hitos <span class="sp"></span><span id="runtitle" class="mono" style="text-transform:none;letter-spacing:0"></span></h2>
       <ul class="ev" id="events"><li class="mut">esperando corrida…</li></ul>
       <div id="msgs"></div>
     </div>
     <div class="card">
-      <h2>Pedido vs realizado</h2>
-      <table id="realized"><tbody><tr><td class="mut">–</td></tr></tbody></table>
+      <h2>Archivos <span class="sp"></span><button class="sm" id="openfolder" disabled>Abrir carpeta</button></h2>
+      <ul class="files" id="files"><li class="mut">–</li></ul>
     </div>
     <div class="card">
       <h2>Corridas</h2>
-      <table id="runs"><thead><tr><th>Nombre</th><th>Hora</th><th>d2</th><th>nBl</th><th>Estado</th></tr></thead><tbody></tbody></table>
+      <table id="runs"><thead><tr><th>Nombre</th><th>Hora</th><th class="num">d2</th><th class="num">nBl</th><th>Estado</th></tr></thead><tbody></tbody></table>
     </div>
   </aside>
 </main>
@@ -120,85 +121,175 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { STLLoader } from 'three/addons/loaders/STLLoader.js';
 
 const $ = id => document.getElementById(id);
-const st = { projects: [], project: null, info: null, runs: [], run: null, pinned: false, meshes: new Map(), showCaps: false };
+const st = { projects: [], project: null, info: null, runs: [], run: null, pinned: false, meshes: new Map(), showCaps: false, chatting: false, session: null };
+const fmt = (x, d = 1) => x == null || x === '' || isNaN(+x) ? '–' : (+x).toFixed(d);
 
-// ---------------------------------------------------------------- nq y prompt
-function nq() {
-  const Q = +$('Q').value, H = +$('H').value, n = +$('n').value;
-  if (!(Q > 0 && H > 0 && n > 0)) { $('nq').textContent = '–'; $('nqtipo').textContent = ''; $('phid').textContent = ''; return null; }
+// ---------------------------------------------------------------- parámetros
+const PARAMS = [
+  { key: 'Q_m3h', label: 'Caudal Q', unit: 'm³/h', from: i => i?.design_point?.Q_m3h, d: 1 },
+  { key: 'H_m', label: 'Altura H', unit: 'm', from: i => i?.design_point?.H_m, d: 1 },
+  { key: 'n_rpm', label: 'Velocidad n', unit: 'rpm', from: i => i?.design_point?.n_rpm, d: 0 },
+  { key: 'd2_mm', label: 'Diám. salida d2', unit: 'mm', from: i => i?.dims?.d2_mm, d: 1 },
+  { key: 'b2_mm', label: 'Ancho salida b2', unit: 'mm', from: i => i?.dims?.b2_mm, d: 2 },
+  { key: 'dS_mm', label: 'Diám. succión dS', unit: 'mm', from: i => i?.dims?.dS_mm, d: 1 },
+  { key: 'dH_mm', label: 'Diám. cubo dH', unit: 'mm', from: i => i?.dims?.dH_mm, d: 1 },
+  { key: 'Psi', label: 'Coef. presión ψ', unit: '-', from: i => i?.dims?.Psi, d: 3 },
+  { key: 'nBl', label: 'Nº álabes', unit: '-', from: i => i?.dims?.nBl, d: 0 },
+  { key: 'volute_d_out_mm', label: 'Diám. salida voluta', unit: 'mm', from: i => i?.dims?.volute_d_out_mm, d: 1 },
+];
+function renderParams() {
+  const base = st.info, run = st.run?.info;
+  $('runcol').textContent = st.run ? st.run.name : 'Corrida';
+  const tb = $('params').querySelector('tbody');
+  const prev = Object.fromEntries([...tb.querySelectorAll('input')].map(i => [i.dataset.k, i.value]));
+  tb.innerHTML = PARAMS.map(p => {
+    const b = p.from(base), r = p.from(run);
+    const changed = b != null && r != null && Math.abs(b - r) > 1e-9;
+    return `<tr><td>${p.label} <span class="mut">${p.unit}</span></td><td class="num">${fmt(b, p.d)}</td><td class="num" style="color:${changed ? 'var(--warn)' : 'inherit'}">${fmt(r, p.d)}</td><td><input data-k="${p.key}" type="number" step="any" value="${prev[p.key] ?? ''}" placeholder="${fmt(run ? r : b, p.d)}"></td></tr>`;
+  }).join('') + `<tr><td>nq <span class="mut">–</span></td><td class="num">${fmt(base?.nq?.nq)}</td><td class="num">${fmt(run?.nq?.nq)}</td><td class="num" id="nqcell"></td></tr>`;
+  for (const i of tb.querySelectorAll('input')) i.addEventListener('input', nqNew);
+  nqNew();
+}
+function edits() {
+  const e = {};
+  for (const i of $('params').querySelectorAll('input')) if (i.value !== '') e[i.dataset.k] = +i.value;
+  if ($('autoupd').checked) e.AutoUpdate = true;
+  return e;
+}
+function nqNew() {
+  const e = edits(), src = $('fromrun').checked && st.run?.info ? st.run.info : st.info;
+  const Q = e.Q_m3h ?? src?.design_point?.Q_m3h, H = e.H_m ?? src?.design_point?.H_m, n = e.n_rpm ?? src?.design_point?.n_rpm;
+  if (!(Q > 0 && H > 0 && n > 0)) { $('nqnew').textContent = '–'; $('nqtipo').textContent = ''; return; }
   const v = n * Math.sqrt(Q / 3600) / Math.pow(H, .75);
   const tipo = v < 10 ? 'radial muy lenta' : v < 30 ? 'radial lenta' : v < 50 ? 'radial normal' : v < 80 ? 'radial rápida / semiaxial' : v < 160 ? 'flujo mixto' : 'axial';
-  $('nq').textContent = v.toFixed(1); $('nqtipo').textContent = tipo;
-  $('phid').textContent = `P hidráulica ≈ ${(998.2 * 9.80665 * Q / 3600 * H / 1000).toFixed(2)} kW`;
-  return v;
+  $('nqnew').textContent = v.toFixed(1); $('nqtipo').textContent = tipo; const c = $('nqcell'); if (c) c.textContent = v.toFixed(1);
 }
-function prompt() {
-  const v = nq(); const p = st.project || '<proyecto>';
-  const opt = [];
-  for (const k of ['d2', 'b2', 'nBl', 'Psi']) if ($(k).value) opt.push(`${k}${k === 'd2' || k === 'b2' ? '_mm' : ''}=${$(k).value}`);
-  const ex = [$('exCCM').checked && 'StarCCM', $('exSTL').checked && 'OpenFOAM'].filter(Boolean).join(', ') || 'ninguno';
-  const modo = $('mode').value === 'pat' ? 'La máquina se usará como turbina (PAT): diseña la bomba equivalente y dilo explícitamente.' : '';
-  const t = `Lee CLAUDE.md. Proyecto base: ${p}.
-Punto de diseño: Q=${$('Q').value || '?'} m³/h, H=${$('H').value || '?'} m, n=${$('n').value || '?'} rpm, ${$('fluid').value}${v ? ` (nq ≈ ${v.toFixed(1)})` : ''}. ${modo}
-${opt.length ? 'Fija estos parámetros: ' + opt.join(', ') + '. Los demás con criterio de turbomáquinas.' : 'Propón las dimensiones con criterio de turbomáquinas.'}
-Corre cft_run con name="${$('rname').value || 'v1'}" y exports [${ex}]. ${$('free').value}
-Entrega: tabla pedido vs realizado, correcciones de CFturbo, avisos y rutas de los STEP. Si algo falla, lee cft_log y corrige.`;
-  $('prompt').value = t.replace(/\n\n+/g, '\n');
+$('clear').onclick = () => { for (const i of $('params').querySelectorAll('input')) i.value = ''; nqNew(); };
+$('fromrun').onchange = nqNew; $('autoupd').onchange = nqNew;
+
+function describeEdits(e) {
+  const names = Object.fromEntries(PARAMS.map(p => [p.key, `${p.label} ${p.unit}`]));
+  return Object.entries(e).filter(([k]) => k !== 'AutoUpdate').map(([k, v]) => `${names[k] || k} = ${v}`).join(', ');
 }
-for (const id of ['Q', 'H', 'n', 'fluid', 'mode', 'd2', 'b2', 'nBl', 'Psi', 'rname', 'exCCM', 'exSTL', 'free']) $(id).addEventListener('input', prompt);
-$('copy').onclick = async () => {
-  try { await navigator.clipboard.writeText($('prompt').value); } catch { $('prompt').select(); document.execCommand('copy'); }
-  $('copy').textContent = 'Copiado ✓'; setTimeout(() => $('copy').textContent = 'Copiar prompt', 1500);
+function sourceProject() {
+  if ($('fromrun').checked && st.run?.run_dir) return `${st.run.run_dir}\\${st.run.name}_out.cft`;
+  return st.project;
+}
+$('runbtn').onclick = async () => {
+  const e = edits(), ex = [$('exCCM').checked && 'StarCCM', $('exSTL').checked && 'OpenFOAM'].filter(Boolean);
+  const body = { project: sourceProject(), edits: e, name: $('rname').value || 'v' + (st.runs.length + 1), exports: ex, save: true };
+  $('runbtn').disabled = true; $('runmsg').textContent = 'lanzando CFturbo…';
+  const r = await fetch('/api/run', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+  if (!r.ok) { $('runmsg').textContent = 'error: ' + ((await r.json()).detail || r.status); $('runbtn').disabled = false; return; }
+  $('runmsg').textContent = `corriendo «${body.name}» con ${Object.keys(e).length} cambios: ${describeEdits(e) || 'sin cambios (solo exportar)'}`;
+  st.pinned = false;
+};
+$('askbtn').onclick = () => {
+  const e = edits(); const txt = Object.keys(e).length
+    ? `Partiendo de ${$('fromrun').checked && st.run ? 'la corrida ' + st.run.name : 'el proyecto base'}, aplica ${describeEdits(e)}${e.AutoUpdate ? ' con AutoUpdate' : ''}, revisa con criterio de turbomáquinas si los demás parámetros deben acompañar el cambio, corre cft_run (name "${$('rname').value || 'v' + (st.runs.length + 1)}") y dame pedido vs realizado, avisos y archivos.`
+    : `Revisa el proyecto base con criterio de turbomáquinas y propón una mejora concreta; córrela con cft_run y explícame qué cambió.`;
+  $('chattext').value = txt; sendChat();
 };
 
-// ---------------------------------------------------------------- proyectos
+// ---------------------------------------------------------------- proyectos y corridas
 async function loadProjects() {
   st.projects = await (await fetch('/api/projects')).json();
   $('project').innerHTML = st.projects.map(p => `<option value="${p.name}">${p.name}</option>`).join('') || '<option value="">(sin proyectos en projects/)</option>';
   if (st.projects.length) { st.project = st.projects[0].name; await loadInfo(); }
-  prompt();
 }
 async function loadInfo() {
   if (!st.project) return;
   st.info = await (await fetch('/api/project/' + encodeURIComponent(st.project))).json();
-  const dp = st.info.design_point || {}, d = st.info.dims || {};
-  if (!$('Q').value) $('Q').value = dp.Q_m3h ?? ''; if (!$('H').value) $('H').value = dp.H_m ?? ''; if (!$('n').value) $('n').value = dp.n_rpm ?? '';
-  $('pinfo').textContent = `${st.info.project_type} · ${(st.info.components || []).map(c => c.caption).join(' + ')} · d2 ${fmt(d.d2_mm)} mm · b2 ${fmt(d.b2_mm)} mm · ${d.nBl ?? '?'} álabes`;
-  prompt();
+  const dp = st.info.design_point || {};
+  $('pinfo').textContent = `${st.info.project_type} · ${(st.info.components || []).map(c => c.caption).join(' + ')} · ${dp.fluid || ''}`;
+  $('pnq').textContent = st.info.nq ? `nq ${st.info.nq.nq} · ${st.info.nq.tipo}` : '';
+  renderParams();
 }
 $('project').onchange = e => { st.project = e.target.value; loadInfo(); };
-const fmt = x => x == null ? '?' : (+x).toFixed(1);
 
-// ---------------------------------------------------------------- corridas
 async function poll() {
   try {
-    const runs = await (await fetch('/api/runs?limit=40')).json();
-    $('status').innerHTML = '<span class="dot" style="background:var(--ok)"></span><span class="mut">conectado · ' + runs.length + ' corridas</span>';
+    const [runs, status] = await Promise.all([(await fetch('/api/runs?limit=40')).json(), (await fetch('/api/status')).json()]);
+    $('status').innerHTML = `<span class="dot" style="background:${status.running ? 'var(--warn)' : 'var(--ok)'}"></span><span class="mut">${status.running ? 'CFturbo trabajando' : 'listo'} · ${runs.length} corridas</span>`;
+    $('runbtn').disabled = status.running;
+    if (!status.running && $('runmsg').textContent.startsWith('corriendo')) $('runmsg').textContent = '';
     const changed = JSON.stringify(runs.map(r => r.id + r.status)) !== JSON.stringify(st.runs.map(r => r.id + r.status));
     st.runs = runs; if (changed) renderRuns();
-    if (runs.length && (!st.run || (!st.pinned && runs[0].id !== st.run.id) || (st.run && runs[0].id === st.run.id && runs[0].status !== st.run.status))) selectRun(runs[0].id);
+    if (runs.length && (!st.run || (!st.pinned && runs[0].id !== st.run.id) || (runs[0].id === st.run.id && runs[0].status !== st.run.status))) selectRun(runs[0].id);
   } catch { $('status').innerHTML = '<span class="dot" style="background:var(--err)"></span><span class="mut">sin conexión</span>'; }
 }
 function renderRuns() {
   $('runs').querySelector('tbody').innerHTML = st.runs.map(r => {
     const d = r.info?.dims || {};
-    return `<tr class="run ${st.run && st.run.id === r.id ? 'sel' : ''}" data-id="${r.id}"><td>${r.name}</td><td class="mono">${(r.started || '').slice(11, 19)}</td><td>${fmt(d.d2_mm)}</td><td>${d.nBl ?? ''}</td><td><span class="tag ${r.status}">${r.status}</span></td></tr>`;
+    return `<tr class="run ${st.run && st.run.id === r.id ? 'sel' : ''}" data-id="${r.id}"><td>${r.name}</td><td class="mono">${(r.started || '').slice(11, 16)}</td><td class="num">${fmt(d.d2_mm)}</td><td class="num">${d.nBl ?? ''}</td><td><span class="tag ${r.status}">${r.status}</span></td></tr>`;
   }).join('');
   for (const tr of $('runs').querySelectorAll('tr.run')) tr.onclick = () => { st.pinned = tr.dataset.id !== st.runs[0]?.id; selectRun(tr.dataset.id); };
 }
 async function selectRun(id) {
   const r = await (await fetch('/api/runs/' + id)).json();
-  const same = st.run && st.run.id === r.id;
-  st.run = r; renderRuns();
-  $('runtitle').textContent = r.name + ' · ' + (r.started || '').slice(0, 19).replace('T', ' ');
+  const same = st.run && st.run.id === r.id && st.run.status === r.status;
+  st.run = r; renderRuns(); renderParams();
+  $('runtitle').textContent = r.name + ' · ' + (r.started || '').slice(0, 16).replace('T', ' ');
   $('events').innerHTML = (r.events || []).map(e => `<li><span>${e.t.slice(11, 19)}</span>${e.msg}</li>`).join('') || '<li class="mut">sin hitos</li>';
-  $('msgs').innerHTML = (r.errors || []).map(m => `<div class="msg error">${m}</div>`).join('') + (r.warnings || []).map(m => `<div class="msg warn">${m}</div>`).join('');
-  const keys = Object.keys(r.edits || {});
-  $('realized').querySelector('tbody').innerHTML = keys.length ? '<tr><th>clave</th><th>pedido</th><th>realizado (SI)</th></tr>' + keys.map(k =>
-    `<tr><td class="mono">${k}</td><td>${r.edits[k]}</td><td class="mono" style="color:${r.corrected?.[k] ? 'var(--warn)' : 'inherit'}">${r.realized?.[k] ?? '–'}${r.corrected?.[k] ? ' ⚠ corregido' : ''}</td></tr>`).join('')
-    : '<tr><td class="mut">sin cambios de parámetros</td></tr>';
-  if (!same || r.status !== 'running') loadGeometry(r);
+  const corr = Object.entries(r.corrected || {}).map(([k, [a, b]]) => `<div class="msg warn">CFturbo corrigió ${k}: pedido ${a} → ${b}</div>`).join('');
+  $('msgs').innerHTML = corr + (r.errors || []).map(m => `<div class="msg error">${m}</div>`).join('') + (r.warnings || []).map(m => `<div class="msg warn">${m}</div>`).join('');
+  const all = Object.entries(r.exports || {}).flatMap(([itf, fs]) => fs.filter(f => !f.endsWith('.stl')).map(f => ({ itf, f })));
+  const nstl = (r.exports?.OpenFOAM || []).length;
+  $('files').innerHTML = (all.map(({ itf, f }) => `<li><a href="/files/${r.id}/${encodeURIComponent(f)}" download>${f}</a> <span class="mut">${itf}</span></li>`).join('') + (nstl ? `<li class="mut">${nstl} STL para el visor</li>` : '')) || '<li class="mut">sin archivos</li>';
+  $('openfolder').disabled = false;
+  if (!same) loadGeometry(r);
 }
+$('openfolder').onclick = () => st.run && fetch('/api/open', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ run_id: st.run.id }) });
+
+// ---------------------------------------------------------------- chat
+function addMsg(cls, html) { const d = document.createElement('div'); d.className = 'm ' + cls; d.innerHTML = html; $('chatlog').appendChild(d); $('chatlog').scrollTop = 1e9; return d; }
+const esc = s => s.replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
+function md(s) {  // markdown mínimo: tablas, negrita, código
+  const lines = esc(s).split('\n'); let out = [], i = 0;
+  while (i < lines.length) {
+    if (/^\s*\|.*\|\s*$/.test(lines[i]) && /^\s*\|[\s:|-]+\|\s*$/.test(lines[i + 1] || '')) {
+      const rows = []; while (i < lines.length && /^\s*\|.*\|\s*$/.test(lines[i])) rows.push(lines[i++]);
+      const cells = r => r.trim().slice(1, -1).split('|').map(c => c.trim());
+      out.push('<table><tr>' + cells(rows[0]).map(c => `<th>${c}</th>`).join('') + '</tr>' + rows.slice(2).map(r => '<tr>' + cells(r).map(c => `<td>${c}</td>`).join('') + '</tr>').join('') + '</table>');
+    } else out.push(lines[i++]);
+  }
+  return out.join('\n').replace(/\*\*(.+?)\*\*/g, '<b>$1</b>').replace(/`([^`]+)`/g, '<code>$1</code>').replace(/\n(?=<table)/g, '').replace(/(<\/table>)\n/g, '$1');
+}
+async function sendChat() {
+  const text = $('chattext').value.trim(); if (!text || st.chatting) return;
+  $('chattext').value = ''; addMsg('user', esc(text));
+  st.chatting = true; $('send').disabled = true; $('stopchat').disabled = false; $('chatstate').textContent = 'pensando…';
+  let bot = null;
+  try {
+    const r = await fetch('/api/chat', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ message: text, session_id: st.session, project: st.project }) });
+    const reader = r.body.getReader(), dec = new TextDecoder(); let buf = '';
+    while (true) {
+      const { value, done } = await reader.read(); if (done) break;
+      buf += dec.decode(value, { stream: true });
+      let idx; while ((idx = buf.indexOf('\n\n')) >= 0) {
+        const chunk = buf.slice(0, idx); buf = buf.slice(idx + 2);
+        if (!chunk.startsWith('data: ')) continue;
+        const ev = JSON.parse(chunk.slice(6));
+        if (ev.kind === 'init') { st.session = ev.session_id; localStorage.setItem('cft_session', st.session); $('chatstate').textContent = `sesión ${st.session.slice(0, 8)} · ${ev.model || ''}`; }
+        else if (ev.kind === 'text') { bot = addMsg('bot', md(ev.text)); }
+        else if (ev.kind === 'tool') { addMsg('tool', `🔧 ${esc(ev.name)} ${esc(JSON.stringify(ev.input || {})).slice(0, 300)}`); $('chatstate').textContent = `ejecutando ${ev.name}…`; st.pinned = false; }
+        else if (ev.kind === 'tool_result') { if (ev.is_error) addMsg('tool', '⚠ ' + esc(ev.text)); }
+        else if (ev.kind === 'status') { $('chatstate').textContent = ev.text; }
+        else if (ev.kind === 'ping') { $('chatstate').textContent = `trabajando… ${ev.t}s`; }
+        else if (ev.kind === 'error') { addMsg('err', esc(ev.text)); }
+        else if (ev.kind === 'result') { if (ev.text) addMsg('err', esc(ev.text)); $('chatstate').textContent = `listo · ${ev.turns} turnos · ${ev.seconds}s`; }
+        if ((ev.kind === 'text' || ev.kind === 'result') && /401|not logged in|OAuth/i.test(ev.text || '')) addMsg('err', 'La CLI de Claude Code no tiene sesión válida. En una terminal ejecuta:  claude auth login   y vuelve a intentarlo.');
+      }
+    }
+  } catch (e) { addMsg('err', 'conexión perdida: ' + esc(String(e))); }
+  st.chatting = false; $('send').disabled = false; $('stopchat').disabled = true; poll();
+}
+$('send').onclick = sendChat;
+$('chattext').addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendChat(); } });
+$('stopchat').onclick = () => fetch('/api/chat/stop', { method: 'POST' });
+$('newchat').onclick = () => { st.session = null; localStorage.removeItem('cft_session'); $('chatlog').innerHTML = ''; $('chatstate').textContent = 'nueva conversación'; };
+for (const b of document.querySelectorAll('.quick button')) b.onclick = () => { $('chattext').value = b.dataset.q; sendChat(); };
+try { st.session = localStorage.getItem('cft_session'); if (st.session) $('chatstate').textContent = `sesión ${st.session.slice(0, 8)} (continúa)`; } catch {}
 
 // ---------------------------------------------------------------- visor 3D
 const V = $('viewer');
@@ -209,14 +300,9 @@ const controls = new OrbitControls(camera, renderer.domElement); controls.enable
 let dirty = true, lastTick = 0;
 const render = () => { dirty = true; };
 controls.addEventListener('change', render);
-function tick() {
-  lastTick = performance.now();
-  if (controls.update()) dirty = true;      // true mientras el amortiguado sigue moviendo la cámara
-  if (dirty) { renderer.render(scene, camera); dirty = false; }
-}
+function tick() { lastTick = performance.now(); if (controls.update()) dirty = true; if (dirty) { renderer.render(scene, camera); dirty = false; } }
 (function raf() { requestAnimationFrame(raf); tick(); })();
-// Respaldo a 30 fps: en el panel incrustado de la app el rAF puede no dispararse
-setInterval(() => { if (performance.now() - lastTick > 40) tick(); }, 33);
+setInterval(() => { if (performance.now() - lastTick > 40) tick(); }, 33);  // respaldo si el rAF no corre
 scene.add(new THREE.HemisphereLight(0xffffff, 0x334455, 1.6));
 const dl = new THREE.DirectionalLight(0xffffff, 1.8); dl.position.set(1, 1, 2); scene.add(dl);
 const dl2 = new THREE.DirectionalLight(0xffffff, 0.8); dl2.position.set(-1, -2, -1); scene.add(dl2);
@@ -227,17 +313,16 @@ let lastW = 0, lastH = 0;
 function resize() {
   const w = V.clientWidth, h = V.clientHeight;
   if (!w || !h || (w === lastW && h === lastH)) return;   // evita el bucle lienzo -> scrollbar -> lienzo
-  lastW = w; lastH = h;
-  renderer.setSize(w, h, false); camera.aspect = w / h; camera.updateProjectionMatrix(); render();
+  lastW = w; lastH = h; renderer.setSize(w, h, false); camera.aspect = w / h; camera.updateProjectionMatrix(); render();
 }
 new ResizeObserver(resize).observe(V); resize();
 const COLORS = { Stator: 0x7aa2f7, Impeller: 0xff9e64, Volute: 0x9ece6a, ext: 0x565f89 };
 const colorFor = c => c.includes('ext') ? COLORS.ext : c.includes('Impeller') ? COLORS.Impeller : c.includes('Volute') ? COLORS.Volute : COLORS.Stator;
 const loader = new STLLoader();
 async function loadGeometry(r) {
-  group.clear(); st.meshes.clear();
+  group.clear(); st.meshes.clear(); render();
   const geo = (r.geometry || []).filter(g => g.kind === 'stl');
-  if (!geo.length) { $('vmsg').textContent = r.status === 'running' ? 'CFturbo trabajando…' : 'esta corrida no tiene STL (exporta con OpenFOAM)'; $('vtools').innerHTML = ''; return; }
+  if (!geo.length) { $('vmsg').textContent = r.status === 'running' ? 'CFturbo trabajando…' : 'esta corrida no tiene STL (exporta con STL)'; $('vtools').innerHTML = ''; return; }
   $('vmsg').textContent = `cargando ${geo.length} superficies…`;
   const comps = [...new Set(geo.map(g => g.component))];
   $('vtools').innerHTML = comps.map(c => `<label><input type="checkbox" data-c="${c}" ${c.includes('ext') ? '' : 'checked'}><span style="color:#${colorFor(c).toString(16).padStart(6, '0')}">■</span>&nbsp;${c}</label>`).join('') +
@@ -247,7 +332,7 @@ async function loadGeometry(r) {
   let n = 0;
   await Promise.all(geo.map(g => new Promise(res => loader.load(`/files/${r.id}/${encodeURIComponent(g.file)}`, bg => {
     bg.computeVertexNormals();
-    const m = new THREE.Mesh(bg, new THREE.MeshStandardMaterial({ color: colorFor(g.component), metalness: .1, roughness: .6, side: THREE.DoubleSide, transparent: g.component.includes('Volute') || g.component.includes('Stator'), opacity: g.component.includes('Impeller') ? 1 : .7 }));
+    const m = new THREE.Mesh(bg, new THREE.MeshStandardMaterial({ color: colorFor(g.component), metalness: .1, roughness: .6, side: THREE.DoubleSide, transparent: !g.component.includes('Impeller'), opacity: g.component.includes('Impeller') ? 1 : .7 }));
     m.userData = g; group.add(m); st.meshes.set(g.file, m); n++; $('vmsg').textContent = `cargadas ${n}/${geo.length}`; render(); res();
   }, undefined, () => res()))));
   applyVis(); fit();
@@ -266,7 +351,7 @@ function fit() {
   camera.lookAt(c); controls.update(); renderer.render(scene, camera);
 }
 
-window.__cft = { st, group, camera, controls, scene, fit, renderer };  // depuración desde la consola
+window.__cft = { st, group, camera, controls, scene, fit, renderer };
 loadProjects(); poll(); setInterval(poll, 3000);
 </script>
 </body>
