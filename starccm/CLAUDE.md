@@ -180,6 +180,18 @@ Turbina: mismo flujo, cambia el signo del momento y el objetivo es potencia extr
   `server_start` lo apaga al arrancar (`AutoSave.setAutoSaveBatch(false)`).
 - 2026-10-23 · CPU i5-1245U: 2 núcleos P + 8 E. Con `-np 10` el solver avisa de sobresuscripción;
   `STARCCM_NP=4` en `.env`. El selftest y el cilindro no notan la diferencia; medir en una bomba.
+- 2026-10-23 · Export de CFturbo (3 STEP con caras coincidentes en las interfaces): una sola
+  operación de malla con las 3 partes falla en el remallador («Surface intersects self» en r = D2/2).
+  Cada parte por separado se remalla limpia. Regla: **una operación de malla por parte** y añadir
+  `star.resurfacer.AutomaticSurfaceRepairAutoMesher` a la lista de malladores.
+- 2026-10-23 · `importCadPart(ruta, "SharpEdges", 30.0, 2, 1e-5)` conserva los nombres de cara de
+  CFturbo como superficies de parte (`[Impeller_1]-Flow domain-BladePS`…); `newRegionsFromParts`
+  con `OneBoundaryPerPartSurface` las convierte en fronteras con el mismo nombre (renombrar por sufijo).
+- 2026-10-23 · MRF en 2410: `ReferenceFrameManager.createReferenceFrame(RotatingReferenceFrame.class, n)`
+  + `getRotationRate().setValueAndUnits(rpm, "rpm")` + `getAxisDirection/Origin`; se asigna con
+  `region.getValues().get(MotionSpecification.class).setReferenceFrame(frame)`. `RotatingMotion` no
+  expone la velocidad directamente.
+- 2026-10-23 · Expresiones entre reportes: `${{nombreReport}}` (p.ej. `${{pt_outReport}}`).
 - 2026-10-23 · Caso cilindro (r 50 mm, L 0,5 m, 11 463 celdas poliédricas + prismas, agua 1 m/s,
   SST): 100 iteraciones, residuales 1e-6, Q_in = −Q_out = 7,755 kg/s. Recetas de cada paso guardadas.
   `cases/cilindro/RESUMEN.md`.

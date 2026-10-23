@@ -18,6 +18,8 @@ starccm/cases/*/*
 !starccm/cases/README.md
 !starccm/cases/*/RESUMEN.md
 !starccm/cases/*/images/
+!starccm/cases/*/*.py
+!starccm/cases/*/reports/
 *.sim
 *.sim~
 *.dmprj
