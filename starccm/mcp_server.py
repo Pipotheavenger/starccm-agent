@@ -194,7 +194,8 @@ def _log(msg: str) -> None:
 IMPORTS = [
     "star.common.*", "star.base.neo.*", "star.base.report.*", "star.meshing.*", "star.flow.*",
     "star.kwturb.*", "star.vis.*", "star.cadmodeler.*", "star.prismmesher.*", "star.surfacewrapper.*",
-    "star.material.*", "star.segregatedflow.*", "star.turbulence.*", "star.motion.*",
+    "star.material.*", "star.segregatedflow.*", "star.turbulence.*", "star.motion.*", "star.metrics.*",
+    "star.resurfacer.*", "star.dualmesher.*",
     "java.util.*", "java.io.*",
 ]
 
@@ -375,7 +376,17 @@ def server_start(sim_path: str = "", name: str = "") -> dict:
             raise RuntimeError("El servidor no abrió el puerto en 600 s")
         st["startup_seconds"] = round(time.time() - t0, 1)
         _write_state(st)
-        _log(f"servidor pid={st['pid']} puerto={PORT} sim={sim} en {st['startup_seconds']}s")
+        # Autoguardado en batch apagado: en 2410 viene activo y deja <sim>@meshed.sim y @NNNNN.sim
+        # (gigas en una bomba). (Simulation no tiene setPresentationName: el nombre lo da save().)
+        init = ("AutoSave as = sim.getSimulationIterator().getAutoSave();\n"
+                "as.setAutoSaveBatch(false); as.setAutoSaveMesh(false);\n"
+                'sim.println("INIT autosave off");\n')
+        try:
+            st["init"] = _inject(init, timeout=600)["stdout"][-200:]
+        except Exception as e:  # noqa: BLE001
+            st["init"] = f"init falló: {e}"
+        _write_state(st)
+        _log(f"servidor pid={st['pid']} puerto={PORT} sim={sim} en {st['startup_seconds']}s; {st['init']}")
         return st
 
 
@@ -483,6 +494,11 @@ for (Solver s : sim.getSolverManager().getObjects())
   sim.println("SOLVER\\t" + s.getPresentationName() + "\\t" + s.getClass().getSimpleName());
 """,
 }
+# Cada sección en su propio try/catch: un gestor ausente (p.ej. MeshOperationManager en una
+# simulación vacía) avisa con WARN y no tumba el resto.
+_INSPECT = {k: "try {\n" + v + "\n} catch (Exception e) { sim.println(\"WARN\\t" + k
+            + "\\t\" + String.valueOf(e.getMessage()).replace('\\n', ' ')); }"
+            for k, v in _INSPECT.items()}
 _INSPECT["tree"] = "\n".join(_INSPECT[k] for k in ("solver", "parts", "regions", "physics", "mesh_ops", "reports", "monitors", "scenes"))
 
 
@@ -510,38 +526,53 @@ def inspect(path: str = "tree") -> dict:
 def iterate(n: int = 100, timeout_s: int = 7200) -> dict:
     """Corre n iteraciones. Devuelve la última fila de todos los monitores (residuales y reportes)
     leyendo el CSV que exporta el MonitorManager, más el tiempo."""
-    csv = MACROS / "monitors.csv"
+    # Residuales: exportando el plot "Residuals" a CSV (MonitorManager.export falla en batch 2410:
+    # "StarUpdate unexpectedly missing"). Reportes: valor directo de cada Report.
+    csv = MACROS / "residuals.csv"
     csv.unlink(missing_ok=True)
     body = f"""
 sim.getSimulationIterator().step({int(n)});
 sim.println("ITERATION " + sim.getSimulationIterator().getCurrentIteration());
-Collection<PlotableMonitor> mons = new ArrayList<>();
-for (Monitor m : sim.getMonitorManager().getObjects())
-  if (m instanceof PlotableMonitor) mons.add((PlotableMonitor) m);
-sim.getMonitorManager().export("{_jpath(csv)}", ",", mons);
-sim.println("EXPORTED " + mons.size());
+try {{
+  StarPlot rp = sim.getPlotManager().getPlot("Residuals");
+  rp.export("{_jpath(csv)}", ",");
+  sim.println("RESIDUALS_CSV ok");
+}} catch (Exception e) {{ sim.println("RESIDUALS_CSV n/a " + e.getMessage()); }}
+for (Report rep : sim.getReportManager().getObjects()) {{
+  try {{ sim.println("REPORT\\t" + rep.getPresentationName() + "\\t" + rep.getReportMonitorValue()); }}
+  catch (Exception e) {{ sim.println("REPORT\\t" + rep.getPresentationName() + "\\tn/a"); }}
+}}
 """
     with _lock:
         r = _inject(body, timeout=timeout_s)
-    out = {"ok": r["ok"], "seconds": r["seconds"], "stdout": r["stdout"][-2000:]}
+    out = {"ok": r["ok"], "seconds": r["seconds"]}
     m = re.search(r"ITERATION (\d+)", r["stdout"])
     if m:
         out["iteration"] = int(m.group(1))
+    reports = {}
+    for line in r["stdout"].splitlines():
+        parts = line.split("\t")
+        if parts[0] == "REPORT" and len(parts) == 3:
+            try:
+                reports[parts[1]] = float(parts[2])
+            except ValueError:
+                reports[parts[1]] = parts[2]
+    out["reports"] = reports
     if r["exception"]:
         out.update(exception=r["exception"], trace=r["trace"])
     if csv.is_file():
         rows = [l.split(",") for l in csv.read_text(encoding="utf-8", errors="replace").splitlines() if l.strip()]
         if len(rows) >= 2:
             hdr, last = [h.strip().strip('"') for h in rows[0]], rows[-1]
-            vals = {}
+            res = {}
             for h, v in zip(hdr, last):
                 try:
-                    vals[h] = float(v)
+                    res[h] = float(v)
                 except ValueError:
-                    vals[h] = v.strip()
-            out["monitors"] = vals
-            out["residuals"] = {k: v for k, v in vals.items()
-                                if isinstance(v, float) and re.search(r"continuity|momentum|tke|sdr|energy|turb", k, re.I)}
+                    res[h] = v.strip()
+            out["residuals"] = res
+    else:
+        out["stdout"] = r["stdout"][-1500:]
     return out
 
 
@@ -550,8 +581,16 @@ def export_scene(name: str, path: str = "", width: int = 1600, height: int = 100
     """Exporta la escena `name` a PNG. path vacío = cases/_scenes/<name>.png."""
     out = Path(path) if path else CASES / "_scenes" / f"{_safe(name)}.png"
     out.parent.mkdir(parents=True, exist_ok=True)
+    # createScene("X") puede dejar la escena como "X 1": se acepta nombre exacto o prefijo.
     body = f"""
-Scene sc = sim.getSceneManager().getScene("{name}");
+Scene sc = null;
+for (Scene s : sim.getSceneManager().getScenes())
+  if (s.getPresentationName().equals("{name}")) sc = s;
+if (sc == null)
+  for (Scene s : sim.getSceneManager().getScenes())
+    if (s.getPresentationName().startsWith("{name}")) {{ sc = s; break; }}
+if (sc == null) throw new RuntimeException("No hay escena '{name}'");
+sim.println("SCENE " + sc.getPresentationName());
 sc.printAndWait(resolvePath("{_jpath(out)}"), 1, {int(width)}, {int(height)}, true, false);
 sim.println("PNG {_jpath(out)}");
 """
@@ -632,7 +671,7 @@ def _docs() -> list[tuple[str, Path]]:
         if DOC_DIR and DOC_DIR.is_dir():
             for p in DOC_DIR.rglob("*.html"):
                 rel = p.relative_to(DOC_DIR).as_posix()
-                if "/" in rel and not rel.startswith(("index", "overview")):
+                if "/" in rel and "class-use/" not in rel and not p.name.startswith(("index", "overview", "package-")):
                     _doc_index.append((rel[:-5].replace("/", "."), p))
     return _doc_index
 
@@ -642,7 +681,9 @@ def _html_text(p: Path) -> str:
     t = re.sub(r"<(script|style)[^>]*>.*?</\1>", " ", t, flags=re.S | re.I)
     t = re.sub(r"<[^>]+>", " ", t)
     t = html.unescape(t)
-    return re.sub(r"[ \t\xa0]+", " ", t)
+    t = re.sub(r"[ \t\xa0]+", " ", t)
+    # firmas con la lista de argumentos partida en varias líneas -> una sola línea
+    return re.sub(r"\(\s*([^()]*?)\s*\)", lambda m: "(" + " ".join(m.group(1).split()) + ")", t, flags=re.S)
 
 
 @mcp.tool()

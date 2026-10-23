@@ -42,11 +42,19 @@ STAR-CCM+ es cliente-servidor. Se levanta UN servidor con el .sim en memoria y c
 una macro Java con un cliente batch. No se recarga el .sim entre pasos. La macro imprime entre los
 marcadores `AGENT_BEGIN <tag>` / `AGENT_END <tag>` y el MCP recorta esa salida.
 
-Inyección de macros (orden de preferencia; marcar aquí cuál quedó verificada contra el solver real):
-1. `starccm+ -host localhost:PORT -batch Macro.java -noexit` ← implementado; **pendiente de verificar
-   con licencia** (el `-noexit` evita que el cliente batch apague el servidor al terminar la macro).
-2. Plan B: macro residente `Watcher.java` que vigila `cases/<caso>/inbox/` y ejecuta cada .java que
-   aparece, escribiendo la salida en `outbox/`. Solo si 1 falla en 2410.
+Inyección de macros: **verificada el 2026-10-23 contra STAR-CCM+ 2410 real**:
+`starccm+ -host localhost:PORT -batch Macro.java -noexit` (el `-noexit` evita que el cliente batch
+apague el servidor al terminar la macro). Tiempos medidos en este PC:
+
+| paso | segundos |
+|---|---|
+| `server_start` (licencia + MPI, sim nueva) | 4,5 |
+| inyección de una macro trivial (arranque del cliente Java) | 8–10 |
+| primera macro que carga módulos (3D-CAD/Parasolid, malla, física) | 50–75 |
+| precompilación con `javac` | 2 |
+
+Plan B (macro residente que vigila un `inbox/`) no hizo falta; solo si el cliente batch deja de
+funcionar en otra versión.
 
 ## MCP: `mcp_server.py`
 
@@ -158,6 +166,20 @@ Turbina: mismo flujo, cambia el signo del momento y el objetivo es potencia extr
   Java está en `doc/client/html`. `StarMacro` y `Simulation` viven en
   `star/lib/java/platform/modules/ext/starbase.jar`; `MeshOperationManager` en `meshing.jar`.
 - 2026-10-23 · El cliente batch por defecto apaga el servidor al acabar la macro: siempre `-noexit`.
-- 2026-10-23 · En 2410 `MonitorManager.export` es `(String, String, Collection<PlotableMonitor>)`;
-  la versión de dos argumentos no existe. La precompilación con `javac` lo detecta en 2 s sin licencia:
-  usarla para validar nombres de API antes de tener el servidor.
+- 2026-10-23 · La precompilación con `javac` detecta nombres de API equivocados en 2 s sin licencia:
+  usarla antes de inyectar. Ejemplos cazados: `MonitorManager.export` necesita 3 argumentos;
+  `ThreeDimensionalModel` vive en `star.metrics` (ya en los imports por defecto).
+- 2026-10-23 · `MonitorManager.export` falla en batch («StarUpdate unexpectedly missing»). Residuales:
+  exportar el plot `Residuals` (`sim.getPlotManager().getPlot("Residuals").export(csv, ",")`); valores
+  de reportes: `getReportMonitorValue()` directo. Así lo hace `iterate`.
+- 2026-10-23 · `createScene("X")` deja la escena como «X 1». Para que el PNG no salga en blanco en batch:
+  `PartDisplayer` con las **fronteras** como entrada (no la región), `initialize()`,
+  `setRepresentation(getDefaultFvRepresentation())` y `resetCamera(true)`. Receta `escena-malla.java`.
+- 2026-10-23 · `newRegionsFromParts` crea solo un continuo «Physics 1»; crear otro deja dos. Reusarlo.
+- 2026-10-23 · Autoguardado «batch» activo por defecto: deja `<sim>@meshed.sim` y `<sim>@00050.sim`.
+  `server_start` lo apaga al arrancar (`AutoSave.setAutoSaveBatch(false)`).
+- 2026-10-23 · CPU i5-1245U: 2 núcleos P + 8 E. Con `-np 10` el solver avisa de sobresuscripción;
+  `STARCCM_NP=4` en `.env`. El selftest y el cilindro no notan la diferencia; medir en una bomba.
+- 2026-10-23 · Caso cilindro (r 50 mm, L 0,5 m, 11 463 celdas poliédricas + prismas, agua 1 m/s,
+  SST): 100 iteraciones, residuales 1e-6, Q_in = −Q_out = 7,755 kg/s. Recetas de cada paso guardadas.
+  `cases/cilindro/RESUMEN.md`.

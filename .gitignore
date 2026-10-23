@@ -14,8 +14,10 @@ starccm/.server.tmp
 starccm/macros/
 starccm/sims/*
 !starccm/sims/README.md
-starccm/cases/*/
+starccm/cases/*/*
 !starccm/cases/README.md
+!starccm/cases/*/RESUMEN.md
+!starccm/cases/*/images/
 *.sim
 *.sim~
 *.dmprj
