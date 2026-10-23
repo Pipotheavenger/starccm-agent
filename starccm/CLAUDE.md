@@ -238,3 +238,7 @@ Turbina: mismo flujo, cambia el signo del momento y el objetivo es potencia extr
 - 2026-10-23 · Caso cilindro (r 50 mm, L 0,5 m, 11 463 celdas poliédricas + prismas, agua 1 m/s,
   SST): 100 iteraciones, residuales 1e-6, Q_in = −Q_out = 7,755 kg/s. Recetas de cada paso guardadas.
   `cases/cilindro/RESUMEN.md`.
+- 2026-10-23 · `server_start` falló justo después de que otra sesión apagara el servidor (12:23, stop sin
+  guardar): el log del servidor dice `Fatal error in MPI_Init_thread … init called when another process
+  has exited without calling init`. Es un fallo transitorio de MPI, no de licencia: esperar unos segundos
+  y reintentar `server_start`; si persiste, comprobar que no queden `starccm+.exe`/`mpiexec` en `tasklist`.

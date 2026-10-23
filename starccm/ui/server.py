@@ -555,9 +555,23 @@ def _sse(obj: dict) -> str:
     return "data: " + json.dumps(obj, ensure_ascii=False) + "\n\n"
 
 
+def _ui_using_solver() -> str | None:
+    """La UI inyecta macros con el MCP de ESTE proceso; el chat lo hace con otro proceso: no deben solaparse."""
+    for lock, what in ((SURF_LOCK, "exportando superficies"), (SCENE_LOCK, "exportando una escena"),
+                       (TREE_LOCK, "leyendo el árbol"), (STOP_LOCK, "apagando el solver")):
+        if lock.locked():
+            return what
+    return None
+
+
 def _chat_events(req: ChatReq):
     if not CHAT_LOCK.acquire(blocking=False):
         yield _sse({"kind": "error", "text": "ya hay una conversación en curso; espera o pulsa Detener"})
+        return
+    busy = _ui_using_solver()
+    if busy:
+        CHAT_LOCK.release()
+        yield _sse({"kind": "error", "text": f"la página está {busy} con el solver; espera a que termine y reenvía"})
         return
     p = None
     try:

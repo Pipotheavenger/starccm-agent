@@ -171,7 +171,11 @@ function setHot(part) {
   if (part) { part.mesh.material.emissive.setHex(0x335577); part.mesh.material.emissiveIntensity = 0.25; part.li?.classList.add('hot'); }
   V.needs = true;
 }
-const unitOf = n => /pressure/i.test(n) ? ' Pa' : /velocity/i.test(n) ? ' m/s' : /yplus/i.test(n) ? '' : '';
+const unitOf = n => /pressure/i.test(n) ? ' Pa' : /velocity/i.test(n) ? ' m/s' : /shear/i.test(n) ? ' Pa' : '';
+// nombres internos de STAR-CCM+ -> etiqueta legible (lo que no está aquí se muestra tal cual)
+const LABELS = { Pressure: 'Presión', TotalPressure: 'Presión total', VelocityMagnitude: '|Velocidad|', 'Velocity |mag|': '|Velocidad|', WallY: 'y+', WallYplus: 'y+', WallShearStressMagnitude: '|Esfuerzo cortante|', AbsolutePressure: 'Presión absoluta', Temperature: 'Temperatura' };
+const labelOf = n => LABELS[n] || n;
+const OUTER = /shroud|casing|volute|voluta|carcasa|housing|outer|wall$/i;  // superficies que tapan los álabes
 
 // ---------------------------------------------------------------- superficies con campo (dataset de surfaces.py)
 const PART_COLORS = [0x7f9fc0, 0xc9a66b, 0x8fb98f, 0xb48ead, 0xd08770, 0x88c0d0, 0xa3be8c, 0xebcb8b];
@@ -227,10 +231,10 @@ async function loadDataset(d) {
       const mesh = new THREE.Mesh(g, mat); const part = { ...p, mesh, color: PART_COLORS[k % PART_COLORS.length], k };
       mesh.userData.part = part; V.group.add(mesh); V.meshes.push(mesh); st.ds.parts.push(part);
     });
-    $('scalar').innerHTML = '<option value="">(geometría)</option>' + man.scalars.map(s => `<option value="${esc(s.name)}">${esc(s.name)}</option>`).join('');
+    $('scalar').innerHTML = '<option value="">(geometría)</option>' + man.scalars.map(s => `<option value="${esc(s.name)}">${esc(labelOf(s.name))}</option>`).join('');
     const ws = LS.get('scc_scalar'); st.scalar = man.scalars.some(s => s.name === ws) ? ws : (man.scalars[0]?.name || '');
     $('scalar').value = st.scalar; st.range = null;
-    renderParts(); applyColors(); fit(0); setView('iso');
+    renderParts(); applyColors(); applyGhost(); fit(0); setView('iso');
     $('vstate').textContent = `${man.n_triangles.toLocaleString('es')} triángulos · ${man.parts.length} superficies${man.exported ? ' · ' + man.exported : ''}`;
     fadeIn();
   } catch (e) { toast('No pude cargar las superficies: ' + e.message, 'error'); $('vempty').hidden = false; }
@@ -238,8 +242,15 @@ async function loadDataset(d) {
 }
 function fadeIn() {  // las superficies aparecen suaves
   const t0 = performance.now();
-  const step = t => { const k = Math.min(1, (t - t0) / 500); for (const m of V.meshes) m.material.opacity = k; V.needs = true; if (k < 1) requestAnimationFrame(step); else for (const m of V.meshes) m.material.transparent = false; };
+  const step = t => { const k = Math.min(1, (t - t0) / 500); for (const m of V.meshes) m.material.opacity = k * targetOpacity(m.userData.part); V.needs = true; if (k < 1) requestAnimationFrame(step); else applyGhost(); };
   requestAnimationFrame(step);
+}
+// «Carcasa translúcida»: las superficies exteriores (voluta, shroud, casing) al 25 % para ver los álabes
+const targetOpacity = p => (V.ghost && OUTER.test(p.name) && st.ds?.parts.some(q => !OUTER.test(q.name))) ? 0.25 : 1;
+function applyGhost() {
+  if (!st.ds) return;
+  for (const p of st.ds.parts) { const o = targetOpacity(p); p.mesh.material.transparent = o < 1; p.mesh.material.opacity = o; p.mesh.material.depthWrite = o >= 1; p.mesh.renderOrder = o < 1 ? 1 : 0; p.mesh.material.needsUpdate = true; }
+  $('ghost').setAttribute('aria-pressed', V.ghost); V.needs = true;
 }
 function renderParts() {
   const ul = $('parts'); ul.innerHTML = '';
@@ -270,7 +281,7 @@ function applyColors() {
 }
 function drawLegend(name, lo, hi) {
   const lg = $('legend'); if (!name) { lg.hidden = true; return; }
-  lg.hidden = false; $('lgtitle').textContent = name + (unitOf(name) ? ` (${unitOf(name).trim()})` : '');
+  lg.hidden = false; $('lgtitle').textContent = labelOf(name) + (unitOf(name) ? ` (${unitOf(name).trim()})` : '');
   const cv = $('lgbar'), ctx = cv.getContext('2d'); const c = [0, 0, 0];
   for (let y = 0; y < cv.height; y++) { cmapColor(1 - y / (cv.height - 1), c); ctx.fillStyle = `rgb(${c[0] * 255 | 0},${c[1] * 255 | 0},${c[2] * 255 | 0})`; ctx.fillRect(0, y, cv.width, 1); }
   $('lgticks').innerHTML = [1, 0.75, 0.5, 0.25, 0].map(t => `<span>${sci(lo + (hi - lo) * t)}</span>`).join('');
@@ -283,6 +294,8 @@ $('rauto').onclick = () => { st.range = null; applyColors(); };
 for (const b of $('vactions').querySelectorAll('[data-view]')) b.onclick = () => setView(b.dataset.view);
 $('fit').onclick = () => fit();
 $('spin').onclick = () => { V.spin = !V.spin; $('spin').setAttribute('aria-pressed', V.spin); };
+V.ghost = LS.get('scc_ghost', '1') === '1';
+$('ghost').onclick = () => { V.ghost = !V.ghost; LS.set('scc_ghost', V.ghost ? '1' : '0'); applyGhost(); };
 $('wire').onclick = () => { V.wire = !V.wire; $('wire').setAttribute('aria-pressed', V.wire); for (const m of V.meshes) m.material.wireframe = V.wire; V.needs = true; };
 function updateClip() {
   const on = $('clipon').checked; const ax = $('clipax').value; const t = +$('clipv').value / 1000;
