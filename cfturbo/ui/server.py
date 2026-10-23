@@ -7,7 +7,10 @@ Qué hace (detalle en ui/README.md):
   - GET  /, /app.js, /style.css       -> la página (index.html + módulo ES + estilos, sin build)
   - GET  /api/projects, /api/project/{name} -> proyectos base e info
   - GET  /api/runs[?fields=summary]   -> corridas temporales y versiones (summary: ligero, para el sondeo de 3 s)
-  - GET  /api/runs/{id}               -> run.json completo de una corrida
+  - GET  /api/runs/{id}               -> run.json completo de una corrida (curvas y reporte incluidos)
+  - DELETE /api/runs/{id}             -> borra una corrida temporal o una versión (409 si está corriendo)
+  - GET  /api/new/suggest?Q&H&n[&base] -> base más cercana en nq para una bomba nueva, k y aviso (> ×1,5)
+  - POST /api/new                     -> crea projects/<name>/<name>.cft por semejanza (409 si existe)
   - GET  /files/{id}/{archivo}        -> STL, STEP… de una corrida o versión (thumb.png en línea)
   - POST /api/runs/{id}/thumb         -> guarda la miniatura PNG que captura el visor (thumb.png)
   - POST /api/run    -> corre CFturbo directamente (mcp_server.run_batch en un hilo); 409 si está ocupado
@@ -65,6 +68,8 @@ CHAT_SYSTEM = (
     "Las corridas son temporales: cuando el usuario diga que un diseño le sirve, guárdalo con cft_save "
     "(nombre corto, note con el porqué) y registra el aprendizaje con cft_recipe_save. Antes de proponer "
     "un diseño consulta cft_recipe_search (recetas + bitácora de lo que funcionó). "
+    "Para una bomba nueva desde un punto de diseño (Q, H, n) usa cft_new; para fijar ángulos de álabe, edits "
+    "beta1_deg/beta2_deg en grados. Solo borra (cft_delete) si el usuario lo pide expresamente. "
     "Termina siempre con una línea: qué corrida quedó y qué cambió."
 )
 
@@ -139,6 +144,47 @@ def run(rid: str) -> dict:
     return cft.read_json(_run_dir(rid) / "run.json")
 
 
+@app.delete("/api/runs/{rid}")
+def api_delete(rid: str) -> dict:
+    _run_dir(rid)  # 400/404
+    try:
+        return cft.delete_run(rid)
+    except cft.CFturboBusy as e:
+        raise HTTPException(409, str(e))
+    except OSError as e:
+        raise HTTPException(500, f"no pude borrar: {e}")
+
+
+@app.get("/api/new/suggest")
+def api_new_suggest(Q: float, H: float, n: float, base: str | None = None) -> dict:
+    if not (Q > 0 and H > 0 and n > 0):
+        raise HTTPException(400, "Q, H y n deben ser positivos")
+    try:
+        return cft.suggest_base(Q, H, n, base or None)
+    except FileNotFoundError as e:
+        raise HTTPException(404, str(e))
+
+
+class NewReq(BaseModel):
+    Q_m3h: float
+    H_m: float
+    n_rpm: float
+    name: str
+    base: str | None = None
+
+
+@app.post("/api/new")
+def api_new(req: NewReq) -> dict:
+    try:
+        return cft.new_project(req.Q_m3h, req.H_m, req.n_rpm, req.name, req.base or None)
+    except FileExistsError as e:
+        raise HTTPException(409, str(e))
+    except FileNotFoundError as e:
+        raise HTTPException(404, str(e))
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
 @app.post("/api/runs/{rid}/thumb")
 async def api_thumb(rid: str, request: Request) -> dict:
     data = await request.body()
@@ -155,8 +201,8 @@ def files(rid: str, fname: str) -> FileResponse:
     f = _run_dir(rid) / fname
     if not f.is_file():
         raise HTTPException(404, "archivo no encontrado")
-    media = {".stl": "model/stl", ".png": "image/png"}.get(f.suffix.lower(), "application/octet-stream")
-    if media == "image/png":  # la miniatura se muestra en línea, no se descarga
+    media = {".stl": "model/stl", ".png": "image/png", ".html": "text/html; charset=utf-8"}.get(f.suffix.lower(), "application/octet-stream")
+    if f.suffix.lower() in (".png", ".html"):  # miniatura y reporte de diseño se ven en línea, no se descargan
         return FileResponse(f, media_type=media)
     return FileResponse(f, media_type=media, filename=fname)
 
@@ -186,15 +232,25 @@ def api_run(req: RunReq) -> dict:
         RUN_LOCK.release()
         busy = cft.run_lock_info() or {}
         raise HTTPException(409, f"CFturbo trabajando ({busy.get('name', 'otra corrida')})")
+    except Exception as e:  # D2-7: cualquier otro fallo (p.ej. OSError al crear la carpeta) no deja RUN_LOCK tomado
+        RUN_LOCK.release()
+        raise HTTPException(500, f"no pude lanzar la corrida: {e}")
 
-    def work() -> None:
-        try:
-            cft.run_batch(req.project, req.edits, req.name, req.exports, req.save, lock=lock)
-        finally:
-            RUN_LOCK.release()
-
-    threading.Thread(target=work, daemon=True).start()
+    try:
+        t = threading.Thread(target=lambda: _work(req, lock), daemon=True)
+        t.start()
+    except Exception:
+        lock.unlink(missing_ok=True)
+        RUN_LOCK.release()
+        raise
     return {"started": True}
+
+
+def _work(req: RunReq, lock) -> None:
+    try:
+        cft.run_batch(req.project, req.edits, req.name, req.exports, req.save, lock=lock)
+    finally:
+        RUN_LOCK.release()
 
 
 @app.get("/api/status")

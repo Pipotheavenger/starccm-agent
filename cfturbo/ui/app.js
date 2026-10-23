@@ -37,10 +37,11 @@ function savedTag(r, short = false) {
   return `<span class="tag saved" title="Guardada como versions/${v}">${short ? '★' : '★ como ' + v}</span>`;
 }
 const runLabel = r => r ? (r.saved ? r.id : r.name) : '';
-const api = async (url, body, timeoutMs = 0) => {
+const fileUrl = (r, f) => `/files/${encodeURIComponent(r.id)}/${encodeURIComponent(f)}`;
+const api = async (url, body, timeoutMs = 0, method = '') => {
   const ctl = timeoutMs ? new AbortController() : null, t = ctl && setTimeout(() => ctl.abort(), timeoutMs);
   try {
-    const opt = body === undefined ? {} : { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) };
+    const opt = body === undefined ? (method ? { method } : {}) : { method: method || 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) };
     const r = await fetch(url, ctl ? { ...opt, signal: ctl.signal } : opt);
     if (!r.ok) { let d = r.status; try { d = (await r.json()).detail || d; } catch {} const e = new Error(d); e.status = r.status; throw e; }
     return r.json();
@@ -70,6 +71,12 @@ const PARAMS = [
   { key: 'Psi', sym: 'ψ', label: 'Coeficiente de presión ψ', unit: '', from: i => i?.dims?.Psi, d: 3 },
   { key: 'nBl', sym: 'z', label: 'Número de álabes', unit: 'álabes', from: i => i?.dims?.nBl, d: 0 },
   { key: 'volute_d_out_mm', sym: 'dV', label: 'Diámetro de salida de la voluta', unit: 'mm', from: i => i?.dims?.volute_d_out_mm, d: 1 },
+  // ángulos de álabe: se envían juntos como beta1_deg / beta2_deg = [cubo, corona] (fijarlos apaga AutoUpdate1/2)
+  { key: 'b1h', beta: 1, span: 0, sym: 'β1 cubo', label: 'Ángulo de álabe en el borde de ataque, cubo', unit: '°', from: i => i?.dims?.beta1_hub_deg, auto: i => i?.dims?.beta_auto1, d: 1 },
+  { key: 'b1s', beta: 1, span: 1, sym: 'β1 corona', label: 'Ángulo de álabe en el borde de ataque, corona', unit: '°', from: i => i?.dims?.beta1_shroud_deg, auto: i => i?.dims?.beta_auto1, d: 1 },
+  { key: 'b2h', beta: 2, span: 0, sym: 'β2 cubo', label: 'Ángulo de álabe en el borde de salida, cubo', unit: '°', from: i => i?.dims?.beta2_hub_deg, auto: i => i?.dims?.beta_auto2, d: 1 },
+  { key: 'b2s', beta: 2, span: 1, sym: 'β2 corona', label: 'Ángulo de álabe en el borde de salida, corona', unit: '°', from: i => i?.dims?.beta2_shroud_deg, auto: i => i?.dims?.beta_auto2, d: 1 },
+  { key: 's_mm', sym: 's', label: 'Espesor de álabe (bordes de ataque y salida)', unit: 'mm', from: i => i?.dims?.s_mm, d: 2 },
 ];
 // nombre por defecto: <proyecto>_<n> con n = siguiente libre (no «v2» fijo)
 function defaultName() {
@@ -84,10 +91,12 @@ function renderParams() {
   $('runcol').textContent = st.run ? runLabel(st.run) : 'Corrida'; $('runcol').title = st.run ? runLabel(st.run) : '';
   const tb = $('params').querySelector('tbody');
   const prev = Object.fromEntries(paramInputs().map(i => [i.dataset.k, i.value]));
+  const au = (p, i) => p.auto?.(i) ? ' auto" title="Automático: CFturbo lo recalcula. Escribir un valor lo fija' : '';
   tb.innerHTML = PARAMS.map(p => {
     const b = p.from(base), r = p.from(run);
-    const changed = b != null && r != null && Math.abs(b - r) > 1e-9;
-    return `<tr title="${p.label}${p.unit ? ' (' + p.unit + ')' : ''}"><td><b>${p.sym}</b> <span class="mut">${p.unit}</span></td><td class="num">${fmt(b, p.d)}</td><td class="num${changed ? ' changed' : ''}">${fmt(r, p.d)}</td><td><input data-k="${p.key}" type="text" inputmode="decimal" autocomplete="off" aria-label="${p.label} nuevo" value="${esc(prev[p.key] ?? '')}" placeholder="${fmtIn(p.from(src) ?? b, p.d)}"></td></tr>`;
+    if (b == null && r == null && p.beta) return '';  // proyecto sin álabes (p.ej. solo voluta)
+    const changed = b != null && r != null && Math.abs(b - r) > 1e-9 * Math.max(1, Math.abs(b)) && Math.abs(b - r) >= Math.pow(10, -p.d) / 2;
+    return `<tr title="${p.label}${p.unit ? ' (' + p.unit + ')' : ''}"${p.key === 'b1h' ? ' class="grp"' : ''}><td><b>${p.sym}</b> <span class="mut">${p.unit}</span></td><td class="num${au(p, base)}">${fmt(b, p.d)}</td><td class="num${changed ? ' changed' : ''}${au(p, run)}">${fmt(r, p.d)}</td><td><input data-k="${p.key}" type="text" inputmode="decimal" autocomplete="off" aria-label="${p.label} nuevo" value="${esc(prev[p.key] ?? '')}" placeholder="${fmtIn(p.from(src) ?? b, p.d)}"></td></tr>`;
   }).join('') + `<tr title="Velocidad específica nq"><td><b>nq</b></td><td class="num">${fmt(base?.nq?.nq)}</td><td class="num">${fmt(run?.nq?.nq)}</td><td class="num" id="nqcell"></td></tr>`;
   for (const i of paramInputs()) i.addEventListener('input', onEdit);
   onEdit();
@@ -101,8 +110,15 @@ function paramEdits() {  // solo la tabla; un valor que no es número se marca y
   }
   return e;
 }
+// filas β (b1h, b1s, b2h, b2s) -> beta1_deg / beta2_deg = [cubo, corona]; el span no escrito toma el valor del origen
 function edits() {
-  const e = paramEdits();
+  const e = paramEdits(), src = fromRun() && st.run?.info ? st.run.info : st.info;
+  for (const k of [1, 2]) {
+    const rows = PARAMS.filter(p => p.beta === k);
+    if (!rows.some(p => p.key in e)) continue;
+    e[`beta${k}_deg`] = rows.map(p => +(e[p.key] ?? p.from(src) ?? e[rows.find(q => q.key in e).key]).toFixed(3));
+    for (const p of rows) delete e[p.key];
+  }
   if ($('autoupd').checked) e.AutoUpdate = true;
   if ($('extoff').checked && !$('extoff').disabled) e.ext_outlet = false;
   return e;
@@ -123,7 +139,7 @@ function nqNew() {
 function renderFoot() {
   const n = Object.keys(paramEdits()).length;
   $('clear').disabled = !n;
-  const nopt = ['autoupd', 'extoff'].filter(id => $(id).checked && !$(id).disabled).length + ['exCCM', 'exSTL'].filter(id => $(id).checked).length;
+  const nopt = ['autoupd', 'extoff'].filter(id => $(id).checked && !$(id).disabled).length + ['exCCM', 'exSTL', 'exRep'].filter(id => $(id).checked).length;
   $('optsum').textContent = `Opciones · ${nopt} activas`;
   const from = fromRun() ? 'desde ' + esc(runLabel(st.run)) : 'desde la base';
   const bits = [n ? plural(n, 'cambio') : 'sin cambios (solo exporta)', from];
@@ -134,7 +150,7 @@ function renderFoot() {
   $('rname').placeholder = defaultName();
 }
 $('clear').onclick = () => { for (const i of paramInputs()) i.value = ''; onEdit(); };
-for (const id of ['autoupd', 'extoff', 'exCCM', 'exSTL']) $(id).onchange = onEdit;
+for (const id of ['autoupd', 'extoff', 'exCCM', 'exSTL', 'exRep']) $(id).onchange = onEdit;
 
 // «Quitar extensión CFD»: marcada por defecto solo si el origen tiene CFDSetup_RotSym con la extensión activa;
 // deshabilitada si no hay CFDSetup_RotSym (ext_outlet daría «parámetro no encontrado»).
@@ -168,14 +184,17 @@ $('segrun').onclick = () => setFrom(true);
 $('fromrun').onchange = () => { renderSeg(); renderParams(); applyExtDefault(); };
 
 function describeEdits(e) {
-  const names = Object.fromEntries(PARAMS.map(p => [p.key, `${p.label}${p.unit && !p.label.includes(p.unit) ? ' ' + p.unit : ''}`]));
-  return Object.entries(e).filter(([k]) => k !== 'AutoUpdate' && k !== 'ext_outlet').map(([k, v]) => `${names[k] || k} = ${v}`).join(', ') + (e.ext_outlet === false ? ' (sin extensión CFD)' : '');
+  const names = { ...Object.fromEntries(PARAMS.map(p => [p.key, `${p.label}${p.unit && !p.label.includes(p.unit) ? ' ' + p.unit : ''}`])),
+    beta1_deg: 'βB1 [cubo, corona] °', beta2_deg: 'βB2 [cubo, corona] °' };
+  // D2-1: coma decimal también aquí (mensaje de lanzamiento); los decimales, los de la fila de la tabla
+  const dec = Object.fromEntries(PARAMS.map(p => [p.key, p.d])), num = (v, d) => typeof v === 'number' ? fmt(v, d ?? (Number.isInteger(v) ? 0 : 2)) : v;
+  return Object.entries(e).filter(([k]) => k !== 'AutoUpdate' && k !== 'ext_outlet').map(([k, v]) => `${names[k] || k} = ${Array.isArray(v) ? '[' + v.map(x => num(x, 1)).join('; ') + ']' : num(v, dec[k])}`).join(', ') + (e.ext_outlet === false ? ' (sin extensión CFD)' : '');
 }
 function sourceProject() {
   if (fromRun() && st.run?.run_dir) return `${st.run.run_dir}\\${st.run.name}_out.cft`;
   return st.project;
 }
-const exportsSel = () => [$('exCCM').checked && 'StarCCM', $('exSTL').checked && 'OpenFOAM'].filter(Boolean);
+const exportsSel = () => [$('exCCM').checked && 'StarCCM', $('exSTL').checked && 'OpenFOAM', $('exRep').checked && 'Report'].filter(Boolean);
 async function runNow() {
   if ($('runbtn').disabled) return;
   const e = edits(), ex = exportsSel();
@@ -185,7 +204,7 @@ async function runNow() {
     await api('/api/run', body);
   } catch (err) {
     runMsg(err.status === 409 ? `CFturbo está ocupado (${String(err.message).replace(/^CFturbo trabajando \((.*)\)$/, '$1')}). Espera a que termine.` : err.status === 404 ? `No encuentro el proyecto de origen: ${err.message}` : `No pude lanzar la corrida: ${err.message}`, 'err');
-    $('runbtn').disabled = false; $('runbtn').textContent = '▶ Ejecutar en CFturbo'; return;
+    $('runbtn').disabled = false; $('runbtn').textContent = '▶ Ejecutar'; return;
   }
   st.lastName = body.name; st.runStart = Date.now(); st.status.running = true;
   runMsg(`«${body.name}»: ${describeEdits(e) || 'sin cambios (solo exportar)'}`, '', 20000);
@@ -207,7 +226,7 @@ $('askbtn').onclick = () => {
 };
 
 // ---------------------------------------------------------------- proyecto base
-async function loadProjects() {
+async function loadProjects(select) {
   try { st.projects = await api('/api/projects'); }
   catch (e) { $('pinfo').textContent = `No pude listar los proyectos: ${e.message}`; $('pinfo').style.color = 'var(--err)'; return; }
   const sel = $('project');
@@ -217,7 +236,8 @@ async function loadProjects() {
   }
   sel.disabled = false;
   sel.innerHTML = st.projects.map(p => `<option value="${esc(p.name)}">${esc(p.name)}</option>`).join('');
-  st.project = st.projects[0].name; await loadInfo();
+  st.project = st.projects.some(p => p.name === select) ? select : st.projects.some(p => p.name === st.project) ? st.project : st.projects[0].name;
+  sel.value = st.project; await loadInfo();
 }
 async function loadInfo() {
   if (!st.project) return;
@@ -227,10 +247,64 @@ async function loadInfo() {
   $('pinfo').style.color = '';
   const dp = st.info.design_point || {};
   $('pinfo').textContent = `${st.info.project_type} · ${(st.info.components || []).map(c => c.caption.replace(/[[\]]/g, '').replace(/_\d+$/, '')).join(' + ')} · ${dp.fluid || ''}`;
-  $('pnq').textContent = st.info.nq ? `nq ${fmt(st.info.nq.nq)} · ${st.info.nq.tipo}` : '';
+  $('pnq').textContent = st.info.nq ? `nq ${fmt(st.info.nq.nq)}` : ''; $('pnq').title = st.info.nq?.tipo || '';
   renderParams(); applyExtDefault();
 }
 $('project').onchange = e => { st.project = e.target.value; loadInfo(); };
+
+// ---------------------------------------------------------------- bomba nueva por semejanza (cft_new)
+// Q, H, n -> base más cercana en nq (ejemplos de CFturbo + projects/), aviso si el salto de nq es > ×1,5.
+// «Crear y correr» crea projects/<nombre>/<nombre>.cft, lo elige como proyecto base y lanza <nombre>_1.
+let sugT = 0, sugSeq = 0;
+const nVals = () => ({ Q: parseNum($('nQ').value), H: parseNum($('nH').value), n: parseNum($('nN').value) });
+function openNew() {
+  const dp = st.info?.design_point || {};
+  if (!$('nQ').value) { $('nQ').value = fmtIn(dp.Q_m3h, 0); $('nH').value = fmtIn(dp.H_m, 0); $('nN').value = fmtIn(dp.n_rpm, 0); }
+  $('nBase').innerHTML = '<option value="">(la más cercana en nq)</option>'; $('nName').value = $('nName').value || '';
+  $('newdlg').showModal(); $('nQ').focus(); $('nQ').select(); suggest(true);
+}
+function autoName() { const v = nVals(); return v.Q && v.H && v.n ? `bomba_Q${Math.round(v.Q)}_H${Math.round(v.H)}_n${Math.round(v.n)}` : ''; }
+async function suggest(now = false) {
+  clearTimeout(sugT);
+  if (!now) { sugT = setTimeout(() => suggest(true), 300); return; }
+  const v = nVals(), seq = ++sugSeq, info = $('nInfo');
+  for (const id of ['nQ', 'nH', 'nN']) { const x = parseNum($(id).value); $(id).classList.toggle('bad', x != null && !(x > 0)); }
+  $('nName').placeholder = autoName();
+  if (!(v.Q > 0 && v.H > 0 && v.n > 0)) { info.className = 'mono small mut'; info.textContent = 'Q, H y n > 0'; $('newok').disabled = true; return; }
+  info.className = 'mono small mut'; info.textContent = `nq ${fmt(v.n * Math.sqrt(v.Q / 3600) / Math.pow(v.H, .75))} · buscando base…`;
+  try {
+    const base = $('nBase').value, s = await api(`/api/new/suggest?Q=${v.Q}&H=${v.H}&n=${v.n}${base ? '&base=' + encodeURIComponent(base) : ''}`, undefined, 20000);
+    if (seq !== sugSeq) return;
+    if ($('nBase').options.length <= 1) $('nBase').innerHTML = '<option value="">(la más cercana en nq)</option>' +
+      s.bases.map(b => `<option value="${esc(b.cft)}">${esc(b.name)} · nq ${fmt(b.nq)}</option>`).join('');
+    $('nBase').options[0].textContent = base ? '(la más cercana en nq)' : `${s.base_name} · nq ${fmt(s.nq_base)} (sugerida)`;
+    info.className = 'mono small' + (s.aviso ? ' warn' : '');
+    info.innerHTML = `nq <b>${fmt(s.nq)}</b> · ${esc(s.tipo)} · base nq ${fmt(s.nq_base)} (×${fmt(s.ratio, 2)}) · k ${fmt(s.k, 3)}`
+      + (s.aviso ? `<div class="warnline" title="${esc(s.aviso)}">⚠ Salto de nq > ×1,5: fuera de lo probado</div>` : '');
+    $('newok').disabled = false;
+  } catch (e) { if (seq === sugSeq) { info.className = 'mono small err'; info.textContent = `No pude sugerir base: ${e.message}`; $('newok').disabled = true; } }
+}
+for (const id of ['nQ', 'nH', 'nN']) $(id).addEventListener('input', () => suggest());
+$('nBase').onchange = () => suggest(true);
+$('newbtn').onclick = openNew;
+$('newclose').onclick = $('newcancel').onclick = () => $('newdlg').close();
+$('newform').addEventListener('submit', async ev => {
+  ev.preventDefault();
+  const v = nVals(), name = ($('nName').value.trim() || autoName()).replace(/[^A-Za-z0-9_-]+/g, '_');
+  if (!(v.Q > 0 && v.H > 0 && v.n > 0) || !name) return;
+  $('newok').disabled = true; $('newok').textContent = 'Creando…';
+  try {
+    const j = await api('/api/new', { Q_m3h: v.Q, H_m: v.H, n_rpm: v.n, name, base: $('nBase').value || null }, 60000);
+    $('newdlg').close(); $('nName').value = '';
+    toast(`Creada projects/${j.name} desde ${j.base_name} (k ${fmt(j.k, 3)})${j.aviso ? ' · fuera de lo probado' : ''}`, j.aviso ? 'warn' : 'ok');
+    await loadProjects(j.name);
+    setFrom(false); $('rname').value = `${j.name}_1`; runNow();
+  } catch (e) {
+    $('nInfo').className = 'mono small err';
+    $('nInfo').textContent = e.status === 409 ? `Ya existe projects/${name}: elige otro nombre` : `No pude crearla: ${e.message}`;
+    if (e.status === 409) $('nName').focus();
+  } finally { $('newok').disabled = false; $('newok').textContent = 'Crear y correr'; }
+});
 
 // ---------------------------------------------------------------- sondeo con reconexión
 // UNA petición (/api/poll) cada 3 s, con tiempo límite (AbortController) y nunca dos a la vez.
@@ -244,7 +318,8 @@ async function poll() {
   try {
     const j = await api('/api/poll?limit=40', undefined, 8000);
     if (!st.online) goOnline();
-    st.status = j.status; $('keepn').textContent = j.status.keep_tmp ?? 8;
+    st.status = j.status;
+    $('gcount').title = `Temporales: quedan las ${j.status.keep_tmp ?? 8} últimas (${j.status.workdir || ''}). ★ Guardar las conserva en versions/`;
     onRuns(j.runs); renderStatus();
     schedule(3);
   } catch {
@@ -286,7 +361,7 @@ function renderStatus() {
   const chat = s.chatting || st.chatting;
   $('status').innerHTML = `<span class="dot ${cur ? 'busy' : 'ok'}"></span><span>${esc(txt)}</span>` + (chat ? ' <span class="dot chat"></span><span>Claude trabajando</span>' : '');
   $('runbtn').disabled = !!cur;
-  $('runbtn').textContent = cur ? `Corriendo ${cur.name}… ${cur.t} s` : '▶ Ejecutar en CFturbo';
+  $('runbtn').textContent = cur ? `Corriendo ${cur.name}… ${cur.t} s` : '▶ Ejecutar';
   $('runbtn').title = cur ? 'Una corrida de CFturbo a la vez (una licencia)' : 'Ctrl+Enter';
   $('runbar').classList.toggle('busy', !!(cur || st.selecting));
   renderFoot();
@@ -317,6 +392,7 @@ function notifyFinished(runs) {
 // selección automática: salta a una corrida NUEVA salvo que el usuario haya fijado otra (entonces solo avisa).
 // Al abrir la página se elige la última con geometría para que el visor no arranque vacío.
 function autoSelect(runs) {
+  if (st.selecting && st.known) return;  // hay una selección en curso (clic, borrado): no pisarla
   const cur = st.run && runs.find(r => r.id === st.run.id), first = !st.known;
   const fresh = first ? null : runs.find(r => !st.known.has(r.id) && !r.saved);  // guardar una versión no cuenta
   if (fresh && st.pinned) toast(`Nueva corrida: ${fresh.name} (sigues viendo ${runLabel(st.run)})`);
@@ -343,6 +419,8 @@ function cardHtml(r, focusId) {
   return `<div class="card-run${b ? ' is-b' : ''}${versionExists(r.saved_as_version) ? ' dim' : ''}" role="option" tabindex="${r.id === focusId ? 0 : -1}" aria-selected="${a}" data-id="${esc(r.id)}" title="${esc(runLabel(r))} · ${esc(fdate(r.started || ''))} · clic: ver · Ctrl+clic: comparar como B">
     ${thumbHtml(r)}${r.saved ? '<span class="ribbon" aria-hidden="true">★</span>' : ''}
     ${a ? '<span class="ab">A</span>' : b ? '<span class="ab b">B</span>' : `<button class="cmpbtn" tabindex="-1" title="Comparar con la activa (Ctrl+clic)" aria-label="Comparar ${esc(runLabel(r))} con la activa">⇄</button>`}
+    ${r.status === 'running' ? '' : `<button class="delbtn" tabindex="-1" title="Borrar${r.saved ? ' la versión' : ''} (Supr)" aria-label="Borrar ${esc(runLabel(r))}">🗑</button>`}
+    ${st.confirmDel === r.id ? `<div class="delask" role="alertdialog" aria-label="¿Borrar ${esc(runLabel(r))}?"><span>¿Borrar${r.saved ? ' versión' : ''}?</span><span class="btns"><button class="sm danger" data-del="yes">Sí</button><button class="sm" data-del="no">No</button></span></div>` : ''}
     <div class="meta"><span class="name">${esc(runLabel(r))}</span>
       <span class="sub"><span>${esc(fdate(r.started || ''))}</span><span>d2 ${fmt(d.d2_mm)}</span><span>z ${d.nBl ?? '–'}</span></span>
       <span class="row">${tag(r)}${savedTag(r)}${nw ? `<span class="chipw" title="${plural(nw, 'aviso')}">⚠ ${nw}</span>` : ''}</span>
@@ -356,25 +434,56 @@ function renderFilterCounts() {
 }
 function renderGallery(force) {
   const list = st.runs.filter(FILTERS[st.filter]);
-  const sig = JSON.stringify([st.filter, st.compact, st.run?.id, st.runB?.id, list.map(r => [r.id, r.status, r.thumb, r.saved, versionExists(r.saved_as_version)])]);
+  const sig = JSON.stringify([st.filter, st.compact, st.run?.id, st.runB?.id, st.confirmDel, list.map(r => [r.id, r.status, r.thumb, r.saved, versionExists(r.saved_as_version)])]);
   renderFilterCounts();
   if (sig === gallerySig && !force) return;
   gallerySig = sig;
   const g = $('gallery'), focused = document.activeElement?.closest?.('.card-run')?.dataset.id;
   g.classList.toggle('compact', st.compact);
-  if (!st.runs.length) { g.innerHTML = `<div class="gallery-empty">Aún no hay corridas. Cambia un parámetro y pulsa «Ejecutar en CFturbo», o pídeselo a Claude en el chat.</div>`; return; }
-  if (!list.length) { g.innerHTML = `<div class="gallery-empty">Ninguna corrida con este filtro. <a href="#" id="gall">Ver todas</a></div>`; $('gall').onclick = ev => { ev.preventDefault(); setFilter('all'); }; return; }
+  if (!st.runs.length) { g.innerHTML = `<div class="gallery-empty" title="Cambia un parámetro y pulsa ▶ Ejecutar, o pídeselo a Claude en el chat">Sin corridas</div>`; return; }
+  if (!list.length) { g.innerHTML = `<div class="gallery-empty">Nada con este filtro · <a href="#" id="gall">Ver todas</a></div>`; $('gall').onclick = ev => { ev.preventDefault(); setFilter('all'); }; return; }
   // roving tabindex: una sola tarjeta enfocable (la que tenía el foco, si no la activa, si no la primera)
   const focusId = [focused, st.run?.id].find(id => id && list.some(r => r.id === id)) || list[0].id;
   g.innerHTML = list.map(r => cardHtml(r, focusId)).join('');
   for (const c of g.querySelectorAll('.card-run')) {
-    c.onclick = ev => { if (ev.target.closest('.cmpbtn') || ev.ctrlKey || ev.metaKey) setB(c.dataset.id); else pick(c.dataset.id); };
+    c.onclick = ev => {
+      const del = ev.target.closest('[data-del]');
+      if (del) { ev.stopPropagation(); del.dataset.del === 'yes' ? deleteRun(c.dataset.id) : askDelete(null); return; }
+      if (ev.target.closest('.delask')) return;
+      if (ev.target.closest('.delbtn')) askDelete(c.dataset.id);
+      else if (ev.target.closest('.cmpbtn') || ev.ctrlKey || ev.metaKey) setB(c.dataset.id); else pick(c.dataset.id);
+    };
   }
-  if (focused) g.querySelector(`.card-run[data-id="${CSS.escape(focused)}"]`)?.focus();
+  const ask = st.confirmDel && g.querySelector(`.card-run[data-id="${CSS.escape(st.confirmDel)}"] [data-del="no"]`);
+  if (ask) ask.focus();
+  else if (focused) g.querySelector(`.card-run[data-id="${CSS.escape(focused)}"]`)?.focus();
+}
+// Borrar: 🗑 o Supr abre «¿Borrar? Sí / No» en la propia tarjeta (se cancela solo a los 6 s, con Esc o con No)
+let delT = 0;
+function askDelete(id) {
+  clearTimeout(delT); st.confirmDel = id; renderGallery(true);
+  if (id) delT = setTimeout(() => { if (st.confirmDel === id) askDelete(null); }, 6000);
+  else document.querySelector('.card-run[tabindex="0"]')?.focus();
+}
+async function deleteRun(id) {
+  clearTimeout(delT); st.confirmDel = null;
+  const row = st.runs.find(r => r.id === id), label = row ? runLabel(row) : id;
+  const list = st.runs.filter(FILTERS[st.filter]), i = list.findIndex(r => r.id === id);
+  const next = list[i + 1] || list[i - 1];  // si era la activa, se pasa a la vecina
+  try { await api('/api/runs/' + encodeURIComponent(id), undefined, 15000, 'DELETE'); }
+  catch (e) { toast(`No pude borrar ${label}: ${e.message}`, 'error'); renderGallery(true); return; }
+  toast(`${row?.saved ? 'Versión borrada' : 'Corrida borrada'}: ${label}`, 'ok');
+  st.runs = st.runs.filter(r => r.id !== id);
+  if (st.runB?.id === id) clearB();
+  if (st.run?.id === id) { st.run = null; st.loadedKey = ''; if (next) { st.pinned = true; selectRun(next.id); } else { renderActive(); loadGeometry(null); } }
+  renderGallery(true); pollNow();
+  setTimeout(() => document.querySelector('.card-run[tabindex="0"]')?.focus(), 0);
 }
 function pick(id) { st.pinned = true; if (st.runB?.id === id) clearB(); selectRun(id); }
 $('gallery').addEventListener('keydown', ev => {
   const c = ev.target.closest('.card-run'); if (!c) return;
+  if (ev.target.closest('.delask')) { if (ev.key === 'Escape') { ev.preventDefault(); ev.stopPropagation(); askDelete(null); } return; }
+  if (ev.key === 'Delete') { ev.preventDefault(); if (!c.querySelector('.delbtn')) toast('No se puede borrar una corrida en marcha', 'warn'); else askDelete(c.dataset.id); return; }
   if (ev.key === 'Enter') { ev.preventDefault(); ev.ctrlKey || ev.metaKey ? setB(c.dataset.id) : pick(c.dataset.id); }
   else if (['ArrowRight', 'ArrowDown', 'ArrowLeft', 'ArrowUp', 'Home', 'End'].includes(ev.key)) {
     ev.preventDefault(); const all = [...$('gallery').querySelectorAll('.card-run')], i = all.indexOf(c);
@@ -430,24 +539,54 @@ async function selectRun(id) {
 }
 function renderActive() {
   renderGallery(); renderSeg(); renderParams();
-  renderRunbar(); renderEvents(); renderFiles(); renderSaveBtn();
+  renderRunbar(); renderEvents(); renderFiles(); renderSaveBtn(); renderCurves();
 }
 function renderRunbar() {
   const r = st.run;
-  $('runtitle').textContent = r ? runLabel(r) : 'Ninguna corrida seleccionada';
+  $('runtitle').textContent = r ? runLabel(r) : 'Sin corrida';
   $('runtitle').title = r ? `${runLabel(r)}\n${r.run_dir || ''}` : '';
   $('runtag').innerHTML = r ? tag(r) + savedTag(r, true) : '';
   renderRunMeta();
   const fc = $('followchip'); fc.hidden = !r;
-  fc.innerHTML = st.pinned ? 'Fijada<span class="long"> · volver a la última</span>' : 'Siguiendo<span class="long"> la última</span>';
+  // D2-4: entre 1100 y 1279 px el chip queda en icono (📌 / ⟳) para que se vea la fecha
+  fc.innerHTML = st.pinned ? '<span class="ico" aria-hidden="true">📌</span><span class="txt">Fijada<span class="long"> · volver a la última</span></span>'
+    : '<span class="ico" aria-hidden="true">⟳</span><span class="txt">Siguiendo<span class="long"> la última</span></span>';
+  fc.setAttribute('aria-label', st.pinned ? 'Fijada: volver a la última' : 'Siguiendo la última');
   fc.setAttribute('aria-pressed', String(!st.pinned));
   fc.title = st.pinned ? 'La vista no salta a corridas nuevas. Clic para seguir la última.' : 'La vista salta sola a cada corrida nueva. Clic para fijar esta.';
   $('rethumb').disabled = !canThumb(r);
 }
 function renderRunMeta() {
   const r = st.run;
-  $('runmeta').textContent = !r ? '' : r.status === 'running' ? `Corriendo · ${elapsed(r.started)} s` : `${fdate(r.started || '')}${r.seconds != null ? ' · ' + fmt(r.seconds) + ' s' : ''}`;
+  // la duración (span .dur) cede antes que la fecha cuando falta sitio
+  $('runmeta').innerHTML = !r ? '' : r.status === 'running' ? `Corriendo · ${elapsed(r.started)} s` : `${esc(fdate(r.started || ''))}${r.seconds != null ? '<span class="dur"> · ' + fmt(r.seconds) + ' s</span>' : ''}`;
   $('runmeta').title = $('runmeta').textContent;
+}
+// valores clave del reporte de diseño (export «Report», run.json["report"]): [símbolo, valor, unidad, decimales, explicación, sep]
+// sep: '/' = [cubo, corona] · '–' = rango [mín, máx]; cmp:false = ya está en la tabla de parámetros (β desde el .cft)
+const REPORT = [
+  { s: 'βB1', g: r => r.beta1_deg, u: '°', d: 1, t: 'Ángulo de álabe en el borde de ataque [cubo / corona]', sep: '/', cmp: false },
+  { s: 'βB2', g: r => r.beta2_deg, u: '°', d: 1, t: 'Ángulo de álabe en el borde de salida [cubo / corona]', sep: '/', cmp: false },
+  { s: 'Δφ', g: r => r.wrap_deg, u: '°', d: 1, t: 'Ángulo de envolvente del álabe' },
+  { s: 'A garganta', g: r => r.throat_mm2, u: 'mm²', d: 0, t: 'Área de garganta del canal del impulsor' },
+  { s: 'w2/w1', g: r => r.w2_w1, u: '', d: 3, t: 'Deceleración relativa [cubo / corona] (De Haller: ≥ 0,7)', sep: '/' },
+  { s: 'ηh', g: r => r.eta_h_pct, u: '%', d: 1, t: 'Rendimiento hidráulico estimado' },
+  { s: 'ηv', g: r => r.eta_v_pct, u: '%', d: 1, t: 'Rendimiento volumétrico estimado' },
+  { s: 'ηm', g: r => r.eta_m_pct, u: '%', d: 1, t: 'Rendimiento mecánico estimado' },
+  { s: 'η etapa', g: r => r.eta_st_pct, u: '%', d: 1, t: 'Rendimiento de la etapa estimado' },
+  { s: 'NPSHR', g: r => r.npshr_m?.['Gülich'] ?? Object.values(r.npshr_m || {})[0], u: 'm', d: 1, t: 'NPSH requerido, correlación de Gülich (rango)', sep: '–' },
+  { s: 'cu2', g: r => r.cu2, u: 'm/s', d: 1, t: 'Componente periférica de la velocidad absoluta a la salida' },
+  { s: 'cm2', g: r => r.cm2, u: 'm/s', d: 1, t: 'Componente meridiana a la salida' },
+  { s: 'P eje', g: r => r.P_kW, u: 'kW', d: 1, t: 'Potencia de accionamiento estimada' },
+  { s: 'A lengua', g: r => r.volute_throat_mm2, u: 'mm²', d: 0, t: 'Área de garganta de la voluta (lengua)' },
+];
+const fmtRep = (row, v) => Array.isArray(v) ? v.map(x => fmt(x, row.d)).join(row.sep === '–' ? '–' : ' / ') : fmt(v, row.d);
+function reportHtml(r) {
+  if (!r?.report) return '';
+  const cells = REPORT.map(row => [row, row.g(r.report)]).filter(([, v]) => v != null)
+    .map(([row, v]) => `<div title="${esc(row.t)}"><dt>${esc(row.s)}</dt><dd>${fmtRep(row, v)}${row.u ? ' <span class="mut">' + row.u + '</span>' : ''}</dd></div>`).join('');
+  const a = r.report_file ? ` <a href="${fileUrl(r, r.report_file)}" target="_blank" rel="noopener" title="Reporte completo de CFturbo (HTML)">Reporte ↗</a>` : '';
+  return `<div class="rep"><div class="cmp-sec">Diseño${a}</div><dl class="kv">${cells}</dl></div>`;
 }
 function renderEvents() {
   const r = st.run;
@@ -456,7 +595,7 @@ function renderEvents() {
   const guide = !r?.errors?.length ? '' : `<div class="msg fix"><b>Qué hacer:</b> ${r.edits?.AutoUpdate
       ? 'AutoUpdate recalculó d2/b2/dS y el meridiano quedó inválido. Prueba sin AutoUpdate (edita d2 y b2 a mano) o con un cambio menor del punto de diseño.'
       : 'revisa el primer error; prueba un cambio menor o parte de una corrida que funcionó.'} También puedes <a href="#" id="askfix">pedir a Claude que lo corrija</a>.</div>`;
-  $('msgs').innerHTML = guide + uniq(r?.errors).map(m => `<div class="msg error">Error: ${esc(m)}</div>`).join('') + corr + uniq(r?.warnings).map(m => `<div class="msg warn">Aviso: ${esc(m)}</div>`).join('');
+  $('msgs').innerHTML = reportHtml(r) + guide + uniq(r?.errors).map(m => `<div class="msg error">Error: ${esc(m)}</div>`).join('') + corr + uniq(r?.warnings).map(m => `<div class="msg warn">Aviso: ${esc(m)}</div>`).join('');
   if ($('askfix')) $('askfix').onclick = e => { e.preventDefault(); askClaude(`La corrida ${runLabel(r)} (${r.id}) terminó con error. Lee sus errores, busca receta y córrela de nuevo corregida (máximo 3 intentos).`); };
   $('events').innerHTML = r ? ((r.events || []).map(e => `<li><span>${esc(e.t.slice(11, 19))}</span>${esc(e.msg)}</li>`).join('') || '<li class="mut">Esta corrida no tiene hitos.</li>') : '<li class="mut">Esperando corrida…</li>';
   const ne = (r?.errors || []).length, nw = (r?.warnings || []).length, nc = Object.keys(r?.corrected || {}).length;
@@ -469,10 +608,12 @@ function renderFiles() {
   const r = st.run;
   const groups = Object.entries(r?.exports || {}).map(([itf, fs]) => [itf, fs.filter(f => !f.endsWith('.stl'))]).filter(([, fs]) => fs.length);
   const nstl = (r?.exports?.OpenFOAM || []).length, nfiles = groups.reduce((a, [, fs]) => a + fs.length, 0);
-  const ITF = { StarCCM: 'STAR-CCM+', OpenFOAM: 'OpenFOAM', General: 'General' };
-  $('files').innerHTML = groups.map(([itf, fs]) => `<li class="files-group">${ITF[itf] || esc(itf)}</li>` + fs.map(f => `<li><a href="/files/${encodeURIComponent(r.id)}/${encodeURIComponent(f)}" download>${esc(f)}</a></li>`).join('')).join('')
-    + (nstl ? `<li class="mut">${nstl} STL para el visor</li>` : '') || `<li class="mut">${r ? 'Esta corrida no exportó archivos.' : '–'}</li>`;
-  $('filesnote').textContent = r ? (r.run_dir || '') : '';
+  const ITF = { StarCCM: 'STAR-CCM+', OpenFOAM: 'OpenFOAM', General: 'General', Report: 'Reporte', PerformanceData: 'Curvas' };
+  const link = f => /\.html$/i.test(f)  // el reporte se abre en una pestaña; lo demás se descarga
+    ? `<a href="${fileUrl(r, f)}" target="_blank" rel="noopener">${esc(f)} ↗</a>` : `<a href="${fileUrl(r, f)}" download>${esc(f)}</a>`;
+  $('files').innerHTML = groups.map(([itf, fs]) => `<li class="files-group">${ITF[itf] || esc(itf)}</li>` + fs.map(f => `<li>${link(f)}</li>`).join('')).join('')
+    + (nstl ? `<li class="mut">${nstl} STL para el visor</li>` : '') || `<li class="mut">${r ? 'Sin archivos' : '–'}</li>`;
+  $('openfolder2').title = r ? (r.run_dir || '') : '';
   $('bfiles').textContent = nfiles + nstl ? nfiles + nstl : '';
   $('openfolder').disabled = $('openfolder2').disabled = !r;
 }
@@ -522,9 +663,19 @@ function renderCompare() {
   const A = st.run, B = st.runB;
   $('bcmp').textContent = B ? 'A⇄B' : ''; $('qab').hidden = !B;
   renderOverlayToggle();
-  if (!A || !B) { $('cmp').innerHTML = '<div class="cmp-empty">Elige una segunda corrida con Ctrl+clic (o el botón ⇄ de la tarjeta) para compararla con la activa.</div>'; return; }
-  const rows = [...PARAMS.map(p => [`${p.sym}${p.unit ? ' ' + p.unit : ''}`, p.from(A.info), p.from(B.info), p.d, p.label]),
-    ['nq', A.info?.nq?.nq, B.info?.nq?.nq, 1, 'Velocidad específica'], ['duración s', A.seconds, B.seconds, 1, 'Duración de la corrida'],
+  renderCurves();
+  if (!A || !B) { $('cmp').innerHTML = '<div class="cmp-empty" title="O Ctrl+Enter sobre una tarjeta de la galería">Ctrl+clic o ⇄ en una tarjeta para elegir B</div>'; return; }
+  // reporte: [cubo, corona] en dos filas; rango NPSHR por su máximo
+  const repRows = [];
+  for (const row of REPORT.filter(x => x.cmp !== false)) {
+    const a = A.report ? row.g(A.report) : null, b = B.report ? row.g(B.report) : null;
+    if (a == null && b == null) continue;
+    const lab = `${row.s}${row.u ? ' ' + row.u : ''}`;
+    if (row.sep === '/') ['cubo', 'corona'].forEach((sp, i) => repRows.push([`${lab} ${sp}`, a?.[i], b?.[i], row.d, row.t]));
+    else repRows.push([lab + (row.sep === '–' ? ' máx' : ''), Array.isArray(a) ? a[a.length - 1] : a, Array.isArray(b) ? b[b.length - 1] : b, row.d, row.t]);
+  }
+  const rows = [...PARAMS.map(p => [`${p.sym}${p.unit ? ' ' + p.unit : ''}`, p.from(A.info), p.from(B.info), p.d, p.label]).filter(([, a, b]) => a != null || b != null),
+    ['nq', A.info?.nq?.nq, B.info?.nq?.nq, 1, 'Velocidad específica'], ...repRows, ['duración s', A.seconds, B.seconds, 1, 'Duración de la corrida'],
     ['avisos', (A.warnings || []).length, (B.warnings || []).length, 0, 'Número de avisos'], ['errores', (A.errors || []).length, (B.errors || []).length, 0, 'Número de errores']];
   const tr = rows.map(([lab, a, b, d, long]) => {
     const ok = a != null && b != null && !isNaN(+a) && !isNaN(+b), dl = ok ? b - a : null, pc = ok && Math.abs(a) > 1e-12 ? dl / Math.abs(a) * 100 : null;
@@ -536,8 +687,10 @@ function renderCompare() {
   $('cmp').innerHTML = `<div class="cmp-head"><span class="a">A ${esc(runLabel(A))}</span>${tag(A)}<span>⇄</span><span class="b">B ${esc(runLabel(B))}</span>${tag(B)}<span class="sp"></span>
       <button class="chip" id="cmpov" aria-pressed="${st.overlayB}" title="Dibuja B en alambre cian sobre A en el visor">Superponer B</button>
       <button class="sm" id="cmpswap" title="B pasa a ser la activa (se ve en el visor)">Intercambiar</button><button class="sm" id="cmpclear" title="Esc">Quitar B</button><button class="sm pri" id="cmpask">Pedir comparación a Claude</button></div>
-    <div class="tblwrap"><table id="cmptbl"><thead><tr><th>Parámetro</th><th class="num">A</th><th class="num">B</th><th class="num">Δ</th><th class="num">Δ %</th></tr></thead><tbody>${tr}</tbody></table></div>
+    <div class="cmp-grid"><div class="tblwrap"><table id="cmptbl"><thead><tr><th>Parámetro</th><th class="num">A</th><th class="num">B</th><th class="num">Δ</th><th class="num">Δ %</th></tr></thead><tbody>${tr}</tbody></table></div>
+    <div class="cmp-curves">${A.curves || B.curves ? curvesHtml([0], 'cmp') : ''}</div></div>
     ${grp('Avisos solo en A', [...wa].filter(w => !wb.has(w)))}${grp('Avisos solo en B', [...wb].filter(w => !wa.has(w)))}${grp('Avisos en ambas', [...wa].filter(w => wb.has(w)))}`;
+  bindCurves($('cmp'));
   $('cmpov').onclick = () => setOverlay(!st.overlayB);
   $('cmpswap').onclick = () => { const b = st.runB; st.runB = st.run; st.pinned = true; selectRun(b.id).then(loadOverlay); };
   $('cmpclear').onclick = clearB;
@@ -546,11 +699,99 @@ function renderCompare() {
 const askCompare = () => st.run && st.runB && askClaude(`Compara las corridas A (${st.run.id}) y B (${st.runB.id}): parámetros, avisos y qué cambió en la geometría. Dime cuál conviene y por qué.`);
 $('qab').onclick = askCompare;
 
+// ---------------------------------------------------------------- curvas características (SVG propio, sin librerías)
+// run.json["curves"] sale del export PerformanceData (predicción 1D de CFturbo): Q_m3h, H_m, eta_pct, P_kW (+ design).
+// A en el color de acento; B (si la hay) en el de comparar, discontinua. Punto de diseño marcado en H-Q.
+const CHARTS = [
+  { k: 'H_m', s: 'H', u: 'm', t: 'Altura frente a caudal', d: 1 },
+  { k: 'eta_pct', s: 'η', u: '%', t: 'Rendimiento frente a caudal', d: 1 },
+  { k: 'P_kW', s: 'P', u: 'kW', t: 'Potencia al eje frente a caudal', d: 1 },
+];
+let CW = 320, CH = 200; const M = { l: 44, r: 12, t: 14, b: 32 };
+function niceTicks(lo, hi, n = 5) {
+  const span = hi - lo || 1, step0 = span / n, mag = Math.pow(10, Math.floor(Math.log10(step0)));
+  const step = [1, 2, 2.5, 5, 10].map(f => f * mag).find(s => s >= step0) || 10 * mag;
+  const out = []; for (let v = Math.ceil(lo / step) * step; v <= hi + step * 1e-6; v += step) out.push(+v.toFixed(10));
+  return out;
+}
+function interp(xs, ys, x) {
+  if (!xs?.length || x < xs[0] || x > xs[xs.length - 1]) return null;
+  let i = 1; while (i < xs.length - 1 && xs[i] < x) i++;
+  const [x0, x1, y0, y1] = [xs[i - 1], xs[i], ys[i - 1], ys[i]];
+  return y0 == null || y1 == null ? null : y0 + (y1 - y0) * (x - x0) / ((x1 - x0) || 1);
+}
+const curveSeries = () => [[st.run, 'a'], [st.runB, 'b']].filter(([r]) => r?.curves?.Q_m3h?.length);
+const curveCtx = [];  // por SVG pintado: escalas y series, para el puntero
+function chartSvg(ch, scope) {
+  const ser = curveSeries().filter(([r]) => r.curves[ch.k]);
+  if (!ser.length) return '';
+  const xs = ser.flatMap(([r]) => r.curves.Q_m3h), ys = ser.flatMap(([r]) => r.curves[ch.k].filter(v => v != null));
+  const x0 = Math.min(...xs), x1 = Math.max(...xs), y1 = Math.max(...ys) * 1.08, y0 = 0;
+  const X = v => M.l + (v - x0) / ((x1 - x0) || 1) * (CW - M.l - M.r), Y = v => CH - M.b - (v - y0) / ((y1 - y0) || 1) * (CH - M.t - M.b);
+  const tx = niceTicks(x0, x1, 5), ty = niceTicks(y0, y1, 4);
+  const grid = ty.map(v => `<line class="g" x1="${M.l}" x2="${CW - M.r}" y1="${Y(v)}" y2="${Y(v)}"/><text class="tk" x="${M.l - 6}" y="${Y(v) + 4}" text-anchor="end">${fmt(v, v % 1 ? 1 : 0)}</text>`).join('')
+    + tx.map(v => `<text class="tk" x="${X(v)}" y="${CH - M.b + 15}" text-anchor="middle">${fmt(v, 0)}</text>`).join('');
+  const lines = ser.map(([r, c]) => {
+    const pts = r.curves.Q_m3h.map((q, i) => [q, r.curves[ch.k][i]]).filter(([, v]) => v != null);
+    const d = pts.map(([q, v], i) => `${i ? 'L' : 'M'}${X(q).toFixed(1)},${Y(v).toFixed(1)}`).join('');
+    const dq = r.curves.design?.Q_m3h, dv = ch.k === 'H_m' ? r.curves.design?.H_m : interp(r.curves.Q_m3h, r.curves[ch.k], dq);
+    const mark = dq != null && dq >= x0 && dq <= x1 ? `<line class="dz ${c}" x1="${X(dq)}" x2="${X(dq)}" y1="${M.t}" y2="${CH - M.b}"/>`
+      + (dv != null ? `<circle class="dp ${c}" cx="${X(dq)}" cy="${Y(dv)}" r="4"><title>Diseño ${runLabel(r)}: Q ${fmt(dq)} m³/h · ${ch.s} ${fmt(dv, ch.d)} ${ch.u}</title></circle>` : '') : '';
+    return `<path class="ln ${c}" d="${d}"/>${mark}`;
+  }).join('');
+  const id = curveCtx.push({ ch, ser, X, Y, x0, x1, scope, W: CW, H: CH }) - 1;
+  return `<figure class="chart"><svg viewBox="0 0 ${CW} ${CH}" width="${CW}" height="${CH}" role="img" aria-label="${ch.t}" data-cc="${id}">
+    <text class="ax" x="${M.l}" y="10">${ch.s} ${ch.u}</text><text class="ax" x="${CW - M.r}" y="${CH - 4}" text-anchor="end">Q m³/h</text>
+    ${grid}<line class="axis" x1="${M.l}" x2="${M.l}" y1="${M.t}" y2="${CH - M.b}"/><line class="axis" x1="${M.l}" x2="${CW - M.r}" y1="${CH - M.b}" y2="${CH - M.b}"/>
+    ${lines}<g class="hv"></g><rect class="hit" x="${M.l}" y="${M.t}" width="${CW - M.l - M.r}" height="${CH - M.t - M.b}"/></svg></figure>`;
+}
+// tamaño real en px (viewBox = px: los textos quedan a 12 px): n gráficas en columnas según el ancho del dock y
+// alto según lo que deja el dock (sin pasar de 260); apiladas (< 500 px de ancho) van a 200 px de alto
+function sizeCharts(n, maxW = 9999) {
+  const dock = $('dock'), w = Math.max(220, (dock.clientWidth || 600) - 24 - 16);  // padding del panel + barra de scroll
+  const cols = n === 1 ? 1 : w >= 690 ? 3 : w >= 460 ? 2 : 1;
+  CW = Math.min(maxW, Math.floor((w - (cols - 1) * 12) / cols));
+  const avail = dock.clientHeight - 36 - 52;
+  CH = cols >= n && avail > 0 ? Math.max(170, Math.min(260, avail)) : 200;
+}
+function curvesHtml(idx = [0, 1, 2], scope = 'tab') { sizeCharts(idx.length, scope === 'cmp' ? 300 : 9999); return idx.map(i => chartSvg(CHARTS[i], scope)).join(''); }
+// puntero: línea vertical y valores de A y B al caudal bajo el ratón (o el dedo)
+function bindCurves(root) {
+  for (const svg of root.querySelectorAll('svg[data-cc]')) {
+    const c = curveCtx[+svg.dataset.cc], hv = svg.querySelector('.hv');
+    const move = e => {
+      const p = svg.getBoundingClientRect(), xpx = (e.clientX - p.left) / p.width * c.W;
+      const q = c.x0 + (xpx - M.l) / (c.W - M.l - M.r) * (c.x1 - c.x0);
+      if (q < c.x0 || q > c.x1) { hv.innerHTML = ''; return; }
+      const vals = c.ser.map(([r, cl]) => [cl, interp(r.curves.Q_m3h, r.curves[c.ch.k], q)]).filter(([, v]) => v != null);
+      const right = xpx > c.W * .62, tx = right ? xpx - 6 : xpx + 6, anc = right ? 'end' : 'start';
+      hv.innerHTML = `<line x1="${xpx}" x2="${xpx}" y1="${M.t}" y2="${c.H - M.b}"/>` + vals.map(([cl, v]) => `<circle class="${cl}" cx="${xpx}" cy="${c.Y(v)}" r="3"/>`).join('')
+        + `<text x="${tx}" y="${M.t + 10}" text-anchor="${anc}">Q ${fmt(q, 0)}</text>` + vals.map(([cl, v], i) => `<text class="${cl}" x="${tx}" y="${M.t + 24 + i * 13}" text-anchor="${anc}">${c.ch.s} ${fmt(v, c.ch.d)}</text>`).join('');
+    };
+    svg.addEventListener('pointermove', move);
+    svg.addEventListener('pointerleave', () => { hv.innerHTML = ''; });
+  }
+}
+function renderCurves() {
+  const A = st.run, B = st.runB, el = $('curves');
+  if (curveCtx.length > 200) curveCtx.length = 0;  // los SVG viejos ya no están en el DOM
+  if (!A?.curves?.Q_m3h?.length) {
+    el.innerHTML = `<div class="cmp-empty" title="Las corridas anteriores a la ronda 3 no exportaban PerformanceData">${A ? 'Sin curvas en esta corrida' : '–'}</div>`; return;
+  }
+  const c = A.curves, dq = c.design?.Q_m3h;
+  const at = k => interp(c.Q_m3h, c[k], dq);
+  const dsg = dq ? `Diseño: Q ${fmt(dq)} m³/h · H ${fmt(c.design.H_m)} m${at('eta_pct') != null ? ' · η ' + fmt(at('eta_pct')) + ' %' : ''}${at('P_kW') != null ? ' · P ' + fmt(at('P_kW')) + ' kW' : ''}` : '';
+  el.innerHTML = `<div class="cmp-head"><span class="lg a">A ${esc(runLabel(A))}</span>${B?.curves ? `<span class="lg b">B ${esc(runLabel(B))}</span>` : ''}
+      <span class="mut small" title="Predicción 1D de CFturbo (PerformanceData), no CFD">${dsg}</span></div>
+    <div class="charts">${curvesHtml()}</div>`;
+  bindCurves(el);
+}
+
 // ---------------------------------------------------------------- dock con pestañas
 function openTab(t, expand = true) {
   st.tab = t; LS.set('cft_tab', t);
   for (const b of document.querySelectorAll('.dock-tabs [role=tab]')) { const on = b.dataset.tab === t; b.setAttribute('aria-selected', String(on)); b.tabIndex = on ? 0 : -1; }
-  for (const id of ['chat', 'tab-events', 'tab-files', 'tab-cmp']) $(id).hidden = id !== (t === 'chat' ? 'chat' : 'tab-' + t);
+  for (const id of ['chat', 'tab-events', 'tab-curves', 'tab-files', 'tab-cmp']) $(id).hidden = id !== (t === 'chat' ? 'chat' : 'tab-' + t);
   if (expand) setCollapsed(false);
 }
 function setCollapsed(c) {
@@ -565,9 +806,17 @@ for (const b of document.querySelectorAll('.dock-tabs [role=tab]')) {
     n.focus(); openTab(n.dataset.tab);
   };
 }
+// las curvas se pintan a tamaño real: al cambiar el dock (arrastre, ventana) se repintan
+let dockRz = 0, dockWH = '';
+new ResizeObserver(([e]) => {
+  const wh = Math.round(e.contentRect.width / 8) + 'x' + Math.round(e.contentRect.height / 8);
+  if (wh === dockWH) return; dockWH = wh;
+  cancelAnimationFrame(dockRz); dockRz = requestAnimationFrame(() => { if (st.runB) renderCompare(); else renderCurves(); });
+}).observe($('dock'));
 $('docktoggle').onclick = () => setCollapsed(!$('stage').classList.contains('dock-collapsed'));
 // alto del dock arrastrando su borde (160 px – 60 vh), guardado
 (() => {
+  // D2-8: sin alto guardado, el dock toma clamp(280 px, 32vh, 420 px) (en CSS); el guardado manda
   const h = +LS.get('cft_dock_h', 0); if (h) $('stage').style.setProperty('--dock-h', h + 'px');
   let y0 = 0, h0 = 0;
   const move = e => { const h = Math.max(160, Math.min(innerHeight * .6, h0 + y0 - e.clientY)); $('stage').style.setProperty('--dock-h', h + 'px'); };
@@ -728,10 +977,10 @@ async function loadGeometry(r) {
   const geo = (r?.geometry || []).filter(g => g.kind === 'stl');
   if (!geo.length) {
     $('vtools').innerHTML = '';
-    if (!r) { vEmpty('Sin geometría. Ejecuta una corrida con STL o elige una en la galería.'); $('vmsg').textContent = 'sin geometría'; }
-    else if (r.status === 'running') { vEmpty('CFturbo trabajando… la geometría aparecerá al terminar'); $('vmsg').textContent = `${runLabel(r)} · corriendo`; }
-    else if (r.status === 'error') { vEmpty('La corrida terminó con error; no hay geometría. <a href="#">Mira «Hitos y avisos».</a>'); $('vmsg').textContent = `${runLabel(r)} · error`; }
-    else { vEmpty('Esta corrida no exportó STL. Vuelve a correrla con «Exportar STL» activado.'); $('vmsg').textContent = `${runLabel(r)} · sin STL`; }
+    if (!r) { vEmpty('Sin geometría'); $('vmsg').textContent = 'sin geometría'; }
+    else if (r.status === 'running') { vEmpty('CFturbo trabajando…'); $('vmsg').textContent = `${runLabel(r)} · corriendo`; }
+    else if (r.status === 'error') { vEmpty('Error, sin geometría · <a href="#">ver hitos</a>'); $('vmsg').textContent = `${runLabel(r)} · error`; }
+    else { vEmpty('Sin STL <span class="mut" title="Vuelve a correrla con Exportar › STL">(no exportado)</span>'); $('vmsg').textContent = `${runLabel(r)} · sin STL`; }
     renderRunbar(); return;
   }
   vEmpty('');
@@ -753,7 +1002,7 @@ async function loadGeometry(r) {
   applyVis(); fit();
   $('vmsg').textContent = `${runLabel(r)} · ${comps.join(', ')}`;
   renderRunbar();
-  captureThumb(r).catch(() => {});
+  captureThumb(r).then(done => done || !r.thumb ? done : thumbIsDark(r).then(dark => dark && captureThumb(r, false, true))).catch(() => {});
 }
 function applyVis() {
   const on = new Set([...$('vtools').querySelectorAll('input[data-c]:checked')].map(i => i.dataset.c));
@@ -807,20 +1056,32 @@ for (const b of document.querySelectorAll('#vactions [data-view]')) b.onclick = 
 // Automática: una por corrida ok/aviso, vista iso y visibilidad por defecto (comparables entre sí).
 // Recapturar (P2-2): la vista actual del visor, tal cual la ve el usuario.
 const canThumb = r => !!r && st.meshes.size > 0 && ['ok', 'warn'].includes(r.status) && st.run?.id === r.id;
-async function captureThumb(r, current = false) {
+// D2-5: la automática se pinta siempre sobre el mismo fondo neutro (THUMB_BG), sea cual sea el tema, y las viejas
+// capturadas con el tema oscuro se rehacen solas al abrir la corrida (thumbIsDark mira una esquina de la imagen)
+const THUMB_BG = '#e9edf2';
+function thumbIsDark(r) {
+  return new Promise(res => {
+    const img = new Image();
+    img.onload = () => { try { const c = document.createElement('canvas'); c.width = c.height = 1; const x = c.getContext('2d');
+      x.drawImage(img, 0, 0, 1, 1, 0, 0, 1, 1); const [R, G, B] = x.getImageData(0, 0, 1, 1).data; res((R + G + B) / 3 < 110); } catch { res(false); } };
+    img.onerror = () => res(false);
+    img.src = `/files/${encodeURIComponent(r.id)}/thumb.png?v=${r.thumb}`;
+  });
+}
+async function captureThumb(r, current = false, force = false) {
   const row = st.runs.find(x => x.id === r.id);
-  if ((!current && (row ? row.thumb : r.thumb)) || !canThumb(r)) return false;
+  if ((!current && !force && (row ? row.thumb : r.thumb)) || !canThumb(r)) return false;
   const W = 320, H = 240, pr = renderer.getPixelRatio();
   const vis = [...st.meshes.values()].map(m => m.visible), ovVis = groupB.visible;
   const saved = { pos: camera.position.clone(), tgt: controls.target.clone() };
   if (!current) { for (const m of st.meshes.values()) m.visible = !m.userData.component.includes('ext') && !isCap(m.userData); groupB.visible = false; }
   renderer.setPixelRatio(1); renderer.setSize(W, H, false); camera.aspect = W / H; camera.updateProjectionMatrix();
-  if (!current) fit('iso', false);
+  if (!current) { fit('iso', false); scene.background = new THREE.Color(THUMB_BG); }
   renderer.render(scene, camera);
   const pending = new Promise(res => renderer.domElement.toBlob(res, 'image/png'));  // copia el lienzo ya
   // volver al tamaño del visor en el mismo tick: el usuario no llega a ver el lienzo de 320×240
   [...st.meshes.values()].forEach((m, i) => { m.visible = vis[i]; }); groupB.visible = ovVis;
-  renderer.setPixelRatio(pr); lastW = lastH = 0; resize();
+  renderer.setPixelRatio(pr); lastW = lastH = 0; resize(); applyBg();
   camera.position.copy(saved.pos); controls.target.copy(saved.tgt); controls.update(); renderer.render(scene, camera);
   const blob = await pending;
   if (!blob) return false;
@@ -850,6 +1111,7 @@ $('helpbtn').onclick = () => setHelp($('help').hidden);
 $('helpclose').onclick = () => { setHelp(false); $('helpbtn').focus(); };
 addEventListener('pointerdown', e => { if (!$('help').hidden && !e.target.closest('#help,#helpbtn')) setHelp(false); });
 addEventListener('keydown', e => {
+  if ($('newdlg').open) return;  // el diálogo maneja su teclado (Esc lo cierra)
   const typing = e.target.closest?.('input,textarea,select,[contenteditable]');
   if (e.key === 'Enter' && (e.ctrlKey || e.metaKey) && e.target.id !== 'chattext' && !e.target.closest?.('.card-run')) { e.preventDefault(); runNow(); return; }
   if (e.key === 'Escape') {
@@ -879,7 +1141,7 @@ setInterval(tickClock, 1000);
 new ResizeObserver(([e]) => document.body.style.setProperty('--foot-h', Math.ceil(e.target.getBoundingClientRect().height) + 12 + 'px')).observe(document.querySelector('.props-foot'));
 
 // ---------------------------------------------------------------- arranque
-openTab(['chat', 'events', 'files', 'cmp'].includes(st.tab) ? st.tab : 'chat', false);
+openTab(['chat', 'events', 'curves', 'files', 'cmp'].includes(st.tab) ? st.tab : 'chat', false);
 setCollapsed(LS.get('cft_dock_collapsed') === '1');
 // Opciones abiertas si hay alto (≥ 820 px) salvo que el usuario las haya plegado/abierto antes
 $('opts').open = LS.get('cft_opts_open') != null ? LS.get('cft_opts_open') === '1' : innerHeight >= 820 && innerWidth >= 1100;
@@ -887,5 +1149,5 @@ $('opts').open = LS.get('cft_opts_open') != null ? LS.get('cft_opts_open') === '
 $('optsum').addEventListener('click', () => setTimeout(() => LS.set('cft_opts_open', $('opts').open ? '1' : '0')));
 setDensity(st.compact); placeQuick(); setViewPressed(null);
 renderCompare(); renderActive(); applyExtDefault();
-window.__cft = { st, group, groupB, camera, controls, scene, fit, renderer, captureThumb, selectRun, setB, clearB, setOverlay, poll };
+window.__cft = { st, group, groupB, camera, controls, scene, fit, renderer, captureThumb, selectRun, setB, clearB, setOverlay, poll, renderCurves, deleteRun, askDelete };
 loadProjects(); poll();
