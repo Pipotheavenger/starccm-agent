@@ -16,3 +16,5 @@ projects/*/
 .DS_Store
 .mcp.json
 cfturbo/versions/*/
+.claude/worktrees/
+__MACOSX/
