@@ -14,6 +14,10 @@
 <header class="topbar">
   <h1 class="brand">STAR-CCM+ <span>Agente</span></h1>
   <span class="simname mono" id="simname"></span>
+  <div class="seg" id="where" role="radiogroup" aria-label="Dónde corre la simulación">
+    <button role="radio" data-where="local" aria-checked="true" title="Local: STAR-CCM+ 2410 en este PC (Windows); Claude usa el solver de aquí">Local · este PC</button>
+    <button role="radio" data-where="server" aria-checked="false" title="Servidor Linux (vm/SERVIDOR.md): 16 núcleos, STAR-CCM+ 2502; la ejecución remota está pendiente de instalación">Servidor · Linux</button>
+  </div>
   <span class="sp"></span>
   <span id="solver" role="status" aria-live="polite"><span class="dot"></span><span>Conectando…</span></span>
   <button class="sm danger" id="stopsolver" hidden title="Guarda el .sim y apaga el servidor de STAR-CCM+ (server_stop)">Apagar solver</button>
@@ -69,10 +73,12 @@
         <button class="sm" id="spin" aria-pressed="false" title="Giro automático">⟳</button>
         <button class="sm" id="ghost" aria-pressed="true" title="Carcasa translúcida: voluta, shroud y casing al 25 % para ver los álabes">Carcasa</button>
         <button class="sm" id="wire" aria-pressed="false" title="Malla superficial">Malla</button>
-        <label class="clip"><input type="checkbox" id="clipon"> Corte <select id="clipax"><option>Z</option><option>X</option><option>Y</option></select><input type="range" id="clipv" min="0" max="1000" value="500"></label>
+        <label class="clip"><input type="checkbox" id="clipon"> Corte <select id="clipax" aria-label="Eje del corte"><option>Z</option><option>X</option><option>Y</option></select><input type="range" id="clipv" min="0" max="1000" value="500" aria-label="Posición del corte"></label>
+        <button class="sm icon" id="help" title="Atajos: F encuadrar · 1 iso · 2 axial · 3 lateral · doble clic vuela a la superficie · ` pliega el dock · Esc cierra" aria-label="Atajos de teclado">?</button>
       </div>
-      <div id="legend" hidden><div class="lg-title" id="lgtitle"></div><canvas id="lgbar" width="14" height="160"></canvas><div class="lg-ticks" id="lgticks"></div></div>
+      <div id="legend" hidden><div class="lg-title" id="lgtitle"></div><div class="lg-body"><canvas id="lgbar" width="14" height="160"></canvas><div class="lg-ticks" id="lgticks"></div></div></div>
       <div id="vtip" hidden></div>
+      <div id="vhint" class="vbusy" hidden>toca el modelo para activar el zoom con la rueda</div>
       <div id="vempty" class="vempty"><div><b>Sin superficies 3D todavía.</b><br>Con el solver vivo pulsa «↓ solver» en el árbol para exportar las fronteras con campo, o pídeselo a Claude en el chat.</div></div>
       <div id="vbusy" class="vbusy" hidden><span class="spinner"></span><span id="vbusytxt">cargando…</span></div>
     </div>
@@ -101,8 +107,8 @@
     <div class="chat-head"><span class="sec-h">Claude</span><span id="chatstate" aria-live="polite"></span><span class="sp"></span>
       <button class="sm" id="newchat">Nueva</button><button class="sm danger" id="stopchat" disabled>Detener</button></div>
     <div id="chatlog"><div class="chat-empty" id="chatempty"><p>Pide escenas, planos de corte, vectores, cambios de parámetros o que corra iteraciones. Claude opera STAR-CCM+ por el MCP y la página se actualiza sola.</p></div></div>
-    <details class="params" id="params">
-      <summary>Parámetros <span class="mut">(los cambia Claude, nunca la página)</span></summary>
+    <details class="params" id="params" open>
+      <summary>Parámetros <span class="mono" id="pnow"></span><span class="mut small" id="pnote">(los cambia Claude, nunca la página)</span></summary>
       <div class="pgrid">
         <label>rpm<input id="p_rpm" inputmode="decimal" placeholder="2980"></label>
         <label>caudal <span class="mut">kg/s</span><input id="p_mdot" inputmode="decimal" placeholder="69,486"></label>

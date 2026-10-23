@@ -17,6 +17,9 @@ Qué hace:
                                            .mcp.json de la raíz; eventos por SSE (status, init, text, tool,
                                            tool_result, ping, raw, result, error, stopped, done)
   - POST /api/chat/stop                 -> mata la CLI del chat y sus hijos
+  - GET/POST /api/settings              -> dónde corre la simulación (run_where: local | server), persistido en
+                                           starccm/.ui-settings.json (ignorado por git); el chat lo lleva en el prompt
+  - GET  /api/tree[?refresh=1&case=]    -> árbol del .sim; cada lectura se guarda en cases/<caso>/tree.json
 Errores: siempre JSON {"detail": "texto"}. Un chat a la vez; un apagado a la vez.
 La UI nunca lanza el solver: eso lo hace Claude desde el chat (server_start del MCP).
 """
@@ -36,6 +39,7 @@ import time
 from collections import deque
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Literal
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
@@ -83,7 +87,10 @@ CHAT_SYSTEM = (
     "de trabajo largo guarda con save. Si te piden resumen, comparación o explicación, solo lees y respondes "
     "(no lances iterate ni server_start). Las escenas van a cases/<caso>/images/ y el historial a "
     "cases/<caso>/reports/convergencia.csv para que la galería los muestre. "
-    "Termina siempre con una línea: qué quedó hecho y qué cambió."
+    "Termina siempre con una línea: qué quedó hecho y qué cambió. "
+    "Cada mensaje empieza con el caso y dónde eligió el usuario correr la simulación (Local = este PC Windows con "
+    "STAR-CCM+ 2410; Servidor = el Linux de vm/SERVIDOR.md con 2502, cuya ejecución remota aún no está montada: "
+    "si está elegido, no arranques nada allí; prepara, explica y avisa)."
 )
 
 
@@ -141,6 +148,69 @@ def app_js() -> FileResponse:
 @app.get("/style.css")
 def style_css() -> FileResponse:
     return FileResponse(HERE / "style.css", media_type="text/css", headers={"Cache-Control": "no-cache"})
+
+
+# ---------------------------------------------------------------- dónde corre la simulación: Local (este PC) o Servidor (Linux)
+SETTINGS_FILE = ROOT / ".ui-settings.json"   # ignorado por git; Claude puede leerlo con Read
+SERVIDOR_MD = ROOT / "vm" / "SERVIDOR.md"
+
+
+def _server_info() -> dict:
+    """Resumen de vm/SERVIDOR.md: host del ssh y las primeras filas del inventario. Allí no hay claves."""
+    info = {"host": None, "user": None, "rows": [], "label": "Servidor Linux", "version": "2502",
+            "ready": os.environ.get("STARCCM_REMOTE_READY", "0") == "1"}  # ponytail: la ejecución remota la monta otra sesión
+    if not SERVIDOR_MD.is_file():
+        return info
+    txt = SERVIDOR_MD.read_text(encoding="utf-8", errors="replace")
+    m = re.search(r"ssh\s+([\w.-]+)@([\d.]+)", txt)
+    if m:
+        info["user"], info["host"] = m.group(1), m.group(2)
+    for ln in txt.splitlines():
+        cells = [c.strip() for c in ln.strip().strip("|").split("|")]
+        if ln.strip().startswith("|") and len(cells) == 2 and cells[0] != "dato" and cells[0].strip("-: "):
+            info["rows"].append(cells)
+        if len(info["rows"]) >= 6:
+            break
+    n = re.match(r"(\d+)\s*vCPU", dict(info["rows"]).get("CPU", ""))
+    info["label"] = f"Servidor Linux ({n.group(1)} vCPU)" if n else "Servidor Linux"
+    return info
+
+
+def _settings() -> dict:
+    try:
+        d = json.loads(SETTINGS_FILE.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        d = {}
+    where = d.get("run_where") if d.get("run_where") in ("local", "server") else "local"
+    return {"run_where": where, "at": d.get("at"), "file": str(SETTINGS_FILE),
+            "local": {"label": "Local (este PC)", "np": scc.NP, "version": "2410"}, "server": _server_info()}
+
+
+class SettingsReq(BaseModel):
+    run_where: Literal["local", "server"]
+
+
+@app.get("/api/settings")
+def api_settings() -> dict:
+    return _settings()
+
+
+@app.post("/api/settings")
+def api_settings_set(req: SettingsReq) -> dict:
+    SETTINGS_FILE.write_text(json.dumps({"run_where": req.run_where, "at": time.strftime("%Y-%m-%d %H:%M:%S")}, indent=1),
+                             encoding="utf-8")
+    log.info("ejecución elegida: %s", req.run_where)
+    return _settings()
+
+
+def _where_text() -> str:
+    """Lo que el chat antepone a cada mensaje para que Claude sepa dónde debe correr."""
+    s = _settings()
+    if s["run_where"] == "server":
+        sv = s["server"]
+        tail = "remoto disponible" if sv["ready"] else "remoto aún no disponible: no arranques nada allí, prepara y avisa"
+        return f"ejecución elegida: {sv['label']} {sv['host'] or ''} · STAR-CCM+ {sv['version']} · {tail}".replace("  ", " ")
+    return f"ejecución: Local (este PC, STAR-CCM+ {s['local']['version']}, np {s['local']['np']})"
 
 
 # ---------------------------------------------------------------- casos
@@ -331,13 +401,34 @@ def _tail_file(p: Path, nbytes: int = 24_000, nlines: int = 80) -> list[str]:
     return [scc._redact(ln)[:400] for ln in lines[-nlines:]]
 
 
+def _is_fake(p: Path) -> bool:
+    """Salida del starccm+ falso del selftest (hasta el 2026-10-23 escribía en sims/ y macros/ reales)."""
+    try:
+        with open(p, "rb") as f:
+            head = f.read(600)
+        return any(m in head for m in (b"FAKE", b"<fake>", b"starccm-selftest-"))
+    except OSError:
+        return False
+
+
 def _server_log_path() -> Path | None:
     st = scc._state()
     p = Path(st.get("log") or "")
     if p.is_file():
         return p
     logs = sorted(scc.SIMS.glob("*.server.log"), key=lambda q: q.stat().st_mtime) if scc.SIMS.is_dir() else []
+    logs = [q for q in logs if not _is_fake(q)]
     return logs[-1] if logs else None
+
+
+def _last_macro() -> Path | None:
+    """La macro más nueva que no sea del starccm+ falso (mira como mucho las 5 últimas)."""
+    macros = sorted(scc.MACROS.glob("Agent_*.java"), key=lambda q: q.stat().st_mtime) if scc.MACROS.is_dir() else []
+    for m in reversed(macros[-5:]):
+        o = m.with_suffix(".out")
+        if not (o.is_file() and _is_fake(o)):
+            return m
+    return None
 
 
 @app.get("/api/progress")
@@ -347,9 +438,8 @@ def progress() -> dict:
     out: dict = {"server_log": {"file": str(lp) if lp else None, "size": lp.stat().st_size if lp else 0,
                                 "mtime": int(lp.stat().st_mtime) if lp else None, "tail": _tail_file(lp) if lp else []},
                  "agent_log": _log_tail(8), "macro": None}
-    macros = sorted(scc.MACROS.glob("Agent_*.java"), key=lambda q: q.stat().st_mtime) if scc.MACROS.is_dir() else []
-    if macros:
-        m = macros[-1]
+    m = _last_macro()
+    if m:
         o = m.with_suffix(".out")
         body = m.read_text(encoding="utf-8", errors="replace")
         i, j = body.find("try {"), body.rfind("} catch")
@@ -368,10 +458,25 @@ TREE: dict = {"data": None, "at": None, "sim": None}
 TREE_LOCK = threading.Lock()
 
 
+def _tree_file(sim: str | None) -> Path | None:
+    """cases/<caso>/tree.json (el caso se llama como el .sim); fuera de git por el patrón de cases/."""
+    stem = Path(sim).stem if sim else ""
+    return CASES / stem / "tree.json" if stem and (CASES / stem).is_dir() else None
+
+
+def _tree_load(case: str | None) -> dict:
+    f = CASES / _safe(case) / "tree.json" if case else None
+    try:
+        return json.loads(f.read_text(encoding="utf-8")) if f and f.is_file() else {}
+    except ValueError:
+        return {}
+
+
 @app.get("/api/tree")
-def api_tree(refresh: int = 0) -> dict:
+def api_tree(refresh: int = 0, case: str | None = None) -> dict:
     """Árbol del .sim abierto (solver, parts, regions, physics, mesh_ops, reports, monitors, scenes).
-    Sin refresh devuelve la última lectura (cada lectura es una macro, ~10 s)."""
+    Sin refresh devuelve la última lectura: la de memoria si es del caso pedido, si no la guardada en
+    cases/<caso>/tree.json (sobrevive al reinicio de la UI y al apagado del solver). Cada lectura es una macro, ~10 s."""
     if refresh:
         _solver_busy_409()
         if not TREE_LOCK.acquire(blocking=False):
@@ -383,10 +488,14 @@ def api_tree(refresh: int = 0) -> dict:
             TREE.update(data={k: v for k, v in r.items() if isinstance(v, list)}, at=int(time.time()),
                         sim=scc._state().get("sim"), seconds=r.get("seconds"))
             log.info("árbol leído: %s en %s s", {k: len(v) for k, v in TREE['data'].items()}, r.get("seconds"))
+            f = _tree_file(TREE["sim"])
+            if f:
+                f.write_text(json.dumps(TREE, ensure_ascii=False), encoding="utf-8")
         finally:
             TREE_LOCK.release()
-    return {"tree": TREE["data"], "at": TREE["at"], "sim": TREE["sim"], "seconds": TREE.get("seconds"),
-            "alive": _solver_alive()}
+    t = TREE if TREE["data"] and (not case or Path(TREE["sim"] or "").stem == case) else _tree_load(case)
+    return {"tree": t.get("data"), "at": t.get("at"), "sim": t.get("sim"), "seconds": t.get("seconds"),
+            "alive": _solver_alive(), "from_disk": t is not TREE and bool(t.get("data"))}
 
 
 # ---------------------------------------------------------------- abrir la GUI de STAR-CCM+ con el .sim del caso
@@ -512,7 +621,7 @@ def _log_tail(n: int = 12) -> list[str]:
         f.seek(0, 2)
         f.seek(max(0, f.tell() - 20_000))
         lines = f.read().decode("utf-8", "replace").splitlines()
-    return [ln[:300] for ln in lines[-n:]]
+    return [ln[:300] for ln in lines if "starccm-selftest-" not in ln][-n:]  # sin las líneas de selftests viejos
 
 
 @app.get("/api/status")
@@ -578,9 +687,7 @@ def _chat_events(req: ChatReq):
         return
     p = None
     try:
-        prompt = req.message
-        if req.case:
-            prompt = f"(Caso seleccionado en el panel: cases/{req.case})\n{prompt}"
+        prompt = f"({'Caso seleccionado en el panel: cases/' + req.case + ' · ' if req.case else ''}{_where_text()})\n{req.message}"
         cmd = [CLAUDE_BIN, "-p", prompt, "--output-format", "stream-json", "--verbose",
                "--mcp-config", str(REPO / ".mcp.json"), "--strict-mcp-config",
                "--allowedTools", "mcp__starccm__*,Read,Glob,Grep",
@@ -757,8 +864,23 @@ def _selftest() -> int:
     check(c in (200, 404) and (c == 404 or isinstance(sf.get("datasets"), list)), f"GET /api/surfaces -> {len(sf.get('datasets', [])) if c == 200 else c}")
     c, pg = get("/api/progress")
     check(c == 200 and "server_log" in pg and "macro" in pg, f"GET /api/progress ({len(pg.get('server_log', {}).get('tail', []))} líneas de log, macro={bool(pg.get('macro'))})")
+    check("FAKE" not in json.dumps(pg), "GET /api/progress no enseña el starccm+ falso del selftest")
     c, tr = get("/api/tree")
     check(c == 200 and "tree" in tr, "GET /api/tree (caché)")
+    c, tr = get("/api/tree?case=cursocfturbo")
+    check(c == 200 and "from_disk" in tr, f"GET /api/tree?case=cursocfturbo (de disco={tr.get('from_disk')})")
+    # ajustes: dónde corre la simulación (se deja como estaba)
+    orig = _settings()["run_where"]
+    c, sg = get("/api/settings")
+    check(c == 200 and sg["run_where"] in ("local", "server") and "host" in sg["server"] and "np" in sg["local"],
+          f"GET /api/settings (run_where={sg['run_where']}, servidor {sg['server'].get('host')}, {len(sg['server']['rows'])} filas de SERVIDOR.md)")
+    other = "server" if orig == "local" else "local"
+    c, r = post("/api/settings", {"run_where": other})
+    check(c == 200 and r["run_where"] == other and get("/api/settings")[1]["run_where"] == other, f"POST /api/settings {other} y relectura")
+    c, r = post("/api/settings", {"run_where": "luna"})
+    check(c == 422, "POST /api/settings con valor inválido -> 422")
+    check(_where_text().startswith("ejecución elegida: Servidor" if other == "server" else "ejecución: Local"), f"prefijo del chat: {_where_text()[:60]}")
+    post("/api/settings", {"run_where": orig})
     c, r = post("/api/open_gui", {"case": "no_existe"})
     check(c == 404, "POST /api/open_gui con caso inexistente -> 404")
     c, st = get("/api/status")

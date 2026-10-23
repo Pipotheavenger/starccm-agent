@@ -11,6 +11,7 @@ __MACOSX/
 # starccm/
 starccm/.server.json
 starccm/.server.tmp
+starccm/.ui-settings.json
 starccm/macros/
 starccm/sims/*
 !starccm/sims/README.md

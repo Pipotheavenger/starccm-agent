@@ -79,8 +79,27 @@ mínimo arriba a la izquierda; por defecto `cursocfturbo`):
 - **Derecha, Claude**: chat (Claude Code CLI con cwd en `starccm/` y el MCP `starccm` del `.mcp.json`
   de la raíz) y *Parámetros* (rpm, caudal, tamaño base de malla, iteraciones) que la página convierte
   en un prompt; la UI nunca edita el .sim. Planos, vectores y escenas nuevas se piden por el chat.
-- **Arriba**: estado del solver, «Apagar solver», «Abrir en STAR-CCM+» (GUI con `sims/<caso>.sim`,
-  solo sin servidor batch vivo, avisando del coste PoD), tema claro/oscuro.
+- **Arriba**: selector **Local · este PC / Servidor · Linux** (dónde corre la simulación), estado del
+  solver, «Apagar solver», «Abrir en STAR-CCM+» (GUI con `sims/<caso>.sim`, solo sin servidor batch
+  vivo y solo en local, avisando del coste PoD), tema claro/oscuro.
+
+Dónde corre la simulación (ronda 1 de UX, 2026-10-23): la elección se guarda en `starccm/.ui-settings.json`
+(fuera de git; `GET/POST /api/settings`), no en el navegador, para que Claude pueda leerla. El panel
+*Solver* muestra el destino: en local, `STAR-CCM+ 2410 · np N`; en servidor, el host y las primeras filas
+del inventario de `vm/SERVIDOR.md` (16 vCPU, 62 GiB, 2502) y la etiqueta «servidor · no disponible
+todavía» mientras `STARCCM_REMOTE_READY=1` no esté en `.env`. Cada mensaje del chat empieza con
+`(Caso … · ejecución: Local …)` o `(… ejecución elegida: Servidor Linux 172.17.76.78 · … remoto aún no
+disponible: no arranques nada allí, prepara y avisa)`. La ejecución remota en sí la monta otra sesión
+(`STARCCM_RUN_HOST` del MCP, ver `vm/SERVIDOR.md`); la UI solo elige, persiste y muestra.
+
+Otros detalles de la misma ronda: el árbol del .sim se guarda en `cases/<caso>/tree.json` y se sirve
+con `GET /api/tree?case=` aunque la UI se reinicie o el solver esté apagado («leído a las HH:MM ·
+guardado»); tras un chat la página no recarga el dataset del visor si no cambió (nombre y fecha) y, si
+cambió, conserva cámara, corte y superficies ocultas; los parámetros del panel derecho muestran los
+valores actuales del `RESUMEN.md` (rpm, kg/s, base, iteraciones) y marcan lo editado; el criterio de
+convergencia de *Gráficos* compara la última fila con la de ≥ 100 iteraciones antes (CLAUDE.md);
+`/api/progress` ignora los logs y macros del starccm+ falso del selftest (que ahora escribe solo en un
+temporal); en pantallas < 1100 px la rueda desplaza la página hasta tocar el modelo.
 
 Superficies con campo: `POST /api/surface` inyecta la receta (`ImportManager.export(.case, regiones=[],
 fronteras, parts=[], partsurfaces=[], funciones, append=false, dataAtVerts=true)`), convierte el EnSight
@@ -108,7 +127,8 @@ viendo la Salida, chat con `inspect`, apagar con guardado desde el botón.
 | `POST /api/scene {name, case}` | `export_scene` al `images/` del caso; 409 sin solver vivo o mientras el chat trabaja |
 | `GET /api/scenes` | nombres de escenas del .sim (`inspect("scenes")`) |
 | `GET /api/progress` | `server_log {file size mtime tail[]}`, `agent_log[]`, `macro {file started running finished body out[]}` |
-| `GET /api/tree[?refresh=1]` | árbol cacheado; con `refresh` lee del solver (`inspect("tree")`, ~10 s; 409 sin solver o con el chat trabajando) |
+| `GET /api/tree[?refresh=1&case=]` | árbol cacheado (memoria o `cases/<caso>/tree.json`); con `refresh` lee del solver (`inspect("tree")`, ~10 s; 409 sin solver o con el chat trabajando) y lo guarda |
+| `GET /api/settings` · `POST /api/settings {run_where}` | dónde corre la simulación (`local` \| `server`), `local {np version}`, `server {host user label rows ready version}` de `vm/SERVIDOR.md`; persiste en `.ui-settings.json` |
 | `POST /api/open_gui {case}` | lanza la GUI de STAR-CCM+ con `sims/<caso>.sim` y la licencia de `.env`; 404 sin .sim, 409 con servidor batch vivo |
 | `GET /api/surfaces?case=` | datasets del visor (`cases/<caso>/surfaces/*/manifest.json`), el más nuevo primero |
 | `GET /surfaces/{caso}/{dataset}/{archivo}` | `positions.f32`, `indices.u32`, `<campo>.f32`, `manifest.json` (caché 1 h) |

@@ -13,7 +13,8 @@ const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '
 const fmt = (x, d = 1) => x == null || isNaN(+x) ? '–' : (+x).toFixed(d).replace('.', ',');
 const sci = x => x == null || isNaN(x) ? '–' : (Math.abs(x) >= 1e5 || (Math.abs(x) < 1e-2 && x !== 0)) ? x.toExponential(2).replace('.', ',') : fmt(x, Math.abs(x) < 10 ? 3 : 1);
 const st = { cases: [], case: null, data: null, status: {}, chatting: false, session: null, lastMsg: '', tab: LS.get('scc_tab', 'out'),
-  view: '3d', datasets: [], ds: null, scalar: '', cmap: LS.get('scc_cmap', 'ccm'), range: null };
+  view: '3d', datasets: [], ds: null, scalar: '', cmap: LS.get('scc_cmap', 'ccm'), range: null, settings: null, where: 'local' };
+const NARROW = matchMedia('(max-width:1099px)');
 
 async function api(path, body) {
   const r = await fetch(path, body === undefined ? {} : { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
@@ -58,9 +59,35 @@ async function openCase(name) {
   $('simname').textContent = `${d.title || d.name} · sims/${d.name}.sim`;
   $('bconv').textContent = d.convergencia ? d.convergencia.rows.length : '';
   $('resumen').innerHTML = d.resumen ? md(d.resumen) : '<p class="mut">Este caso no tiene RESUMEN.md</p>';
-  renderScenes(d); renderConv(d);
+  renderScenes(d); renderConv(d); fillParams(d);
   await loadDatasets();
   loadTree(false);
+}
+
+// ---------------------------------------------------------------- dónde corre la simulación: Local (este PC) o Servidor (Linux)
+// La elección vive en starccm/.ui-settings.json (GET/POST /api/settings), no en localStorage: Claude puede leerla.
+async function loadSettings() {
+  try { st.settings = await api('/api/settings'); st.where = st.settings.run_where; } catch (e) { st.settings = null; st.where = 'local'; }
+  renderWhere();
+}
+function renderWhere() {
+  for (const b of $('where').querySelectorAll('[role=radio]')) b.setAttribute('aria-checked', b.dataset.where === st.where);
+  if (st.status.alive != null) renderStatus(st.status);
+}
+for (const b of $('where').querySelectorAll('[role=radio]')) b.onclick = async () => {
+  if (b.dataset.where === st.where) return;
+  try { st.settings = await api('/api/settings', { run_where: b.dataset.where }); st.where = st.settings.run_where; }
+  catch (e) { toast('No pude guardar la elección: ' + e.message, 'error'); }
+  renderWhere();
+  const sv = st.settings?.server || {};
+  toast(st.where === 'server' ? `La simulación correrá en ${sv.label || 'el servidor Linux'} ${sv.host || ''}${sv.ready ? '' : ' · ejecución remota pendiente de instalación: Claude prepara y avisa'}` : 'La simulación corre en este PC (STAR-CCM+ 2410)', st.where === 'server' && !sv.ready ? 'warn' : 'ok');
+};
+function whereRows() {  // filas del panel Solver
+  const s = st.settings; if (!s) return [];
+  if (st.where !== 'server') return [[['corre en', `Local (este PC) · STAR-CCM+ ${s.local.version} · np ${s.local.np}`], 'where']];
+  const sv = s.server;
+  return [[['corre en', `${sv.label}${sv.host ? ' ' + sv.host : ''} · STAR-CCM+ ${sv.version} · ${sv.ready ? 'remoto listo' : 'pendiente de instalación'}`], 'where'],
+    ...sv.rows.map(r => [r, 'srv'])];
 }
 
 // ---------------------------------------------------------------- visor 3D (three.js)
@@ -190,25 +217,39 @@ function cmapColor(t, out) {
   return out;
 }
 async function loadDatasets() {
-  clearDataset();
-  if (!st.case) return;
+  if (!st.case) { clearDataset(); return; }
+  const had = st.ds && st.ds.case === st.case ? { name: st.ds.name, mtime: st.ds.mtime } : null;
   try { st.datasets = (await api('/api/surfaces?case=' + encodeURIComponent(st.case))).datasets; } catch (e) { st.datasets = []; }
   const dsel = $('datasets');
   $('b-geo').textContent = st.datasets.length || '';
-  if (!st.datasets.length) { dsel.innerHTML = 'Sin superficies exportadas.'; $('vempty').hidden = false; return; }
+  if (!st.datasets.length) { clearDataset(); dsel.innerHTML = 'Sin superficies exportadas.'; syncOverlays(); return; }
   dsel.innerHTML = `<select id="dsel" aria-label="Dataset">${st.datasets.map(d => `<option value="${esc(d.name)}">${esc(d.name)} · ${new Date(d.mtime * 1000).toLocaleString('es', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}</option>`).join('')}</select>`;
   // por defecto el más nuevo que no sea «demo» (el sintético de prueba), salvo preferencia guardada
   const want = LS.get('scc_ds_' + st.case);
   const pick = (want && want !== 'demo' && st.datasets.find(d => d.name === want)) || st.datasets.find(d => d.name !== 'demo') || st.datasets[0];
   $('dsel').value = pick.name; $('dsel').onchange = () => loadDataset(st.datasets.find(d => d.name === $('dsel').value));
-  await loadDataset(pick);
+  // tras un chat la página se refresca: si el dataset es el mismo (nombre y fecha) no se recarga ni se pierde el encuadre
+  if (had && had.name === pick.name && had.mtime === pick.mtime) { syncOverlays(); return; }
+  await loadDataset(pick, !!had);
+  if (had && had.name === pick.name) toast('Superficies actualizadas', 'ok');
 }
 function clearDataset() {
   for (const m of V.meshes) { V.group.remove(m); m.geometry.dispose(); m.material.dispose(); }
-  V.meshes = []; st.ds = null; V.bbox = null; V.hot = null; $('parts').innerHTML = ''; $('legend').hidden = true;
-  $('scalar').innerHTML = '<option value="">(geometría)</option>'; V.needs = true;
+  setHot(null); V.meshes = []; st.ds = null; V.bbox = null; $('parts').innerHTML = ''; $('vstate').textContent = ''; $('vtip').hidden = true;
+  $('scalar').innerHTML = '<option value="">(geometría)</option>'; V.needs = true; syncOverlays();
 }
-async function loadDataset(d) {
+// una sola función decide qué capas se ven sobre el visor según la vista (3D o escena PNG) y si hay dataset
+function syncOverlays() {
+  const is3d = st.view === '3d';
+  $('vtools').hidden = !is3d; $('vactions').hidden = !is3d;
+  $('legend').hidden = !is3d || !st.ds || !st.scalar;
+  $('vempty').hidden = !is3d || !!st.ds || !$('vbusy').hidden;
+  if (!is3d) { $('vtip').hidden = true; setHot(null); }
+  $('vhint').hidden = !(is3d && st.ds && NARROW.matches && !V.controls.enableZoom);
+}
+// keep = mantener cámara, corte y visibilidad por nombre de parte (recarga tras un chat); si no, encuadrar
+async function loadDataset(d, keep = false) {
+  const prev = keep && st.ds ? { pos: V.camera.position.clone(), tgt: V.controls.target.clone(), hidden: new Set(st.ds.parts.filter(p => !p.mesh.visible).map(p => p.name)) } : null;
   clearDataset(); LS.set('scc_ds_' + st.case, d.name);
   $('vbusy').hidden = false; $('vbusytxt').textContent = `cargando ${d.name}…`; $('vempty').hidden = true;
   try {
@@ -217,7 +258,7 @@ async function loadDataset(d) {
     const P = new Float32Array(pos), I = new Uint32Array(idx);
     const scal = {};
     await Promise.all(man.scalars.map(async s => { scal[s.name] = new Float32Array(await fetch(`${d.url}/${s.file}?v=${d.mtime}`).then(r => r.arrayBuffer())); }));
-    st.ds = { ...d, P, I, scal, parts: [] };
+    st.ds = { ...d, case: st.case, P, I, scal, parts: [] };
     V.bbox = new THREE.Box3();
     man.parts.forEach((p, k) => {
       if (!p.ni) return;
@@ -234,11 +275,13 @@ async function loadDataset(d) {
     $('scalar').innerHTML = '<option value="">(geometría)</option>' + man.scalars.map(s => `<option value="${esc(s.name)}">${esc(labelOf(s.name))}</option>`).join('');
     const ws = LS.get('scc_scalar'); st.scalar = man.scalars.some(s => s.name === ws) ? ws : (man.scalars[0]?.name || '');
     $('scalar').value = st.scalar; st.range = null;
-    renderParts(); applyColors(); applyGhost(); fit(0); setView('iso');
+    renderParts(); applyColors(); applyGhost(); updateClip();
+    if (prev) { V.camera.position.copy(prev.pos); V.controls.target.copy(prev.tgt); for (const p of st.ds.parts) if (prev.hidden.has(p.name)) { p.mesh.visible = false; p.li.querySelector('input').checked = false; } }
+    else { fit(0); setView('iso'); }
     $('vstate').textContent = `${man.n_triangles.toLocaleString('es')} triángulos · ${man.parts.length} superficies${man.exported ? ' · ' + man.exported : ''}`;
     fadeIn();
-  } catch (e) { toast('No pude cargar las superficies: ' + e.message, 'error'); $('vempty').hidden = false; }
-  $('vbusy').hidden = true;
+  } catch (e) { toast('No pude cargar las superficies: ' + e.message, 'error'); }
+  $('vbusy').hidden = true; syncOverlays();
 }
 function fadeIn() {  // las superficies aparecen suaves
   const t0 = performance.now();
@@ -255,10 +298,11 @@ function applyGhost() {
 function renderParts() {
   const ul = $('parts'); ul.innerHTML = '';
   for (const p of st.ds.parts) {
-    const li = document.createElement('li'); p.li = li;
-    li.innerHTML = `<input type="checkbox" checked aria-label="ver"><span class="sw" style="background:#${p.color.toString(16).padStart(6, '0')}"></span><span class="n" title="${esc(p.name)}">${esc(p.name)}</span><span class="c">${(p.ni / 3).toLocaleString('es')}</span>`;
+    const li = document.createElement('li'); p.li = li; li.tabIndex = 0; li.setAttribute('role', 'option'); li.title = `${p.name} · clic o Enter: volar a la superficie`;
+    li.innerHTML = `<input type="checkbox" checked aria-label="ver ${esc(p.name)}"><span class="sw" style="background:#${p.color.toString(16).padStart(6, '0')}"></span><span class="n">${esc(p.name)}</span><span class="c">${(p.ni / 3).toLocaleString('es')}</span>`;
     li.querySelector('input').onchange = e => { p.mesh.visible = e.target.checked; V.needs = true; };
     li.onclick = e => { if (e.target.tagName !== 'INPUT') flyTo(p); };
+    li.onkeydown = e => { if (e.key === 'Enter') flyTo(p); else if (e.key === ' ') { e.preventDefault(); const c = li.querySelector('input'); c.checked = !c.checked; c.onchange({ target: c }); } };
     li.onmouseenter = () => setHot(p); li.onmouseleave = () => setHot(null);
     ul.appendChild(li);
   }
@@ -280,8 +324,8 @@ function applyColors() {
   drawLegend(a ? st.scalar : null, lo, hi); V.needs = true;
 }
 function drawLegend(name, lo, hi) {
-  const lg = $('legend'); if (!name) { lg.hidden = true; return; }
-  lg.hidden = false; $('lgtitle').textContent = labelOf(name) + (unitOf(name) ? ` (${unitOf(name).trim()})` : '');
+  syncOverlays(); if (!name) return;
+  $('lgtitle').textContent = labelOf(name) + (unitOf(name) ? ` (${unitOf(name).trim()})` : '');
   const cv = $('lgbar'), ctx = cv.getContext('2d'); const c = [0, 0, 0];
   for (let y = 0; y < cv.height; y++) { cmapColor(1 - y / (cv.height - 1), c); ctx.fillStyle = `rgb(${c[0] * 255 | 0},${c[1] * 255 | 0},${c[2] * 255 | 0})`; ctx.fillRect(0, y, cv.width, 1); }
   $('lgticks').innerHTML = [1, 0.75, 0.5, 0.25, 0].map(t => `<span>${sci(lo + (hi - lo) * t)}</span>`).join('');
@@ -306,6 +350,11 @@ function updateClip() {
   V.needs = true;
 }
 $('clipon').onchange = updateClip; $('clipax').onchange = updateClip; $('clipv').oninput = updateClip;
+$('help').onclick = () => toast('Atajos: F encuadrar · 1 iso · 2 axial · 3 lateral · doble clic vuela a la superficie · ` pliega el dock · Esc cierra la imagen');
+// en pantallas estrechas (apilado) la rueda debe desplazar la página, no hacer zoom: el zoom se activa al tocar el modelo
+function narrowZoom() { V.controls.enableZoom = !NARROW.matches || !!V.zoomOn; syncOverlays(); }
+$('gl').addEventListener('pointerdown', () => { if (NARROW.matches && !V.zoomOn) { V.zoomOn = true; narrowZoom(); } });
+NARROW.addEventListener('change', () => { V.zoomOn = false; narrowZoom(); });
 
 // exportar del solver
 $('exportbtn').onclick = e => { e.preventDefault(); e.stopPropagation(); $('expdlg').showModal(); };
@@ -329,10 +378,11 @@ function renderScenes(d) {
   $('b-scenes').textContent = d.images.length || '';
   const url = im => `/files/${encodeURIComponent(d.name)}/images/${encodeURIComponent(im.file)}?v=${im.mtime}`;
   tabs.innerHTML = d.images.map(im => `<button role="tab" data-view="${esc(im.file)}" aria-selected="false" title="${esc(im.file)}">${esc(im.label)}</button>`).join('');
-  ul.innerHTML = d.images.map(im => `<li data-f="${esc(im.file)}"><span>${esc(im.label)}</span><button class="sm mini regen" data-n="${esc(im.file.replace(/\.png$/, ''))}" title="Volver a exportar desde el solver (export_scene)">↻</button></li>`).join('') || '<li class="mut">sin escenas en images/</li>';
+  ul.innerHTML = d.images.map(im => `<li data-f="${esc(im.file)}" role="option" tabindex="0"><span>${esc(im.label)}</span><button class="sm mini regen" data-n="${esc(im.file.replace(/\.png$/, ''))}" title="Volver a exportar desde el solver (export_scene)">↻</button></li>`).join('') || '<li class="mut">sin escenas en images/</li>';
   for (const b of [...tabs.querySelectorAll('[role=tab]'), ...ul.querySelectorAll('li[data-f]')]) {
     const f = b.dataset.view || b.dataset.f; const im = d.images.find(x => x.file === f);
     b.onclick = e => { if (e.target.classList.contains('regen')) return; showView(f, url(im)); };
+    if (b.tagName === 'LI') b.onkeydown = e => { if (e.key === 'Enter') showView(f, url(im)); };
   }
   for (const b of ul.querySelectorAll('.regen')) b.onclick = async e => {
     e.stopPropagation(); b.disabled = true; b.textContent = '…';
@@ -346,7 +396,7 @@ function showView(v, src) {
   for (const b of document.querySelectorAll('.vtabs [role=tab]')) b.setAttribute('aria-selected', b.dataset.view === v);
   for (const li of $('scenes').querySelectorAll('li[data-f]')) li.setAttribute('aria-selected', li.dataset.f === v);
   const img = $('sceneimg'); const is3d = v === '3d';
-  img.hidden = is3d; $('vtools').hidden = !is3d; $('vactions').hidden = !is3d; $('legend').hidden = !is3d || !st.scalar || !st.ds; $('vempty').hidden = !is3d || !!st.ds;
+  img.hidden = is3d; syncOverlays();
   if (!is3d) { const im = st.data?.images.find(x => x.file === v); if (im) img.src = src || `/files/${encodeURIComponent(st.case)}/images/${encodeURIComponent(im.file)}?v=${im.mtime}`; img.onclick = () => { $('lightbox').querySelector('img').src = img.src; $('lightbox').querySelector('.lb-cap').textContent = v; $('lightbox').hidden = false; }; }
   else V.needs = true;
 }
@@ -357,10 +407,11 @@ $('lightbox').onclick = () => { $('lightbox').hidden = true; };
 const KINDS = { solver: 'Solver', part: 'Partes', region: 'Regiones', boundary: 'Fronteras', physics: 'Física', model: 'Modelos', mesh_op: 'Operaciones de malla', mesher: 'Malladores', report: 'Reportes', monitor: 'Monitores', scene: 'Escenas', continuum: 'Continuos', interface: 'Interfaces' };
 async function loadTree(refresh) {
   if (refresh) { $('treerefresh').disabled = true; $('treestate').textContent = 'leyendo del solver…'; $('n-sim').open = true; }
-  let r; try { r = await api('/api/tree' + (refresh ? '?refresh=1' : '')); } catch (e) { $('treestate').textContent = e.message; $('treerefresh').disabled = false; return; }
+  let r; try { r = await api('/api/tree?case=' + encodeURIComponent(st.case || '') + (refresh ? '&refresh=1' : '')); } catch (e) { $('treestate').textContent = e.message; $('treerefresh').disabled = false; return; }
   $('treerefresh').disabled = false;
-  if (!r.tree) { $('treestate').textContent = 'sin lectura: pulsa ↻ con el solver vivo'; $('simtree').innerHTML = ''; $('b-sim').textContent = ''; return; }
-  $('treestate').textContent = `leído ${new Date(r.at * 1000).toLocaleTimeString('es')}${r.alive ? '' : ' (solver apagado)'}`;
+  if (!r.tree) { $('treestate').textContent = 'sin lectura: pulsa ↻ con el solver vivo (~10 s)'; $('simtree').innerHTML = ''; $('b-sim').textContent = ''; return; }
+  const at = new Date(r.at * 1000);
+  $('treestate').textContent = `leído ${at.toDateString() === new Date().toDateString() ? 'a las ' + at.toLocaleTimeString('es', { hour: '2-digit', minute: '2-digit' }) : 'el ' + at.toLocaleString('es')}${r.from_disk ? ' · guardado' : ''}${r.alive ? '' : ' (solver apagado)'}`;
   $('b-sim').textContent = Object.values(r.tree).reduce((n, v) => n + v.length, 0);
   $('simtree').innerHTML = Object.entries(r.tree).map(([k, items]) => `<details><summary>${esc(KINDS[k] || k)} <span class="badge">${items.length}</span></summary><ul>${items.map(it => `<li><span>${esc(it.name)}</span>${it.type ? `<span class="t">${esc(it.type)}</span>` : ''}${it.value != null ? `<span class="v">${esc(it.value)}</span>` : ''}</li>`).join('')}</ul></details>`).join('');
 }
@@ -401,9 +452,12 @@ function renderConv(d) {
   const it = col('iter') || cv.rows.map((_, i) => i + 1);
   const units = { H: 'm', M: 'N·m' };
   const charts = ['H', 'M'].map(k => col(k) ? chart(it, col(k), k, units[k]) : '').join('');
-  const delta = k => { const v = col(k); if (!v || v.length < 2 || !v[v.length - 1]) return null; return Math.abs((v[v.length - 1] - v[v.length - 2]) / v[v.length - 1] * 100); };
+  // criterio de CLAUDE.md: variación de H y M < 0,5 % en 100 iteraciones -> se compara la última fila con la de ≥ 100 iteraciones antes
+  const last = it[it.length - 1]; let j = it.length - 2; while (j > 0 && last - it[j] < 100) j--;
+  const span = j >= 0 ? last - it[j] : null;
+  const delta = k => { const v = col(k); if (!v || j < 0 || !v[v.length - 1] || v[j] == null) return null; return Math.abs((v[v.length - 1] - v[j]) / v[v.length - 1] * 100); };
   const dH = delta('H'), dM = delta('M');
-  const crit = dH != null ? `<p class="small">Último bloque: ΔH ${fmt(dH, 2)} % · ΔM ${fmt(dM, 2)} % ${dH < 0.5 && dM < 0.5 ? '<span class="tag ok">convergido (&lt; 0,5 %)</span>' : '<span class="tag warn">aún no (&gt; 0,5 %)</span>'}</p>` : '';
+  const crit = dH != null ? `<p class="small">Últimas ${span} iteraciones (${it[j]} → ${last}): ΔH ${fmt(dH, 2)} % · ΔM ${fmt(dM, 2)} % ${dH < 0.5 && dM < 0.5 && span >= 100 ? '<span class="tag ok">convergido (&lt; 0,5 % en ≥ 100 iter)</span>' : span < 100 ? '<span class="tag warn">faltan iteraciones para juzgar (&lt; 100)</span>' : '<span class="tag warn">aún no (&gt; 0,5 %)</span>'}</p>` : '';
   const table = `<table class="data"><tr>${cv.columns.map(h => `<th>${esc(h)}</th>`).join('')}</tr>${cv.rows.map(r => '<tr>' + r.map((v, i) => `<td class="num">${v == null ? '–' : i === 0 ? v : sci(v)}</td>`).join('') + '</tr>').join('')}</table>`;
   c.innerHTML = `<div class="charts">${charts}</div>${crit}<details><summary>${esc(cv.file)} · ${cv.rows.length} filas</summary>${table}</details>`;
 }
@@ -433,10 +487,12 @@ function renderStatus(s) {
   const txt = s.stopping ? 'apagando solver…' : s.alive ? `solver vivo · puerto ${s.port} · ${s.idle_min ?? '?'} min sin actividad` : s.stale ? 'solver caído (.server.json viejo)' : 'solver apagado';
   $('solver').innerHTML = `<span class="dot ${dot}"></span><span>${esc(txt)}</span>` + ((s.chatting || st.chatting) ? ' <span class="dot chat"></span><span>Claude trabajando</span>' : '');
   $('stopsolver').hidden = !s.alive; $('stopsolver').disabled = !!s.stopping;
-  $('opengui').disabled = !!s.alive; $('opengui').title = s.alive ? 'Hay un servidor batch vivo: apágalo antes de abrir la GUI' : 'Abre este .sim en la GUI de STAR-CCM+ (la licencia PoD cobra por hora)';
-  $('solvertag').innerHTML = s.alive ? '<span class="tag ok">vivo</span>' : s.stale ? '<span class="tag warn">caído</span>' : '<span class="tag">apagado</span>';
-  const rows = s.alive || s.stale ? [['pid', s.pid], ['puerto', s.port], ['sim', s.sim ? s.sim.split(/[\\/]/).pop() : '(nueva)'], ['procesos', s.np], ['arranque', s.started ? s.started.replace('T', ' ') : '–'], ['inactivo', s.idle_min != null ? `${fmt(s.idle_min, 0)} / ${s.idle_limit_min} min` : '–']] : [['apagado por inactividad', `${s.idle_limit_min} min`]];
-  $('solverkv').querySelector('tbody').innerHTML = rows.map(([k, v]) => `<tr><td class="mut">${esc(k)}</td><td class="mono" title="${esc(v)}">${esc(v)}</td></tr>`).join('');
+  const remote = st.where === 'server';
+  $('opengui').disabled = !!s.alive || remote; $('opengui').title = remote ? 'Solo en local: la GUI abre el .sim de este PC' : s.alive ? 'Hay un servidor batch vivo: apágalo antes de abrir la GUI' : 'Abre este .sim en la GUI de STAR-CCM+ (la licencia PoD cobra por hora)';
+  const ready = !!st.settings?.server?.ready;
+  $('solvertag').innerHTML = (s.alive ? '<span class="tag ok">vivo</span>' : s.stale ? '<span class="tag warn">caído</span>' : '<span class="tag">apagado</span>') + (remote ? ` <span class="tag ${ready ? 'ok' : 'warn'}">${ready ? 'servidor' : 'servidor · no disponible todavía'}</span>` : '');
+  const rows = (s.alive || s.stale ? [['pid', s.pid], ['puerto', s.port], ['sim', s.sim ? s.sim.split(/[\\/]/).pop() : '(nueva)'], ['procesos', s.np], ['arranque', s.started ? s.started.replace('T', ' ') : '–'], ['inactivo', s.idle_min != null ? `${fmt(s.idle_min, 0)} / ${s.idle_limit_min} min` : '–']] : [['apagado por inactividad', `${s.idle_limit_min} min`]]).map(r => [r, '']);
+  $('solverkv').querySelector('tbody').innerHTML = [...whereRows(), ...rows].map(([[k, v], cls]) => `<tr class="${cls}"><td class="mut">${esc(k)}</td><td class="mono" title="${esc(v)}">${esc(v)}</td></tr>`).join('');
 }
 async function poll() {
   try { renderStatus(await api('/api/status')); $('offline').hidden = true; }
@@ -532,7 +588,16 @@ $('paskbtn').onclick = () => {
   $('chattext').value = `En la simulación sims/${st.case}.sim (server_start la reutiliza si está viva): cambia ${parts.join('; ')}. Precompila cada macro y usa las recetas bomba-*. Al terminar, añade las filas a cases/${st.case}/reports/convergencia.csv, vuelve a exportar las escenas de presión, velocidad e y+ a images/, exporta las superficies con campo (receta exportar-superficies-ensight) y dime H, M y eficiencia en una tabla frente a los valores anteriores.`;
   sendChat();
 };
-$('pclear').onclick = () => { for (const [id] of PARAMS) $(id).value = ''; };
+$('pclear').onclick = () => { for (const [id] of PARAMS) { $(id).value = ''; $(id).classList.remove('edited'); } };
+// valores actuales del caso, sacados del RESUMEN.md con regex (placeholder gris + resumen en la cabecera); lo editado se marca
+function fillParams(d) {
+  const r = d.resumen || ''; const num = s => s && s.replace(/\s/g, '').replace(',', '.');
+  const cur = { p_rpm: num((r.match(/[−-]?\s*(\d[\d\s]*)\s*rpm/) || [])[1]), p_mdot: num((r.match(/ṁ\s*=\s*([\d.,]+)\s*kg\/s/) || r.match(/([\d.,]+)\s*kg\/s/) || [])[1]),
+    p_base: num((r.match(/base\s*([\d.,]+)\s*mm/i) || [])[1]), p_iter: (r.match(/(\d+)\s*iteraciones/) || [])[1] };
+  for (const [id] of PARAMS) { const el = $(id); el.placeholder = cur[id] || ''; el.value = ''; el.classList.remove('edited'); el.oninput = () => el.classList.toggle('edited', !!el.value.trim() && el.value.trim() !== el.placeholder); }
+  $('pnow').textContent = [cur.p_rpm && `${cur.p_rpm} rpm`, cur.p_mdot && `${fmt(+cur.p_mdot, 1)} kg/s`, cur.p_base && `base ${cur.p_base} mm`, cur.p_iter && `${cur.p_iter} iter`].filter(Boolean).join(' · ');
+}
+$('params').ontoggle = () => LS.set('scc_params', $('params').open ? '1' : '0'); $('params').open = LS.get('scc_params', '1') === '1';
 
 // ---------------------------------------------------------------- tema y teclado
 const theme = LS.get('scc_theme', 'light'); document.documentElement.dataset.theme = theme;
@@ -544,5 +609,5 @@ addEventListener('keydown', e => {
 });
 
 // ---------------------------------------------------------------- arranque
-initViewer(); placeQuick(); openTab(['out', 'plots', 'res'].includes(st.tab) ? st.tab : 'out'); poll();
-loadCases().catch(e => { toast('No pude leer los casos: ' + e.message, 'error'); });
+initViewer(); narrowZoom(); placeQuick(); openTab(['out', 'plots', 'res'].includes(st.tab) ? st.tab : 'out'); poll();
+loadSettings().then(() => loadCases()).catch(e => { toast('No pude leer los casos: ' + e.message, 'error'); });

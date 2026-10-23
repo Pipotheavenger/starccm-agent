@@ -259,6 +259,10 @@ Turbina: mismo flujo, cambia el signo del momento y el objetivo es potencia extr
 - 2026-10-23 · Herramientas de Claude Code corren en serie: para observar la UI mientras el solver itera,
   lanzar `iterate` con `python -c "import mcp_server…"` en segundo plano **sin sandbox** (el cliente
   carga las DLL de STAR-CCM+) y sondear `/api/progress` o el navegador mientras tanto.
+- 2026-10-23 · `mcp_server.py --selftest` escribía en `sims/`, `macros/`, `agent.log` y borraba el `.server.json`
+  real (peligroso con un solver vivo de otra sesión; la Salida de la UI enseñaba el «FAKE server»). Ahora
+  redirige `SIMS`, `MACROS`, `STATE_FILE` y `AGENT_LOG` a un temporal; la UI filtra además `FAKE`,
+  `<fake>` y `starccm-selftest-` en logs y macros viejos.
 - 2026-10-23 · Bomba cursocfturbo a 580 iteraciones: H 78,77 m, M 192,50 N·m, η 0,8935, continuidad 8e-7;
   aviso «Reversed flow on 55 faces on voluta: outlet» (reflujo en la salida del difusor, balance de masa
   intacto). Escenas nuevas: `plano_vectores`, `malla`.

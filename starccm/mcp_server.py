@@ -49,6 +49,7 @@ MACROS = HERE / "macros"
 CASES = HERE / "cases"
 RECIPES = HERE / "recipes"
 STATE_FILE = HERE / ".server.json"
+AGENT_LOG = HERE / "agent.log"
 KEEP_MACROS = 200
 
 
@@ -186,7 +187,7 @@ def _idle_watchdog() -> None:
 
 
 def _log(msg: str) -> None:
-    with open(HERE / "agent.log", "a", encoding="utf-8") as f:
+    with open(AGENT_LOG, "a", encoding="utf-8") as f:
         f.write(f"{datetime.now():%Y-%m-%d %H:%M:%S} {_redact(msg)}\n")
 
 
@@ -736,14 +737,20 @@ def docs_search(query: str, max_classes: int = 5) -> dict:
 
 # ----------------------------------------------------------------------------- selftest
 def _selftest() -> int:
-    global EXE, PORT
+    global EXE, PORT, SIMS, MACROS, STATE_FILE, AGENT_LOG
     import tempfile
     fake = HERE / "tests" / "fake_starccm.py"
     os.environ["STARCCM_EXE"] = str(fake)
     EXE = str(fake)
     PORT = 47999
     tmp = Path(tempfile.mkdtemp(prefix="starccm-selftest-"))
-    STATE_FILE.unlink(missing_ok=True)
+    # Todo lo que escribe el falso va al temporal: ni sims/, ni macros/, ni el .server.json reales
+    # (antes la pestaña Salida de ui/ enseñaba el «FAKE server» como última macro, y un selftest
+    # borraba el .server.json de un solver vivo de otra sesión).
+    real = (SIMS, MACROS, STATE_FILE)
+    _real_files = lambda: {(str(p), p.stat().st_mtime_ns) for d in real for p in ([d] if d.is_file() else d.glob("*") if d.is_dir() else [])}
+    real_before = _real_files()
+    SIMS, MACROS, STATE_FILE, AGENT_LOG = tmp / "sims", tmp / "macros", tmp / ".server.json", tmp / "agent.log"
     fails = []
 
     def check(cond, msg):
@@ -751,7 +758,7 @@ def _selftest() -> int:
         if not cond:
             fails.append(msg)
 
-    print(f"selftest: starccm+ falso = {fake}")
+    print(f"selftest: starccm+ falso = {fake} · escribe solo en {tmp}")
     r = subprocess.run(_starccm_cmd() + ["-version"], capture_output=True, text=True)
     check("FAKE" in r.stdout, "-version del falso")
     st = server_start()
@@ -784,6 +791,10 @@ def _selftest() -> int:
     check(not _port_open(PORT), "puerto liberado")
     r2 = server_stop()
     check(r2["stopped"] is False, "server_stop sin servidor no falla")
+    # otra sesión puede estar usando el solver real mientras tanto: solo miramos que lo nuevo no sea del falso
+    new = [Path(p) for p, _ in _real_files() - real_before]
+    check(not any(p.suffix in (".log", ".out", ".json") and "FAKE" in p.read_text(encoding="utf-8", errors="replace")[:400] for p in new if p.is_file()),
+          "sims/, macros/ y .server.json reales sin rastro del starccm+ falso")
     shutil.rmtree(tmp, ignore_errors=True)
     print(f"selftest: {len(fails)} fallos" if fails else "selftest: todo en verde")
     return 1 if fails else 0
