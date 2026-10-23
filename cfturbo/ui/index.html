@@ -9,8 +9,7 @@
 </head>
 <body>
 <header class="topbar">
-  <h1 class="brand">CFturbo <span>Controlador</span></h1>
-  <span class="tagline mut">Claude decide, CFturbo construye, aquí lo ves y lo ejecutas</span>
+  <h1 class="brand" title="Claude decide, CFturbo construye; aquí se ve y se ejecuta">CFturbo <span>Controlador</span></h1>
   <span class="sp"></span>
   <span id="status" role="status" aria-live="polite"><span class="dot"></span><span>Conectando…</span></span>
   <button class="sm icon" id="helpbtn" title="Atajos de teclado (?)" aria-label="Atajos de teclado" aria-expanded="false" aria-controls="help">?</button>
@@ -26,6 +25,8 @@
     <dt><kbd>Esc</kbd></dt><dd>Cerrar el nombre de versión, este panel o quitar B</dd>
     <dt>Galería: <kbd>←</kbd><kbd>→</kbd></dt><dd>Moverse entre corridas; <kbd>Enter</kbd> = ver (A)</dd>
     <dt><kbd>Ctrl</kbd>+clic · <kbd>Ctrl</kbd>+<kbd>Enter</kbd> · ⇄</dt><dd>Elegir la corrida B para comparar</dd>
+    <dt>Galería: <kbd>Supr</kbd> · 🗑</dt><dd>Borrar la corrida o versión (pide confirmación)</dd>
+    <dt>＋</dt><dd>Bomba nueva desde Q, H y n (escala el ejemplo más cercano en nq)</dd>
     <dt>Visor enfocado</dt><dd>Flechas orbitan, <kbd>+</kbd>/<kbd>-</kbd> zoom; ratón: arrastra para orbitar, rueda para zoom</dd>
     <dt>Chat</dt><dd><kbd>Enter</kbd> envía, <kbd>Shift</kbd>+<kbd>Enter</kbd> salto, <kbd>↑</kbd> recupera el último</dd>
     <dt><kbd>?</kbd></dt><dd>Mostrar u ocultar esta lista</dd>
@@ -38,11 +39,11 @@
   <aside class="explorer" aria-label="Explorador">
     <section class="pane-sec">
       <h2 class="sec-h">Proyecto base <span class="sp"></span><span id="pnq" class="mono"></span></h2>
-      <select id="project" aria-label="Proyecto base"></select>
+      <div class="projrow"><select id="project" aria-label="Proyecto base"></select><button class="sm" id="newbtn" title="Bomba nueva desde Q, H y n" aria-haspopup="dialog">＋ Nueva</button></div>
       <div id="pinfo" class="mono mut">Leyendo proyecto…</div>
     </section>
     <section class="pane-sec grow">
-      <h2 class="sec-h">Corridas <span id="gcount" class="mut"></span><span class="sp"></span>
+      <h2 class="sec-h">Corridas <span id="gcount" class="mut" title="Temporales: quedan las 8 últimas. ★ Guardar las conserva en versions/"></span><span class="sp"></span>
         <button class="sm" id="density" aria-pressed="false" title="Alternar tarjetas / lista compacta">Lista</button></h2>
       <div class="chips" id="gfilters" role="group" aria-label="Filtrar corridas">
         <button class="chip" data-f="all" aria-pressed="true">Todas <span class="badge" data-n="all"></span></button>
@@ -52,14 +53,13 @@
         <button class="chip" data-f="error" aria-pressed="false">Error <span class="badge" data-n="error"></span></button>
       </div>
       <div id="gallery" class="gallery" role="listbox" aria-label="Corridas y versiones"></div>
-      <p class="hint" id="savemsg">Temporales: quedan las <span id="keepn">8</span> últimas.<br>★ Guardar las conserva en <span class="mono">versions/</span>.</p>
     </section>
   </aside>
 
   <!-- Centro: corrida activa, visor y dock con pestañas -->
   <section class="stage" id="stage">
     <div class="runbar" id="runbar">
-      <span class="runname" id="runtitle">Ninguna corrida seleccionada</span>
+      <span class="runname" id="runtitle">Sin corrida</span>
       <span id="runtag"></span>
       <span id="runmeta" class="mut mono"></span>
       <button class="chip" id="followchip" hidden></button>
@@ -81,7 +81,7 @@
         <button data-view="axial" title="Mirando a lo largo del eje z (2)">Axial</button>
         <button data-view="lateral" title="Vista lateral, eje z horizontal (3)">Lateral</button>
       </div>
-      <div class="empty" id="vempty">Sin geometría. Ejecuta una corrida con STL o elige una en la galería.</div>
+      <div class="empty" id="vempty">Sin geometría</div>
       <div id="vmsg">sin geometría</div>
       <div id="vsummary" role="button" tabindex="0"></div>
     </div>
@@ -91,6 +91,7 @@
       <div class="dock-tabs" role="tablist" aria-label="Paneles">
         <button role="tab" id="t-chat" data-tab="chat" aria-controls="chat">Chat <span class="dot chat" id="chatdot" hidden></span></button>
         <button role="tab" id="t-events" data-tab="events" aria-controls="tab-events">Hitos y avisos <span class="badge" id="bev"></span></button>
+        <button role="tab" id="t-curves" data-tab="curves" aria-controls="tab-curves" title="Curvas características (predicción 1D de CFturbo)">Curvas</button>
         <button role="tab" id="t-files" data-tab="files" aria-controls="tab-files">Archivos <span class="badge" id="bfiles"></span></button>
         <button role="tab" id="t-cmp" data-tab="cmp" aria-controls="tab-cmp">Comparar <span class="badge" id="bcmp"></span></button>
         <span class="sp"></span>
@@ -103,21 +104,24 @@
             <button class="sm" id="newchat">Nueva conversación</button>
             <button class="sm danger" id="stopchat" disabled>Detener</button>
           </div>
-          <div id="chatlog"><div class="chat-empty" id="chatempty"><p>Escribe en lenguaje natural: «variante con 7 álabes y d2 215 mm», «resume la última corrida», «compara v1 y v2».<br>Claude usa las tools cft_* y la página se actualiza sola.</p></div></div>
+          <div id="chatlog"><div class="chat-empty" id="chatempty"><p title="Claude usa las tools cft_* y la página se actualiza sola">«variante con 7 álabes y d2 215 mm» · «resume la última corrida»</p></div></div>
           <div class="quick" id="quick">
             <button class="sm" data-q="Dame un resumen de la última corrida: punto de diseño, dimensiones principales, avisos y archivos exportados.">Resumen</button>
             <button class="sm" data-q="Propón 3 variantes del proyecto base moviendo d2, b2 y número de álabes con criterio de turbomáquinas, córrelas y dame una tabla comparativa.">3 variantes</button>
             <button class="sm" data-q="Compara las dos últimas corridas: parámetros, avisos y diferencias.">Comparar</button>
             <button class="sm" id="qab" hidden>Comparar A y B</button>
           </div>
-          <div id="chatin"><textarea id="chattext" aria-label="Mensaje para Claude" placeholder="Enter envía · Shift+Enter salto de línea · ↑ recupera el último"></textarea><button class="pri" id="send">Enviar</button></div>
+          <div id="chatin"><textarea id="chattext" aria-label="Mensaje para Claude" placeholder="Mensaje para Claude" title="Enter envía · Shift+Enter salto de línea · ↑ recupera el último"></textarea><button class="pri" id="send">Enviar</button></div>
         </section>
         <section class="tabpane" id="tab-events" role="tabpanel" aria-labelledby="t-events" hidden>
           <div id="msgs"></div>
           <ul class="ev" id="events"><li class="mut">Esperando corrida…</li></ul>
         </section>
+        <section class="tabpane" id="tab-curves" role="tabpanel" aria-labelledby="t-curves" hidden>
+          <div id="curves"></div>
+        </section>
         <section class="tabpane" id="tab-files" role="tabpanel" aria-labelledby="t-files" hidden>
-          <div class="cmp-head"><span class="mut small" id="filesnote"></span><span class="sp"></span><button class="sm" id="openfolder2" disabled>Abrir carpeta</button></div>
+          <div class="cmp-head"><span class="sp"></span><button class="sm" id="openfolder2" disabled>Abrir carpeta</button></div>
           <ul class="files" id="files"><li class="mut">–</li></ul>
         </section>
         <section class="tabpane" id="tab-cmp" role="tabpanel" aria-labelledby="t-cmp" hidden>
@@ -143,23 +147,40 @@
       <div class="nqline">nq nuevo <span id="nqnew">–</span> · <span id="nqtipo"></span></div>
       <details class="opts" id="opts">
         <summary id="optsum">Opciones</summary>
-        <label class="check"><input type="checkbox" id="autoupd">Recalcular d2, b2, dS desde Q/H/n (AutoUpdate)</label>
-        <p class="note">Puede romper el meridiano si el punto de diseño cambia mucho.</p>
-        <label class="check" id="extofflbl"><input type="checkbox" id="extoff">Quitar extensión CFD de salida (evita el solape con la voluta)</label>
-        <div class="small mut" style="margin:6px 0 2px">Exportar</div>
-        <label class="check"><input type="checkbox" id="exCCM" checked>STEP para STAR-CCM+</label>
-        <label class="check"><input type="checkbox" id="exSTL" checked>STL para el visor</label>
+        <label class="check" title="Recalcula d2, b2 y dS desde Q, H y n. Puede romper el meridiano si el punto de diseño cambia mucho"><input type="checkbox" id="autoupd">AutoUpdate</label>
+        <label class="check" id="extofflbl"><input type="checkbox" id="extoff">Sin extensión CFD</label>
+        <div class="optgrp" role="group" aria-label="Exportar">
+          <span class="small mut">Exportar</span>
+          <label class="check" title="STEP + .cfturbo-ccm para STAR-CCM+"><input type="checkbox" id="exCCM" checked>STEP</label>
+          <label class="check" title="STL por superficie: lo que pinta el visor"><input type="checkbox" id="exSTL" checked>STL</label>
+          <label class="check" title="Reporte de diseño HTML de CFturbo (ángulos, garganta, rendimientos, NPSHR). Las curvas se exportan siempre"><input type="checkbox" id="exRep">Reporte</label>
+        </div>
       </details>
     </div>
     <div class="props-foot">
       <div id="runsum" aria-live="polite"></div>
-      <div class="row"><label for="rname">Nombre</label><input id="rname" placeholder="v2"></div>
-      <div class="row"><button class="pri" id="runbtn" title="Ctrl+Enter">▶ Ejecutar en CFturbo</button><button id="askbtn" title="Pide a Claude que lo haga con criterio">Pedir a Claude</button></div>
+      <div class="row"><label for="rname">Nombre</label><input id="rname" placeholder="v2" aria-label="Nombre de la corrida"></div>
+      <div class="row"><button class="pri" id="runbtn" title="Ejecutar en CFturbo (Ctrl+Enter)">▶ Ejecutar</button><button id="askbtn" title="Pide a Claude que lo haga con criterio">Pedir a Claude</button></div>
       <div id="runmsg" aria-live="polite"></div>
     </div>
   </aside>
 </main>
 <div id="toast" role="status" aria-live="polite"></div>
+
+<dialog id="newdlg" aria-labelledby="newdlg-h">
+  <form id="newform" method="dialog">
+    <h2 class="sec-h" id="newdlg-h">Bomba nueva <span class="sp"></span><button type="button" class="sm icon" id="newclose" aria-label="Cerrar">✕</button></h2>
+    <div class="nfields">
+      <label><span>Q <span class="mut">m³/h</span></span><input id="nQ" inputmode="decimal" autocomplete="off" required></label>
+      <label><span>H <span class="mut">m</span></span><input id="nH" inputmode="decimal" autocomplete="off" required></label>
+      <label><span>n <span class="mut">rpm</span></span><input id="nN" inputmode="decimal" autocomplete="off" required></label>
+    </div>
+    <label>Nombre<input id="nName" autocomplete="off" required pattern="[A-Za-z0-9_\-]+" title="Letras, números, _ y -"></label>
+    <label>Base<select id="nBase" title="Ejemplo de CFturbo o proyecto que se escala por semejanza"></select></label>
+    <div id="nInfo" class="mono small" aria-live="polite"></div>
+    <div class="row end"><button type="button" class="sm" id="newcancel">Cancelar</button><button type="submit" class="pri" id="newok" title="Crea projects/&lt;nombre&gt;/&lt;nombre&gt;.cft y lo corre en CFturbo">Crear y correr</button></div>
+  </form>
+</dialog>
 
 <script type="module" src="/app.js"></script>
 </body>

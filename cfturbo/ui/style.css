@@ -373,3 +373,107 @@ ul.ev li span,.m.tool,.sec-h,.card-run .ab,.card-run .thumb,#params td:first-chi
   #density{display:none}
   .popover{top:var(--s2)}
 }
+
+/* ------------------------------------------------------------------ ronda 3 */
+/* eval_2 D2-8: dock más alto por defecto (el alto arrastrado y guardado manda, va en style del .stage) */
+.stage{--dock-h:clamp(280px,32vh,420px)}
+.stage.dock-collapsed{--dock-h:var(--tabs-h)}
+/* D2-6: tarjeta «ya guardada como versión» sin opacidad (bajaba el contraste < 4,5); placeholder legible en oscuro */
+.card-run.dim{opacity:1}
+.card-run.dim .name{color:var(--mut)}
+::placeholder{color:var(--mut);opacity:1}
+/* D2-3: info del proyecto en una línea */
+#pinfo{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+/* D2-4: chip seguir/fijada con icono; entre 1100 y 1279 solo el icono y la fecha sin duración */
+#followchip .ico{font-size:12px;line-height:1}
+@media (min-width:1100px) and (max-width:1279px){
+  #followchip .txt{display:none}
+  #followchip{padding:0 8px}
+  .runbar #runmeta .dur{display:none}
+  .runbar #runmeta{flex:0 0 auto}
+}
+/* D2-2: < 1100 el runbar cabe en una línea (textos largos fuera) y el pie es más bajo */
+@media (max-width:1099px){
+  .runbar .long,#followchip .txt{display:none}
+  .runbar{flex-wrap:nowrap}
+  .runbar .runname{max-width:40vw}
+  .props-foot{padding:6px var(--s3);gap:4px 8px}
+  .props-foot #runsum{flex-basis:100%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .props-foot #runmsg:empty{display:none}
+  .props-foot .row label{display:none}
+  /* las 5 filas de álabe (β, s) no deben alargar la página: visor y filas algo más bajos */
+  #viewer{height:42vh;min-height:300px}
+  #params td,#params th{height:25px}
+  .dock{height:300px}
+}
+/* proyecto base + «＋ Nueva» */
+.projrow{display:flex;gap:6px;align-items:center}
+.projrow select{flex:1;min-width:0}
+.projrow #newbtn{flex:none;min-height:var(--ctl-h)}
+/* tabla: bloque de álabe separado; valores automáticos en cursiva */
+#params tr.grp td{border-top:2px solid var(--line)}
+#params td.auto{font-style:italic;color:var(--mut)}
+/* opciones: Exportar en una fila */
+.optgrp{display:flex;flex-wrap:wrap;align-items:center;gap:2px 12px;margin-top:4px}
+.optgrp .check{padding:2px 0}
+/* galería: borrar con confirmación en la tarjeta */
+.card-run .delbtn{position:absolute;top:6px;right:34px;min-height:22px;padding:0 5px;font-size:12px;opacity:0;background:var(--panel)}
+.card-run[aria-selected="true"] .delbtn{opacity:.55}   /* en la activa se ve siempre (tenue), en el resto al pasar */
+.card-run:hover .delbtn,.card-run:focus .delbtn,.card-run:focus-within .delbtn{opacity:1}
+.card-run .delbtn:hover{border-color:var(--err);color:var(--err)}
+.card-run .delask{position:absolute;inset:0;z-index:2;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;padding:6px;
+  background:color-mix(in srgb,var(--panel) 94%,transparent);border-radius:inherit;font-size:12px;font-weight:600;color:var(--err);cursor:default}
+.card-run .delask .btns{display:flex;gap:6px}
+.card-run .delask button{min-width:40px}
+.gallery.compact .card-run .delask,.card-run .delask:only-child{flex-direction:row}
+@media (min-width:1100px) and (max-width:1279px){ .card-run .delask{flex-direction:row} }
+/* hitos: valores clave del reporte */
+.rep{margin-bottom:var(--s2)}
+.rep .cmp-sec{margin-top:0;display:flex;gap:var(--s2);align-items:baseline}
+.rep .cmp-sec a{text-transform:none;letter-spacing:0;font-weight:600}
+dl.kv{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:2px 12px;margin:0;font-size:12px}
+dl.kv div{display:flex;gap:6px;align-items:baseline;min-width:0;padding:2px 0;border-bottom:1px dashed var(--line)}
+dl.kv dt{color:var(--mut);flex:none;min-width:64px}
+dl.kv dd{margin:0;font-family:var(--mono);font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+/* curvas */
+.charts{display:flex;flex-wrap:wrap;gap:var(--s2) 12px}
+.chart{margin:0;min-width:0}
+.chart svg{display:block;max-width:100%;height:auto;touch-action:none}
+.chart .g{stroke:var(--line);stroke-width:1}
+.chart .axis{stroke:var(--mut);stroke-width:1}
+.chart .tk,.chart .ax{fill:var(--mut);font:11px var(--mono)}
+.chart .ax{font-weight:600;fill:var(--fg)}
+.chart .ln{fill:none;stroke-width:2}
+.chart .ln.a{stroke:var(--acc)} .chart .ln.b{stroke:var(--cmp);stroke-dasharray:6 4}
+.chart .dz{stroke-width:1;stroke-dasharray:2 3} .chart .dz.a{stroke:var(--acc)} .chart .dz.b{stroke:var(--cmp)}
+.chart .dp{stroke:var(--panel);stroke-width:1.5} .chart .dp.a{fill:var(--acc)} .chart .dp.b{fill:var(--cmp)}
+.chart .hit{fill:transparent;cursor:crosshair}
+.chart .hv line{stroke:var(--fg);stroke-width:1;opacity:.5}
+.chart .hv text{font:11px var(--mono);fill:var(--fg);paint-order:stroke;stroke:var(--panel);stroke-width:3px}
+.chart .hv text.a{fill:var(--acc)} .chart .hv text.b{fill:var(--cmp)}
+.chart .hv circle.a{fill:var(--acc)} .chart .hv circle.b{fill:var(--cmp)}
+.lg{font-weight:600;font-size:12px;display:inline-flex;align-items:center;gap:6px}
+.lg::before{content:"";width:16px;height:0;border-top:2px solid currentColor}
+.lg.a{color:var(--acc)} .lg.b{color:var(--cmp)} .lg.b::before{border-top-style:dashed}
+/* comparar: tabla y curva H-Q lado a lado si hay ancho */
+.cmp-grid{display:grid;grid-template-columns:minmax(0,1fr);gap:var(--s3)}
+.cmp-curves:empty{display:none}
+#tab-cmp{container-type:inline-size}
+@container (min-width:660px){
+  .cmp-grid{grid-template-columns:minmax(0,1fr) auto;align-items:start}
+  .cmp-curves{position:sticky;top:0}
+}
+/* diálogo «Bomba nueva» */
+dialog#newdlg{border:1px solid var(--line);border-radius:var(--r-lg);background:var(--panel);color:var(--fg);padding:var(--s4);width:min(420px,calc(100vw - 32px));box-shadow:0 10px 30px #0008}
+dialog#newdlg::backdrop{background:#0006}
+#newform{display:grid;gap:var(--s2)}
+#newform .sec-h{margin:0}
+#newform label{display:grid;gap:2px}
+.nfields{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:var(--s2)}
+.nfields input{font-family:var(--mono);text-align:right}
+#newform input.bad{border-color:var(--err)}
+#nInfo{min-height:32px;color:var(--fg)}
+#nInfo.mut{color:var(--mut)} #nInfo.err{color:var(--err)} #nInfo.warn b{color:var(--fg)}
+#nInfo .warnline{color:var(--warn);font-weight:600;margin-top:2px}
+#newform .row{display:flex;gap:var(--s2)} #newform .row.end{justify-content:flex-end}
+.chart .tk,.chart .ax,.chart .hv text{font-size:12px}

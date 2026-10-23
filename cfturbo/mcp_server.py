@@ -171,8 +171,149 @@ def _set_ext_outlet(root: ET.Element, on) -> str:
     return done[0]
 
 
-# Claves especiales de `edits` que hacen algo más que cambiar una hoja
-SPECIAL = {"ext_outlet": _set_ext_outlet}
+def _get_ext_outlet(root: ET.Element) -> str:
+    return root.find(".//CFDSetup_RotSym_Extension_Outlet_Active").text.strip()
+
+
+# ---------------------------------------------------------------- ángulos y espesor de álabe
+# BladeProperties/BladePropsArray[BladeValues]/BladePropsML[Main blade]/Beta1|Beta2|s1|s2: arrays Count=5
+# (spans cubo→corona) de los que el .cft solo guarda los índices 0 (cubo) y Count-1 (corona); radianes y m.
+# AutoUpdate1/2 = True: CFturbo recalcula βB1/βB2 solo. Para fijar un ángulo hay que ponerlos en False.
+_IMPS = ("CFturboDesign_RadialImpeller", "CFturboDesign_AxialImpeller")
+
+
+def _blade_mls(root: ET.Element) -> list[tuple[ET.Element, ET.Element]]:
+    """(BladeProperties, BladePropsML) de cada álabe (principal y divisores) de los impulsores."""
+    out = []
+    for imp in (e for e in root.iter() if e.tag in _IMPS):
+        bp = imp.find("BladeProperties")
+        if bp is not None:
+            out += [(bp, ml) for ml in bp.iter("BladePropsML")]
+    return out
+
+
+def _span_vals(arr: ET.Element) -> list[tuple[int, ET.Element]]:
+    return sorted(((int(v.get("Index", 0)), v) for v in arr.findall("Value")), key=lambda x: x[0])
+
+
+def _pair(v) -> list[float]:
+    """Número (todos los spans), lista [cubo, corona] o su texto JSON -> [cubo, corona]."""
+    if isinstance(v, str):
+        v = json.loads(v.replace(";", ",")) if v.strip().startswith("[") else float(v.replace(",", "."))
+    if isinstance(v, (int, float)):
+        return [float(v), float(v)]
+    if len(v) != 2:
+        raise KeyError("se espera un número o [cubo, corona]")
+    return [float(v[0]), float(v[1])]
+
+
+def _write_span(arr: ET.Element, hub: float, shr: float) -> None:
+    n = int(arr.get("Count", 5)) - 1 or 1
+    for i, v in _span_vals(arr):  # índices intermedios (si los hay) por interpolación lineal, como CFturbo
+        v.text = repr(hub + (shr - hub) * i / n)
+
+
+def _read_span(arr: ET.Element | None) -> list[float] | None:
+    if arr is None:
+        return None
+    vals = _span_vals(arr)
+    return [float(vals[0][1].text), float(vals[-1][1].text)] if vals else None
+
+
+def _main_ml(root: ET.Element):
+    mls = _blade_mls(root)
+    return next(((bp, ml) for bp, ml in mls if ml.get("Name") == "Main blade"), mls[0] if mls else (None, None))
+
+
+def blade_info(root: ET.Element) -> dict:
+    """βB1/βB2 cubo/corona en grados, espesor en mm y si los ángulos son automáticos (álabe principal)."""
+    bp, ml = _main_ml(root)
+    if ml is None:
+        return {}
+    deg = lambda p: [round(math.degrees(x), 3) for x in p] if p else [None, None]  # noqa: E731
+    b1, b2 = deg(_read_span(ml.find("Beta1"))), deg(_read_span(ml.find("Beta2")))
+    s = [float(v.text) for a in ("s1", "s2") if ml.find(a) is not None for _, v in _span_vals(ml.find(a))]
+    return {"beta1_hub_deg": b1[0], "beta1_shroud_deg": b1[1], "beta2_hub_deg": b2[0], "beta2_shroud_deg": b2[1],
+            "s_mm": round(sum(s) / len(s) * 1000, 4) if s else None,
+            "beta_auto1": (bp.findtext("AutoUpdate1") or "").strip() == "True",
+            "beta_auto2": (bp.findtext("AutoUpdate2") or "").strip() == "True"}
+
+
+def _beta_setter(k: int):
+    def setter(root: ET.Element, v) -> str:
+        hub, shr = _pair(v)
+        mls = _blade_mls(root)
+        if not mls:
+            raise KeyError(f"beta{k}_deg: el proyecto no tiene BladePropsML")
+        for bp, ml in mls:
+            arr = ml.find(f"Beta{k}")
+            if arr is not None:
+                _write_span(arr, math.radians(hub), math.radians(shr))
+            au = bp.find(f"AutoUpdate{k}")
+            if au is not None:
+                au.text = "False"  # con True CFturbo pisa el ángulo pedido
+        return json.dumps([round(hub, 3), round(shr, 3)])
+    return setter
+
+
+def _beta_getter(k: int):
+    def getter(root: ET.Element) -> str:
+        b = blade_info(root)
+        return json.dumps([b[f"beta{k}_hub_deg"], b[f"beta{k}_shroud_deg"]])
+    return getter
+
+
+def _set_beta_auto(root: ET.Element, on) -> str:
+    on = str(on).lower() in ("true", "1", "yes", "si", "sí")
+    for bp, _ in _blade_mls(root):
+        for k in ("AutoUpdate1", "AutoUpdate2"):
+            if bp.find(k) is not None:
+                bp.find(k).text = "True" if on else "False"
+    return "True" if on else "False"
+
+
+def _get_beta_auto(root: ET.Element) -> str:
+    b = blade_info(root)
+    return "True" if b.get("beta_auto1") and b.get("beta_auto2") else "False"
+
+
+def _set_thickness(root: ET.Element, v) -> str:
+    hub, shr = _pair(v)
+    mls = _blade_mls(root)
+    if not mls:
+        raise KeyError("s_mm: el proyecto no tiene BladePropsML")
+    for _, ml in mls:
+        for a in ("s1", "s2"):  # s1 = borde de ataque, s2 = borde de salida
+            if ml.find(a) is not None:
+                _write_span(ml.find(a), hub / 1000, shr / 1000)
+    return json.dumps([round(hub, 4), round(shr, 4)])
+
+
+def _get_thickness(root: ET.Element) -> str:
+    _, ml = _main_ml(root)
+    p = _read_span(ml.find("s1")) if ml is not None else None
+    return json.dumps([round(x * 1000, 4) for x in p]) if p else "null"
+
+
+# Claves especiales de `edits` que hacen algo más que cambiar una hoja: (aplicar, leer lo realizado)
+SPECIAL = {"ext_outlet": (_set_ext_outlet, _get_ext_outlet),
+           "beta1_deg": (_beta_setter(1), _beta_getter(1)), "beta2_deg": (_beta_setter(2), _beta_getter(2)),
+           "beta_auto": (_set_beta_auto, _get_beta_auto), "s_mm": (_set_thickness, _get_thickness)}
+
+
+def _differs(req: str, real: str) -> bool:
+    """¿CFturbo cambió lo pedido? Números con tolerancia relativa, listas [cubo, corona] con 0,01,
+    texto/booleanos sin distinguir mayúsculas (CFturbo escribe False/True)."""
+    try:
+        a, b = json.loads(req), json.loads(real)
+        if isinstance(a, list) and isinstance(b, list):
+            return len(a) != len(b) or any(x is None or y is None or abs(x - y) > 0.01 for x, y in zip(a, b))
+    except (ValueError, TypeError):
+        pass
+    try:
+        return abs(float(real) - float(req)) > 1e-9 * max(1.0, abs(float(real)))
+    except ValueError:
+        return real.lower() != str(req).lower()
 
 
 def _components(root: ET.Element) -> list[dict]:
@@ -265,6 +406,7 @@ def project_info(name_or_path: str) -> dict:
             "b2_d2": _get(leaves, "b2_d2"), "EtaH": _get(leaves, "EtaH"),
             "volute_d_out_mm": (_get(leaves, "volute_d_out") or 0) * 1000 or None,
             "AutoUpdate": _get_text(leaves, "AutoUpdate"),
+            **blade_info(root),
         },
     }
     if Q and H and n:
@@ -315,7 +457,9 @@ def _batch_xml(cft: Path, run_dir: Path, base: str, exports: list[str], comps: l
 
 
 _LOG_RX = re.compile(r"^\S+ \S+ \[(WARN|ERROR)\]\s+(\S.*?) - (.*)$")
-_STL_RX = re.compile(r"_Co(\d+)_\[?([^\]]+?)\]?(Extension)?-(?:CFD)?Flowdomain-(\w+)\.stl$", re.I)
+# STL de OpenFOAM: <base>_Co<i>_<caption>[Extension]-[CFD]Flowdomain[(virtual)]-<frontera>.stl, con caption
+# entre corchetes ([Impeller_1]) o sin ellos (Impeller, RadialImpeller, Stator_1) según el ejemplo de origen.
+_STL_RX = re.compile(r"_Co(\d+)_\[?(.+?)\]?(Extension)?-(?:CFD)?Flowdomain(?:\(virtual\))?-(\w+)\.stl$", re.I)
 
 
 def _parse_log(run_dir: Path) -> tuple[list[str], list[str]]:
@@ -344,6 +488,131 @@ def _geometry(run_dir: Path) -> list[dict]:
                     "component": (m.group(2) + (" ext" if m.group(3) else "")) if m else f.stem,
                     "boundary": m.group(4) if m else "", "bytes": f.stat().st_size})
     return geo
+
+
+# ---------------------------------------------------------------- curvas (PerformanceData) y reporte (Report)
+def parse_perf(f: Path, design: dict | None = None) -> dict | None:
+    """<base>.cft-pp (XML <Characteristic><Curve Name Desc><Points><Value><x/><y/>) -> curvas H-Q, η-Q, P-Q.
+    CFturbo 2026.1.1 da «Δpt - ṁ» (bar vs kg/s) y «η - ṁ» (% vs kg/s): se pasan a Q m³/h, H m, η %, P kW
+    (P = ρ·g·Q·H/η, potencia al eje estimada). Curvas que no se reconocen quedan en `others` por nombre."""
+    try:
+        root = ET.parse(f).getroot()
+    except (OSError, ET.ParseError):
+        return None
+    design = design or {}
+    rho = design.get("rho") or 998.2
+    curves, others = {}, []
+    for c in root.iter("Curve"):
+        pts = []
+        for v in c.iter("Value"):
+            try:
+                pts.append((float(v.findtext("x")), float(v.findtext("y"))))
+            except (TypeError, ValueError):
+                continue
+        name, desc = c.get("Name") or "", c.get("Desc") or ""
+        key = ("dpt" if re.search(r"pressure|Δp|dp", desc + name, re.I) else
+               "eta" if re.search(r"effic|η", desc + name, re.I) else
+               "npsh" if re.search(r"npsh", desc + name, re.I) else None)
+        if key and key not in curves and pts:
+            curves[key] = pts
+        others.append({"name": name, "desc": desc, "n": len(pts), "used": key is not None})
+    if "dpt" not in curves:
+        return {"names": others} if others else None
+    xs = [x for x, _ in curves["dpt"]]
+    Q = [x / rho * 3600 for x in xs]
+    # unidad de Δpt: bar en 2026.1.1; si hay altura de diseño se elige el factor (bar, kPa, Pa) que la reproduce
+    fac = 1e5
+    if design.get("Q_m3h") and design.get("H_m"):
+        def h_at(f_):
+            i = min(range(len(Q)), key=lambda j: abs(Q[j] - design["Q_m3h"]))
+            return curves["dpt"][i][1] * f_ / (rho * G)
+        fac = min((1e5, 1e3, 1.0), key=lambda f_: abs(math.log(max(h_at(f_), 1e-12) / design["H_m"])))
+    H = [y * fac / (rho * G) for _, y in curves["dpt"]]
+    out = {"Q_m3h": [round(q, 3) for q in Q], "H_m": [round(h, 3) for h in H], "names": others,
+           "design": {"Q_m3h": design.get("Q_m3h"), "H_m": design.get("H_m")}}
+    if "eta" in curves and len(curves["eta"]) == len(xs):
+        eta = [y for _, y in curves["eta"]]
+        if max(eta) <= 1.5:  # fracción -> %
+            eta = [e * 100 for e in eta]
+        out["eta_pct"] = [round(e, 3) for e in eta]
+        out["P_kW"] = [round(rho * G * q / 3600 * h / (e / 100) / 1000, 3) if e > 0.5 else None
+                       for q, h, e in zip(Q, H, eta)]
+    if "npsh" in curves and len(curves["npsh"]) == len(xs):
+        out["NPSH_m"] = [round(y, 3) for _, y in curves["npsh"]]
+    return out
+
+
+def _report_rows(html: str) -> list[tuple[tuple[str, ...], str, str, str, str]]:
+    """Tabla del reporte HTML -> (ruta de cabeceras, etiqueta, símbolo, unidad, valor). La profundidad la dan
+    las celdas vacías (&nbsp;) del principio de cada fila; las filas de una sola celda son cabeceras."""
+    import html as _html
+    rows, stack = [], []
+    for tr in re.findall(r"(?is)<tr[^>]*>(.*?)</tr>", html):
+        cells = [_html.unescape(re.sub(r"(?is)<br\s*/?>", " ", re.sub(r"(?s)<(?!br)[^>]+>", "", c))).replace("\xa0", " ").strip()
+                 for c in re.findall(r"(?is)<td[^>]*>(.*?)</td>", tr)]
+        cells = [re.sub(r"\s+", " ", c) for c in cells]
+        depth = 0
+        while depth < len(cells) and not cells[depth]:
+            depth += 1
+        rest = cells[depth:]
+        if not rest:
+            continue
+        if len(rest) == 1 or not any(rest[1:]):
+            stack = stack[:depth] + [rest[0]]
+            continue
+        rest += [""] * (4 - len(rest))
+        rows.append((tuple(stack[:depth]), rest[0], rest[1], rest[2], rest[3]))
+    return rows
+
+
+def _num(s: str):
+    """'20.7' -> 20.7 · '[20.7, 17.2]' -> [20.7, 17.2] · '4.77 .. 10.06' -> [4.77, 10.06] · otro -> texto."""
+    s = s.strip()
+    nums = re.findall(r"-?\d+(?:\.\d+)?(?:E[-+]?\d+)?", s, re.I)
+    if not nums:
+        return s or None
+    vals = [float(x) for x in nums]
+    return vals[0] if len(vals) == 1 and not s.startswith("[") else vals
+
+
+def parse_report(f: Path) -> dict | None:
+    """Valores clave del reporte de diseño (export «Report» -> <base>.html, una tabla). Del impulsor: βB1/βB2
+    [cubo, corona], envolvente Δφ, área de garganta, w2/w1 [cubo, corona], ηh/ηv/ηm/η etapa, NPSHR por
+    correlación, cu2/cm2/u2, potencia y par; de la voluta, el área de garganta de la lengua."""
+    try:
+        rows = _report_rows(f.read_text(encoding="utf-8-sig", errors="replace"))
+    except OSError:
+        return None
+    comp = lambda r: r[0][0] if r[0] else ""  # noqa: E731  «2: [Impeller_1]»
+    imp = [r for r in rows if re.search(r"impeller|rotor", comp(r), re.I)]
+    vol = [r for r in rows if re.search(r"volute", comp(r), re.I)]
+
+    def first(rs, label, under=None, sym=None, last=False):
+        hits = [r for r in rs if r[1] == label and (under is None or under in r[0]) and (sym is None or r[2] == sym)]
+        return _num((hits[-1] if last else hits[0])[4]) if hits else None
+
+    rep = {
+        "beta1_deg": first(imp, "Blade angle leading edge", "Blade properties"),
+        "beta2_deg": first(imp, "Blade angle trailing edge", "Blade properties"),
+        "wrap_deg": first(imp, "Wrap angle", "Blade mean lines", "Δφ"),
+        "throat_mm2": first(imp, "Cross section area", "Throat", last=True),
+        "w2_w1": [first(imp, "Rel. deceleration hub"), first(imp, "Rel. deceleration shroud")],
+        "eta_h_pct": first(imp, "Hydraulic efficiency", sym="ηh"),
+        "eta_v_pct": first(imp, "Volumetric efficiency", sym="ηv"),
+        "eta_m_pct": first(imp, "Mechanical efficiency", sym="ηm"),
+        "eta_st_pct": first(imp, "Stage efficiency", sym="ηSt"),
+        "cu2": first(imp, "Abs. circumferential velocity", "Outlet - Velocity triangle"),
+        "cm2": first(imp, "Meridional velocity", "Outlet - Velocity triangle"),
+        "u2": first(imp, "Peripheral speed", "Outlet - Velocity triangle"),
+        "P_kW": first(imp, "Required driving power"),
+        "torque_Nm": first(imp, "Torque", "Power"),
+        "npsha_m": first(imp, "(Available at inlet)"),
+        "npshr_m": {r[1]: _num(r[4]) for r in imp if r[2] == "NPSHR"} or None,
+        "volute_throat_mm2": first(vol, "Throat area"),
+    }
+    if rep["w2_w1"] == [None, None]:
+        rep["w2_w1"] = None
+    return {k: v for k, v in rep.items() if v is not None} or None
 
 
 # ---------------------------------------------------------------- candado: una corrida de CFturbo a la vez
@@ -429,6 +698,8 @@ def _run_batch(project: str, edits: dict | None, name: str,
                exports: list[str] | tuple[str, ...] | None, save: bool) -> dict:
     edits = dict(edits or {})
     exports = list(exports if exports is not None else EXPORTS_DEFAULT)
+    if "PerformanceData" not in exports:  # curvas características: siempre (28 KB, no cuesta tiempo)
+        exports.append("PerformanceData")
     src = resolve_project(project)
     name = re.sub(r"[^A-Za-z0-9_-]+", "_", name) or "design"
     run_dir = WORKDIR / f"{name}_{time.strftime('%Y%m%d-%H%M%S')}"
@@ -458,13 +729,13 @@ def _run_batch(project: str, edits: dict | None, name: str,
     try:
         for k, v in edits.items():
             if k in SPECIAL:
-                res["requested_si"][k] = SPECIAL[k](tree.getroot(), v)
+                res["requested_si"][k] = SPECIAL[k][0](tree.getroot(), v)
                 continue
             p, e = _resolve(leaves, k)
             e.text = _to_si(k, v)
             res["requested_si"][k] = e.text
-    except KeyError as err:
-        res.update(status="error", errors=[f"parámetro no encontrado: {err}"], seconds=0)
+    except (KeyError, ValueError, TypeError) as err:
+        res.update(status="error", errors=[f"parámetro no encontrado o valor inválido: {err}"], seconds=0)
         ev("Parámetro no encontrado")
         return res
     if edits:
@@ -496,7 +767,8 @@ def _run_batch(project: str, edits: dict | None, name: str,
             res["actions"].append(f"{a.get('Name')}{(' ' + a.findtext('ExportInterface')) if a.findtext('ExportInterface') else ''}: {st}")
     for x in exports:
         pats = {"StarCCM": ["*.stp", "*.cfturbo-ccm", "*.java"], "OpenFOAM": ["*.stl"],
-                "General": ["*.geo-xml", "*.stp", "*.igs", "*.stl"]}.get(x, ["*"])
+                "General": ["*.geo-xml", "*.stp", "*.igs", "*.stl"], "Report": ["*.html"],
+                "PerformanceData": ["*.cft-pp"]}.get(x, ["*"])
         res["exports"][x] = sorted({f.name for pt in pats for f in run_dir.glob(pt)})
     res["geometry"] = _geometry(run_dir)
     n_files = sum(len(v) for v in res["exports"].values())
@@ -506,23 +778,23 @@ def _run_batch(project: str, edits: dict | None, name: str,
         lv = _leaves(out_root)
         for k in edits:
             try:
-                if k == "ext_outlet":
-                    real = out_root.find(".//CFDSetup_RotSym_Extension_Outlet_Active").text.strip()
-                else:
-                    real = _resolve(lv, k)[1].text.strip()
-            except (KeyError, AttributeError):
+                real = SPECIAL[k][1](out_root) if k in SPECIAL else _resolve(lv, k)[1].text.strip()
+            except (KeyError, AttributeError, IndexError):
                 continue
             res["realized"][k] = real
-            try:
-                if abs(float(real) - float(res["requested_si"][k])) > 1e-9 * max(1.0, abs(float(real))):
-                    res["corrected"][k] = [res["requested_si"][k], real]
-            except ValueError:  # booleanos y texto: CFturbo puede cambiar mayúsculas (false/False)
-                if real.lower() != str(res["requested_si"][k]).lower():
-                    res["corrected"][k] = [res["requested_si"][k], real]
+            if _differs(res["requested_si"][k], real):
+                res["corrected"][k] = [res["requested_si"][k], real]
         try:
             res["info"] = project_info(str(out_cft))
         except Exception as err:  # ponytail: info es cortesía, no debe tumbar la corrida
             res["info_error"] = str(err)
+    dp = (res.get("info") or {}).get("design_point") or {}
+    curves = parse_perf(run_dir / f"{name}.cft-pp", dp)
+    if curves:
+        res["curves"] = curves
+    if (run_dir / f"{name}.html").exists():
+        res["report"] = parse_report(run_dir / f"{name}.html")
+        res["report_file"] = f"{name}.html"
     res["status"] = "error" if res["errors"] or rc not in (0, 1) else ("warn" if res["warnings"] else "ok")
     res["saved"] = False
     ev({"ok": "Corrida OK", "warn": "Corrida con avisos", "error": "Corrida con errores"}[res["status"]])
@@ -541,7 +813,7 @@ def _bitacora(r: dict, note: str = "") -> None:
         f.write_text("# Bitácora de corridas (automática)\n\nQué se pidió, qué quedó y cómo salió. "
                      "Las recetas con el porqué van en archivos aparte (cft_recipe_save).\n\n", encoding="utf-8")
     d = (r.get("info") or {}).get("dims") or {}
-    dims = ", ".join(f"{k} {v}" for k, v in (("d2", d.get("d2_mm")), ("b2", d.get("b2_mm")), ("nBl", d.get("nBl")),
+    dims = ", ".join(f"{k} {round(v, 2) if isinstance(v, float) else v}" for k, v in (("d2", d.get("d2_mm")), ("b2", d.get("b2_mm")), ("nBl", d.get("nBl")),
                                              ("Psi", d.get("Psi"))) if v is not None)
     edits = ", ".join(f"{k}={v}" for k, v in (r.get("edits") or {}).items()) or "sin cambios"
     corr = "; corrigió " + ", ".join(f"{k} {a}->{b}" for k, (a, b) in r.get("corrected", {}).items()) if r.get("corrected") else ""
@@ -591,6 +863,90 @@ def save_version(run_id: str, name: str | None = None, note: str = "") -> dict:
     return {"saved_as": str(dst), "id": dst.name}
 
 
+def delete_run(run_id: str) -> dict:
+    """Borra una corrida temporal o una versión guardada (carpeta entera). No borra la que está corriendo.
+    Si era versión, la anota en la bitácora; la temporal de origen deja de anunciar «★ como X» sola."""
+    d = find_run(run_id)
+    r = {}
+    try:
+        r = read_json(d / "run.json")
+    except (OSError, ValueError):
+        pass
+    lock = run_lock_info()
+    if r.get("status") == "running" and lock and lock.get("name") == r.get("name"):
+        raise CFturboBusy(f"«{run_id}» está corriendo; espera a que termine")
+    version = d.parent.resolve() == VERSIONS.resolve()
+    shutil.rmtree(d)
+    if d.exists():
+        raise OSError(f"no pude borrar {d} (¿archivo abierto?)")
+    if version:
+        _bitacora(r or {"name": run_id}, note=f"VERSIÓN BORRADA versions/{d.name}")
+    return {"deleted": d.name, "version": version, "path": str(d)}
+
+
+# ---------------------------------------------------------------- bomba nueva por semejanza (explora/desde_cero.py)
+def _desde_cero():
+    """Prototipo del Explorador (recipes/exploracion-desde-cero.md), cargado como módulo sin tocar sys.path.
+    Su ROOT apunta a la carpeta que contiene PROJECTS (el selftest la cambia)."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("desde_cero", HERE / "explora" / "desde_cero.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    mod.ROOT = PROJECTS.parent
+    return mod
+
+
+_CANDS: dict = {}
+
+
+def pump_bases() -> list[dict]:
+    """Bases para una bomba nueva (ejemplos de CFturbo + projects/*/*.cft con impulsor) con su nq.
+    Leerlas cuesta ~1 s (XML de 0,2–1 MB): se cachea por lista de archivos y mtime."""
+    dc = _desde_cero()
+    paths = [p for p in list(dc.BASES) + sorted(PROJECTS.glob("*/*.cft")) if p.exists()]
+    key = tuple((str(p), p.stat().st_mtime) for p in paths)
+    if _CANDS.get("key") != key:
+        _CANDS.update(key=key, val=dc.candidatos())
+    return _CANDS["val"]
+
+
+def suggest_base(Q_m3h: float, H_m: float, n_rpm: float, base: str | None = None) -> dict:
+    """Base más cercana en nq (o la pedida), factor de escala k y aviso si el salto de nq es > ×1,5."""
+    nq = n_rpm * math.sqrt(Q_m3h / 3600) / H_m ** 0.75
+    cands = pump_bases()
+    b = next((c for c in cands if c["cft"] == base or Path(c["cft"]).stem == base), None) if base else         min(cands, key=lambda c: abs(math.log(nq / c["nq"])), default=None)
+    if b is None:
+        raise FileNotFoundError(f"no hay base {'«' + base + '»' if base else 'disponible'}")
+    ratio = nq / b["nq"]
+    return {"nq": round(nq, 1), "tipo": nq_calc(Q_m3h, H_m, n_rpm)["tipo"], "base": b["cft"],
+            "base_name": Path(b["cft"]).stem, "nq_base": b["nq"], "ratio": round(ratio, 2),
+            "k": round((b["n_rpm"] / n_rpm) * math.sqrt(H_m / b["H_m"]), 4),
+            "aviso": (f"nq {nq:.1f} lejos de la base (nq {b['nq']}, ×{max(ratio, 1 / ratio):.2f}): fuera de lo "
+                      "probado (×1,5). Mejor crear una base en la GUI para esa banda.") if abs(math.log(ratio)) > math.log(1.5) else None,
+            "bases": [{"name": Path(c["cft"]).stem, "cft": c["cft"], "nq": c["nq"]} for c in cands]}
+
+
+def new_project(Q_m3h: float, H_m: float, n_rpm: float, name: str, base: str | None = None) -> dict:
+    """Crea projects/<name>/<name>.cft escalando por semejanza la base más cercana en nq (no corre CFturbo)."""
+    name = re.sub(r"[^A-Za-z0-9_-]+", "_", name or "").strip("_")
+    if not name:
+        raise ValueError("falta el nombre del proyecto")
+    if not (Q_m3h > 0 and H_m > 0 and n_rpm > 0):
+        raise ValueError("Q, H y n deben ser positivos")
+    dst = PROJECTS / name / f"{name}.cft"
+    if dst.parent.exists():
+        raise FileExistsError(f"ya existe projects/{name}")
+    sug = suggest_base(Q_m3h, H_m, n_rpm, base)
+    try:
+        out = _desde_cero().preparar(Q_m3h, H_m, n_rpm, dst, sug["base"])
+    except Exception:
+        shutil.rmtree(dst.parent, ignore_errors=True)
+        raise
+    _CANDS.clear()
+    out.update(name=name, base_name=sug["base_name"], tipo=sug["tipo"], aviso=sug["aviso"], ratio=sug["ratio"])
+    return out
+
+
 def prune_tmp(keep: int = KEEP_TMP, exclude: str = "") -> list[str]:
     """Borra las corridas temporales más viejas dejando `keep`. Las de versions/ no se tocan."""
     if not WORKDIR.exists():
@@ -626,7 +982,7 @@ def list_runs(limit: int = 50, summary: bool = False) -> list[dict]:
     runs = []
     keys = ("id", "name", "started", "status", "seconds", "edits", "realized", "corrected",
             "errors", "warnings", "exports", "geometry", "events", "info", "run_dir", "note",
-            "saved_as_version", "saved_from")
+            "saved_as_version", "saved_from", "report", "report_file")  # curvas: solo en run.json
     lock = run_lock_info()
     for d in _all_run_dirs():
         try:
@@ -644,7 +1000,7 @@ def list_runs(limit: int = 50, summary: bool = False) -> list[dict]:
         if summary:
             row["n_stl"] = sum(1 for g in r.get("geometry") or [] if g.get("kind") == "stl")
             row["n_files"] = sum(len(v) for v in (r.get("exports") or {}).values())
-            for k in ("events", "geometry", "exports"):
+            for k in ("events", "geometry", "exports", "report"):
                 row.pop(k)
         runs.append(row)
     runs.sort(key=lambda r: (r.get("started") or "", r.get("id") or ""), reverse=True)
@@ -692,7 +1048,7 @@ def serve() -> None:
     @mcp.tool()
     def cft_info(project: str) -> dict:
         """Punto de diseño (Q m3/h, H m, n rpm, nq), fluido, componentes y dimensiones principales
-        de un proyecto (nombre en projects/ o ruta a un .cft, incluido un *_out.cft de una corrida)."""
+        (d2, b2, dS, dH, Psi, nBl, βB1/βB2 cubo y corona en grados, espesor s_mm, beta_auto1/2) de un proyecto (nombre en projects/ o ruta a un .cft, incluido un *_out.cft de una corrida)."""
         return project_info(project)
 
     @mcp.tool()
@@ -712,10 +1068,16 @@ def serve() -> None:
         impulsor: arregla "Extension is overlapping neighboring component"; no usar si no hay
         componente aguas abajo) o un sufijo/regex de ruta del XML (ver cft_params), p.ej.
         "MeanSurface[Mean surface]/Coupled": False (arregla "Coupling partially deactivated" al cambiar nBl).
+        Álabe: beta1_deg / beta2_deg = número (todos los spans) o [cubo, corona] en grados (fija el ángulo:
+        pone BladeProperties/AutoUpdate1|2=False, si no CFturbo lo recalcula); beta_auto=True vuelve a ángulos
+        automáticos; s_mm = espesor (número o [cubo, corona]) en LE y TE.
         REGLA: si la corrida que TÚ lanzas devuelve warnings/errors de geometría (solapamientos,
         intersecciones, extensiones), corrígelos en una nueva corrida antes de dar el resultado.
         Una corrida a la vez: si otra está en marcha falla con "CFturbo ocupado". exports: subconjunto de
-        ["StarCCM", "OpenFOAM", "General"]; por defecto StarCCM (STEP + .cfturbo-ccm) y OpenFOAM (STL).
+        ["StarCCM", "OpenFOAM", "General", "Report"]; por defecto StarCCM (STEP + .cfturbo-ccm) y OpenFOAM
+        (STL). "Report" añade el reporte de diseño <name>.html y su resumen en `report` (βB1/βB2, Δφ,
+        garganta, w2/w1, ηh/ηv/ηm, NPSHR, cu2/cm2). Siempre se exportan las curvas (PerformanceData) ->
+        `curves` (Q_m3h, H_m, eta_pct, P_kW; predicción 1D de CFturbo, no CFD).
         Devuelve requested_si, realized, corrected (lo que CFturbo cambió), warnings, errors,
         exports, geometry y run_dir. Si CFturbo corrige un valor, decirlo al usuario."""
         return run_batch(project, edits, name, exports, save)
@@ -731,6 +1093,28 @@ def serve() -> None:
         """Guarda una corrida como versión en versions/<name>/ (sobrevive a la poda) y la anota en la
         bitácora. Úsalo cuando el usuario diga que un diseño le sirve. `note`: por qué sirve."""
         return save_version(run_id, name, note)
+
+    @mcp.tool()
+    def cft_delete(run_id: str) -> dict:
+        """Borra una corrida temporal o una versión guardada (carpeta entera, no se puede deshacer). Solo si
+        el usuario lo pide expresamente. No borra la que está corriendo."""
+        return delete_run(run_id)
+
+    @mcp.tool()
+    def cft_new(Q_m3h: float, H_m: float, n_rpm: float, name: str, base: str | None = None,
+                run: bool = True) -> dict:
+        """Bomba nueva para un punto de diseño sin pasar por la GUI: escala por semejanza el ejemplo de CFturbo
+        (o proyecto de projects/) con nq más cercano y crea projects/<name>/<name>.cft (aparece en cft_projects).
+        `base`: nombre o ruta de la base (por defecto la más cercana en nq). Si run, corre CFturbo una vez
+        (<name>_1) para validar. `aviso` si el nq queda a más de ×1,5 del de la base. La forma (ángulos,
+        relación de cubo, nº de álabes) es la del ejemplo: es un punto de partida, después iterar con cft_run."""
+        out = new_project(Q_m3h, H_m, n_rpm, name, base)
+        if run:
+            r = run_batch(out["name"], {}, f"{out['name']}_1")
+            d = (r.get("info") or {}).get("dims") or {}
+            out.update(run_id=r["id"], status=r["status"], warnings=r["warnings"], errors=r["errors"],
+                       d2_mm_cfturbo=d.get("d2_mm"), run_dir=r["run_dir"])
+        return out
 
     @mcp.tool()
     def cft_log(run_dir: str, tail: int = 80) -> str:
@@ -781,7 +1165,14 @@ FAKE_CFT = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
           <Psi Type="Float">0.908</Psi><AutoUpdate Type="Boolean">False</AutoUpdate>
           <dH Type="Float">0.03725</dH><dS Type="Float">0.1227</dS><b2 Type="Float">0.02146</b2><d2 Type="Float">0.2063</d2>
         </MainDimensionsElement></MainDimensions>
-        <BladeProperties Type="Object"><nBl Type="Integer">6</nBl></BladeProperties>
+        <BladeProperties Type="Object"><nBl Type="Integer">6</nBl>
+          <AutoUpdate1 Type="Boolean">True</AutoUpdate1><AutoUpdate2 Type="Boolean">True</AutoUpdate2>
+          <BladePropsArray Type="Object" Name="BladeValues"><BladePropsML Type="Object" Name="Main blade" Index="0">
+            <s1 Count="5" Type="Array1"><Value Type="Float" Index="0">0.0031</Value><Value Type="Float" Index="4">0.0031</Value></s1>
+            <s2 Count="5" Type="Array1"><Value Type="Float" Index="0">0.0031</Value><Value Type="Float" Index="4">0.0031</Value></s2>
+            <Beta1 Count="5" Type="Array1"><Value Type="Float" Index="0">0.360726262380079</Value><Value Type="Float" Index="4">0.300924941996874</Value></Beta1>
+            <Beta2 Count="5" Type="Array1"><Value Type="Float" Index="0">0.566273602266752</Value><Value Type="Float" Index="4">0.400868459859807</Value></Beta2>
+          </BladePropsML></BladePropsArray></BladeProperties>
         <CFDSetup_RotSym Type="Object"><CFDSetup_RotSym_Extension_Outlet_Active Type="Boolean">True</CFDSetup_RotSym_Extension_Outlet_Active>
           <CFDSetup_RotSym_Extension_Outlet Type="Object"></CFDSetup_RotSym_Extension_Outlet></CFDSetup_RotSym>
       </CFturboDesign_RadialImpeller>
@@ -801,6 +1192,21 @@ cft = pathlib.Path(proj.get("InputFile")); tree = ET.parse(cft)
 # CFturbo real corrige valores imposibles: simulamos d2 > 0.3 -> 0.3
 d2 = tree.getroot().find(".//MainDimensionsElement/d2")
 if float(d2.text) > 0.3: d2.text = "0.3"
+# ángulos automáticos: con AutoUpdate2=True CFturbo recalcula βB2 (aquí: lo deja en 32,4° en el cubo)
+bp = tree.getroot().find(".//BladeProperties")
+if bp.findtext("AutoUpdate2") == "True": bp.find(".//Beta2/Value").text = "0.566273602266752"
+PP = ('<CFturboPerformancePredictionFile><Characteristic>'
+      '<Curve Name="Δpt - ṁ" Desc="Total pressure diff. versus Mass flow"><Points Count="3">%s</Points></Curve>'
+      '<Curve Name="η - ṁ" Desc="Efficiency versus Mass flow"><Points Count="3">%s</Points></Curve>'
+      '</Characteristic></CFturboPerformancePredictionFile>')
+pt = lambda pts: "".join(f'<Value Index="{i}"><x>{x}</x><y>{y}</y></Value>' for i, (x, y) in enumerate(pts))
+HTML = ('<table><tr><td>2: [Impeller_1]</td></tr><tr><td>&nbsp;</td><td>Blade properties</td></tr>'
+        '<tr><td>&nbsp;</td><td>&nbsp;</td><td>Blade angle leading edge</td><td>βB1</td><td>[°]</td><td>[20.7, 17.2]</td></tr>'
+        '<tr><td>&nbsp;</td><td>&nbsp;</td><td>Blade angle trailing edge</td><td>βB2</td><td>[°]</td><td>[32.4, 23]</td></tr>'
+        '<tr><td>&nbsp;</td><td>Efficiency</td></tr>'
+        '<tr><td>&nbsp;</td><td>&nbsp;</td><td>Hydraulic efficiency</td><td>ηh</td><td>[%]</td><td>92.1</td></tr>'
+        '<tr><td>&nbsp;</td><td>&nbsp;</td><td>Gülich</td><td>NPSHR</td><td>[m]</td><td>4.77 .. 10.06</td></tr>'
+        '<tr><td>3: [Volute_1]</td></tr><tr><td>&nbsp;</td><td>Throat area</td><td>A</td><td>[mm²]</td><td>4760.8</td></tr></table>')
 lines = ["x y [WARN]    BatchMode - Blade mean lines: 2: [Impeller_1]: Coupling partially deactivated."]
 for a in proj.findall("BatchAction"):
     if a.get("Name") == "Export":
@@ -811,6 +1217,9 @@ for a in proj.findall("BatchAction"):
             if itf == "OpenFOAM":
                 for b in ("Hub", "Inflow"): (wd / f"{base}_Co{i}_{c}-Flowdomain-{b}.stl").write_text("solid fake\nendsolid")
         if itf == "StarCCM": (wd / f"{base}.cfturbo-ccm").write_text("<CFD-Pre/>")
+        if itf == "PerformanceData":  # 63 kg/s ≈ 227 m³/h; 6,86 bar ≈ 70 m
+            (wd / f"{base}.cft-pp").write_text(PP % (pt([(12.6, 10.08), (62.9, 6.855), (125.9, 2.19)]), pt([(12.6, 32.7), (62.9, 86.6), (125.9, 48.3)])), encoding="utf-8")
+        if itf == "Report": (wd / f"{base}.html").write_text(HTML, encoding="utf-8")
         a.append(ET.Element("State")); a[-1].text = "success"
     if a.get("Name") == "Save":
         tree.write(a.findtext("OutputFile"), xml_declaration=True, encoding="UTF-8"); a.append(ET.Element("State")); a[-1].text = "success"
@@ -828,7 +1237,7 @@ def selftest() -> None:
     (PROJECTS / "fake").mkdir(parents=True)
     (PROJECTS / "fake" / "fake.cft").write_text(FAKE_CFT, encoding="utf-8")
     fake = tmp / "fake_cfturbo.py"
-    fake.write_text(FAKE_CFTURBO)
+    fake.write_text(FAKE_CFTURBO, encoding="utf-8")
     # ponytail: el "exe" falso es python + script; en Windows real CFTURBO_EXE apunta a CFturbo.exe
     wrapper = tmp / ("fake.cmd" if os.name == "nt" else "fake.sh")
     if os.name == "nt":
@@ -845,6 +1254,18 @@ def selftest() -> None:
     pr = list_params("fake", "nBl|d2$")
     assert pr["aliases"]["d2"]["value"] == "0.2063" and pr["total"] == 2, pr
     assert info["cfd_ext_outlet"] is True, info.get("cfd_ext_outlet")
+    dm = info["dims"]
+    assert (round(dm["beta1_hub_deg"], 1), round(dm["beta2_shroud_deg"], 1), dm["s_mm"]) == (20.7, 23.0, 3.1), dm
+    assert dm["beta_auto1"] and dm["beta_auto2"], dm
+    # _STL_RX: captions con y sin corchetes, Flowdomain(virtual), extensiones CFD (ejemplos CP nq8/20/31, MP, AP)
+    for fn, comp, bnd in (("x_Co2_[Impeller_1]-Flowdomain-Hub.stl", "Impeller_1", "Hub"),
+                          ("x_Co2_Impeller-Flowdomain(virtual)-BladePS.stl", "Impeller", "BladePS"),
+                          ("x_Co1_RadialImpeller-Flowdomain-Shroud.stl", "RadialImpeller", "Shroud"),
+                          ("x_Co1_Stator_1-Flowdomain(virtual)-RSIConnectionOutHub.stl", "Stator_1", "RSIConnectionOutHub"),
+                          ("x_Co3_[Volute_1]Extension-CFDFlowdomain-Walls.stl", "Volute_1 ext", "Walls"),
+                          ("x_Co2_ImpellerExtension-CFDFlowdomain-Outflow.stl", "Impeller ext", "Outflow")):
+        m = _STL_RX.search(fn)
+        assert m and (m.group(2) + (" ext" if m.group(3) else ""), m.group(4)) == (comp, bnd), (fn, m and m.groups())
 
     r = run_batch("fake", {"d2_mm": 220, "nBl": 7, "Q_m3h": 250, "AutoUpdate": True}, "t1")
     assert r["status"] == "warn" and r["returncode"] == 1, (r["status"], r["errors"])
@@ -856,11 +1277,30 @@ def selftest() -> None:
     assert r["actions"][-1] == "Save: success", r["actions"]
     assert (Path(r["run_dir"]) / "run.json").exists() and r["events"][-1]["msg"] == "Corrida con avisos"
 
+    assert abs(r["curves"]["H_m"][1] - 70) < 0.05 and abs(r["curves"]["Q_m3h"][1] - 226.85) < 0.01 and r["curves"]["eta_pct"][1] == 86.6, r["curves"]
+    assert abs(r["curves"]["P_kW"][1] - 49.88) < 0.05 and "report" not in r, r["curves"]
+    assert "t1.cft-pp" in r["exports"]["PerformanceData"], r["exports"]
+    # ángulos fijos: AutoUpdate2=False y CFturbo los respeta; espesor en LE/TE; reporte HTML parseado
+    rb = run_batch("fake", {"beta2_deg": 26, "beta1_deg": [20, 18], "s_mm": 3.5}, "tb", exports=["Report"])
+    assert rb["realized"]["beta2_deg"] == "[26.0, 26.0]" and rb["realized"]["beta1_deg"] == "[20.0, 18.0]", rb["realized"]
+    assert rb["realized"]["s_mm"] == "[3.5, 3.5]" and not rb["corrected"], (rb["realized"], rb["corrected"])
+    bi = rb["info"]["dims"]
+    assert not bi["beta_auto2"] and not bi["beta_auto1"] and abs(bi["beta2_hub_deg"] - 26) < 1e-6 and bi["s_mm"] == 3.5, bi
+    assert rb["report"]["beta1_deg"] == [20.7, 17.2] and rb["report"]["eta_h_pct"] == 92.1, rb["report"]
+    assert rb["report"]["npshr_m"] == {"Gülich": [4.77, 10.06]} and rb["report"]["volute_throat_mm2"] == 4760.8, rb["report"]
+    assert rb["report_file"] == "tb.html" and rb["exports"]["Report"] == ["tb.html"], rb["exports"]
+    # beta_auto=True vuelve al automático: el falso CFturbo recalcula βB2 y eso NO es una corrección
+    ra = run_batch(str(Path(rb["run_dir"]) / "tb_out.cft"), {"beta_auto": True}, "ta", exports=[])
+    assert ra["realized"]["beta_auto"] == "True" and abs(ra["info"]["dims"]["beta2_hub_deg"] - 32.445) < 0.01, ra["info"]["dims"]
+    assert run_batch("fake", {"beta2_deg": "abc"}, "tbad", exports=[])["status"] == "error"
+    assert _differs("[26.0, 26.0]", "[26.004, 25.999]") is False and _differs("[26.0, 26.0]", "[24.0, 26.0]")
+
     r2 = run_batch("fake", {"d2_mm": 400}, "t2", exports=["StarCCM"])
     assert r2["corrected"]["d2_mm"] == ["0.4", "0.3"], r2["corrected"]  # corrección detectada
     r3 = run_batch("fake", {"noexiste": 1}, "t3")
     assert r3["status"] == "error" and "noexiste" in r3["errors"][0], r3
     assert [x["name"] for x in list_runs(2)] == ["t3", "t2"]
+    assert "curves" not in list_runs(1)[0] and "report" not in list_runs(1, summary=True)[0]
     assert _to_si("AutoUpdate", "false") == "False" and _to_si("x", "TRUE") == "True"
 
     # candado entre procesos: vivo -> CFturboBusy; muerto (pid inexistente) -> se limpia y corre
@@ -930,6 +1370,46 @@ def selftest() -> None:
         (dd / "run.json").write_text(json.dumps({"id": dd.name, "name": dd.name, "status": "ok", "saved_as_version": v}), encoding="utf-8")
         assert [x for x in list_runs(100) if x["id"] == dd.name][0]["saved_as_version"] == expect, v
         shutil.rmtree(dd)
+    # borrar: temporal y versión (la versión deja línea en la bitácora); la que corre no se borra
+    tmp_id = list_runs(1)[0]["id"]
+    assert delete_run(tmp_id)["version"] is False and not any(x["id"] == tmp_id for x in list_runs(100))
+    sv2 = save_version(list_runs(1)[0]["id"], "para_borrar")
+    assert delete_run(sv2["id"]) == {"deleted": "para_borrar", "version": True, "path": str(VERSIONS / "para_borrar")}
+    assert "VERSIÓN BORRADA versions/para_borrar" in (RECIPES / "bitacora.md").read_text(encoding="utf-8")
+    run_d = WORKDIR / "corriendo_1"
+    run_d.mkdir()
+    (run_d / "run.json").write_text(json.dumps({"id": run_d.name, "name": "corriendo", "status": "running", "started": _now()}), encoding="utf-8")
+    lk = acquire_lock("corriendo")
+    try:
+        delete_run(run_d.name)
+        raise AssertionError("no debe borrar la corrida en marcha")
+    except CFturboBusy:
+        pass
+    lk.unlink()
+    shutil.rmtree(run_d)
+    try:
+        delete_run("no_existe")
+        raise AssertionError
+    except FileNotFoundError:
+        pass
+
+    # bomba nueva por semejanza desde la base «fake» (nq 37,3): H ×1,21 -> k = 1,1, d2 = 1,1·206,3
+    sg = suggest_base(227, 84.7, 3600, base="fake")
+    assert sg["base_name"] == "fake" and abs(sg["k"] - 1.1) < 1e-3 and sg["aviso"] is None, sg
+    assert suggest_base(900, 20, 3600, base="fake")["aviso"], "nq ×3 debe avisar"
+    nw = new_project(227, 84.7, 3600, "nueva bomba!", base="fake")
+    assert nw["name"] == "nueva_bomba" and abs(nw["d2_mm"] - 1.1 * 206.3) < 0.01, nw
+    assert "nueva_bomba" in [p["name"] for p in list_projects()]
+    ni = project_info("nueva_bomba")
+    assert abs(ni["dims"]["d2_mm"] - 226.93) < 0.01 and ni["design_point"]["H_m"] == 84.7 and ni["dims"]["AutoUpdate"] == "False", ni
+    assert abs(ni["dims"]["s_mm"] - 3.41) < 1e-6, ni["dims"]  # el espesor también escala
+    try:
+        new_project(227, 84.7, 3600, "nueva_bomba", base="fake")
+        raise AssertionError("debe negarse a pisar un proyecto")
+    except FileExistsError:
+        pass
+    assert run_batch("nueva_bomba", {}, "nueva_1", exports=[])["status"] in ("ok", "warn")
+
     recipe_save("prueba-d2", "# sube d2 para más altura\nd2 +10% => H +20%")
     assert recipe_search("altura d2")[0]["file"] == "prueba-d2.md"
     assert any(h["file"] == "bitacora.md" for h in recipe_search("bomba_v1"))
