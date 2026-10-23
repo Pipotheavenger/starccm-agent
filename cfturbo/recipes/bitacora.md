@@ -16,3 +16,7 @@ Qué se pidió, qué quedó y cómo salió. Las recetas con el porqué van en ar
 - 2026-10-23 07:10 | eval1_d2_218 | base primera-bomba | pedido: d2_mm=218, ext_outlet=False | quedó: d2 218.0, b2 21.46, nBl 6.0, Psi 0.908 | warn (1 avisos)
 - 2026-10-23 07:10 | eval1_d2_218 | base primera-bomba | pedido: d2_mm=218, ext_outlet=False | quedó: d2 218.0, b2 21.46, nBl 6.0, Psi 0.908 | warn (1 avisos) | VERSIÓN GUARDADA versions/eval1_v1
 - 2026-10-23 07:15 | eval1_chat_7al | base primera-bomba | pedido: nBl=7, d2_mm=212, ext_outlet=False, MeanSurface[Mean surface]/Coupled=False | quedó: d2 212.0, b2 21.46, nBl 7.0, Psi 0.908 | ok (0 avisos)
+- 2026-10-23 07:55 | eval2_bloqueada | base primera-bomba | pedido: d2_mm=210 | quedó: d2 210.0, b2 21.46, nBl 6.0, Psi 0.908 | warn (3 avisos)
+- 2026-10-23 07:58 | eval2_d2_2225 | base primera-bomba | pedido: d2_mm=222.5, ext_outlet=False | quedó: d2 222.5, b2 21.46, nBl 6.0, Psi 0.908 | warn (1 avisos)
+- 2026-10-23 07:58 | eval2_d2_2225 | base primera-bomba | pedido: d2_mm=222.5, ext_outlet=False | quedó: d2 222.5, b2 21.46, nBl 6.0, Psi 0.908 | warn (1 avisos) | VERSIÓN GUARDADA versions/eval2_v1
+- 2026-10-23 08:05 | eval2_autoupd_H71 | base primera-bomba | pedido: H_m=71, AutoUpdate=True, ext_outlet=False | quedó: d2 207.8, b2 21.61, nBl 6.0, Psi 0.908 | warn (1 avisos)
