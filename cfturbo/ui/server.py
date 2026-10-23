@@ -342,7 +342,7 @@ class RunReq(BaseModel):
 
     @field_validator("edits")
     @classmethod
-    def _edits(cls, v: dict) -> dict:
+    def _edits_tipos(cls, v: dict) -> dict:
         """Claves numéricas con número (o lista [cubo, corona] en β); booleanas con booleano. Evita
         que un texto en d2_mm llegue a CFturbo y deje una corrida basura."""
         num = ({k for k, (_, u) in cft.ALIASES.items() if u != "bool"} | set(cft.CONV) | {"beta1_deg", "beta2_deg", "s_mm"})
