@@ -14,3 +14,5 @@ Qué se pidió, qué quedó y cómo salió. Las recetas con el porqué van en ar
 - 2026-10-23 06:47 | eval0_7al_desde_v1_fixed | base primera-bomba | pedido: d2_mm=215, nBl=7, ext_outlet=False, MeanSurface[Mean surface]/Coupled=False | quedó: d2 215.0, b2 21.46, nBl 7.0, Psi 0.908 | ok (0 avisos)
 - 2026-10-23 06:49 | v_7alabes | base primera-bomba | pedido: nBl=7, ext_outlet=False, MeanSurface[Mean surface]/Coupled=False | quedó: d2 206.3, b2 21.46, nBl 7.0, Psi 0.908 | ok (0 avisos)
 - 2026-10-23 07:10 | eval1_d2_218 | base primera-bomba | pedido: d2_mm=218, ext_outlet=False | quedó: d2 218.0, b2 21.46, nBl 6.0, Psi 0.908 | warn (1 avisos)
+- 2026-10-23 07:10 | eval1_d2_218 | base primera-bomba | pedido: d2_mm=218, ext_outlet=False | quedó: d2 218.0, b2 21.46, nBl 6.0, Psi 0.908 | warn (1 avisos) | VERSIÓN GUARDADA versions/eval1_v1
+- 2026-10-23 07:15 | eval1_chat_7al | base primera-bomba | pedido: nBl=7, d2_mm=212, ext_outlet=False, MeanSurface[Mean surface]/Coupled=False | quedó: d2 212.0, b2 21.46, nBl 7.0, Psi 0.908 | ok (0 avisos)
