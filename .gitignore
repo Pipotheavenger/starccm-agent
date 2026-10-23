@@ -13,3 +13,4 @@ work/
 projects/*/
 !projects/README.md
 *.cft-res
+.DS_Store
