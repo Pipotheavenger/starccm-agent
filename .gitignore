@@ -1,20 +1,28 @@
+# comunes
 .venv/
-sims/
-cases/*/
-!cases/README.md
+__pycache__/
+*.log
+.env
+.mcp.json
+.DS_Store
+__MACOSX/
+.claude/worktrees/
+
+# starccm/
+starccm/.server.json
+starccm/.server.tmp
+starccm/macros/
+starccm/sims/*
+!starccm/sims/README.md
+starccm/cases/*/
+!starccm/cases/README.md
 *.sim
 *.sim~
 *.dmprj
-*.log
-__pycache__/
-.starccm-agent.env
-.env
-work/
-projects/*/
-!projects/README.md
-*.cft-res
-.DS_Store
-.mcp.json
+
+# cfturbo/
+cfturbo/projects/*/
+!cfturbo/projects/README.md
 cfturbo/versions/*/
-.claude/worktrees/
-__MACOSX/
+work/
+*.cft-res
