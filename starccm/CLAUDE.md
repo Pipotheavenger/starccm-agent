@@ -158,3 +158,6 @@ Turbina: mismo flujo, cambia el signo del momento y el objetivo es potencia extr
   Java está en `doc/client/html`. `StarMacro` y `Simulation` viven en
   `star/lib/java/platform/modules/ext/starbase.jar`; `MeshOperationManager` en `meshing.jar`.
 - 2026-10-23 · El cliente batch por defecto apaga el servidor al acabar la macro: siempre `-noexit`.
+- 2026-10-23 · En 2410 `MonitorManager.export` es `(String, String, Collection<PlotableMonitor>)`;
+  la versión de dos argumentos no existe. La precompilación con `javac` lo detecta en 2 s sin licencia:
+  usarla para validar nombres de API antes de tener el servidor.

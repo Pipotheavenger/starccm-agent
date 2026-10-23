@@ -515,8 +515,11 @@ def iterate(n: int = 100, timeout_s: int = 7200) -> dict:
     body = f"""
 sim.getSimulationIterator().step({int(n)});
 sim.println("ITERATION " + sim.getSimulationIterator().getCurrentIteration());
-sim.getMonitorManager().export("{_jpath(csv)}", ",");
-sim.println("EXPORTED");
+Collection<PlotableMonitor> mons = new ArrayList<>();
+for (Monitor m : sim.getMonitorManager().getObjects())
+  if (m instanceof PlotableMonitor) mons.add((PlotableMonitor) m);
+sim.getMonitorManager().export("{_jpath(csv)}", ",", mons);
+sim.println("EXPORTED " + mons.size());
 """
     with _lock:
         r = _inject(body, timeout=timeout_s)
