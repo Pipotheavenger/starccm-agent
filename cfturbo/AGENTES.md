@@ -77,3 +77,8 @@ En paralelo: el Explorador dejó `explora/desde_cero.py` y `recipes/exploracion-
    `CFTURBO_WORKDIR`/`CFTURBO_VERSIONS` aislados para los casos de 0 y 20 corridas). Una corrida de
    CFturbo a la vez en el PC: el candado global hace esperar a quien llegue segundo.
 6. Si diseño ≥ 9 y funcionalidad ≥ 9 y no hay defectos P1: fin. Si no, ronda k+1 con los defectos.
+
+**Evaluación final (2026-10-23, tras ronda 3 + optimización): DISEÑO 9/10 · FUNCIONALIDAD 9/10.**
+Cifras confirmadas: cambio de corrida 86–151 ms (29–40 ms en caché), 20 STL 60,6 → 11,7 MB, poll 1,2 KB con
+304, sin fugas en el visor, selftest 5 s. Defectos restantes todos P3 (ver `agents/out/eval_final.md`).
+Riesgo conocido: `%TEMP%\cfturbo-agent` es compartida entre sesiones; otra sesión puede borrar corridas.

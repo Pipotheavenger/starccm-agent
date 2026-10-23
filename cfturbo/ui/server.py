@@ -340,6 +340,32 @@ class RunReq(BaseModel):
     exports: list[str] = ["StarCCM", "OpenFOAM"]
     save: bool = True
 
+    @field_validator("edits")
+    @classmethod
+    def _edits(cls, v: dict) -> dict:
+        """Claves numéricas con número (o lista [cubo, corona] en β); booleanas con booleano. Evita
+        que un texto en d2_mm llegue a CFturbo y deje una corrida basura."""
+        num = ({k for k, (_, u) in cft.ALIASES.items() if u != "bool"} | set(cft.CONV) | {"beta1_deg", "beta2_deg", "s_mm"})
+        boolean = {"AutoUpdate", "ext_outlet", "beta_auto"}
+        def is_num(x) -> bool:
+            if isinstance(x, bool):
+                return False
+            if isinstance(x, (int, float)):
+                return True
+            try:
+                float(str(x).replace(",", "."))
+                return True
+            except ValueError:
+                return False
+        for k, val in v.items():
+            if k in num:
+                ok = is_num(val) or (isinstance(val, list) and val and all(is_num(x) for x in val) and k.startswith("beta"))
+                if not ok:
+                    raise ValueError(f"'{k}' necesita un número (recibí {val!r})")
+            elif k in boolean and not (isinstance(val, bool) or str(val).lower() in ("true", "false")):
+                raise ValueError(f"'{k}' necesita true/false (recibí {val!r})")
+        return v
+
     @field_validator("exports")
     @classmethod
     def _exports(cls, v: list[str]) -> list[str]:

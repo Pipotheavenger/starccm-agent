@@ -24,3 +24,8 @@ Qué se pidió, qué quedó y cómo salió. Las recetas con el porqué van en ar
 - 2026-10-23 07:10 | eval1_d2_218 | base primera-bomba | pedido: d2_mm=218, ext_outlet=False | quedó: d2 218.0, b2 21.46, nBl 6.0, Psi 0.91 | warn (1 avisos) | VERSIÓN BORRADA versions/eval1_v1
 - 2026-10-23 06:44 | eval0_d2_215 | base primera-bomba | pedido: d2_mm=215, ext_outlet=False | quedó: d2 215.0, b2 21.46, nBl 6.0, Psi 0.91 | warn (1 avisos) | VERSIÓN BORRADA versions/eval0_v1
 - 2026-10-23 06:18 | v2_d2_220 | base primera-bomba | pedido: d2_mm=220 | quedó: d2 220.0, b2 21.46, nBl 6.0, Psi 0.91 | warn (3 avisos) | VERSIÓN BORRADA versions/bomba_d2_220
+- 2026-10-23 09:29 | evalF_b2_26_22 | base primera-bomba | pedido: beta2_deg=[26, 22], ext_outlet=False | quedó: d2 206.3, b2 21.46, nBl 6.0, Psi 0.91 | warn (1 avisos)
+- 2026-10-23 09:29 | evalF_b2_26_22 | base primera-bomba | pedido: beta2_deg=[26, 22], ext_outlet=False | quedó: d2 206.3, b2 21.46, nBl 6.0, Psi 0.91 | warn (1 avisos) | VERSIÓN GUARDADA versions/evalF_v1
+- 2026-10-23 09:29 | evalF_b2_26_22 | base primera-bomba | pedido: beta2_deg=[26, 22], ext_outlet=False | quedó: d2 206.3, b2 21.46, nBl 6.0, Psi 0.91 | warn (1 avisos) | VERSIÓN BORRADA versions/evalF_v1
+- 2026-10-23 09:34 | evalF_api_tmp | base primera-bomba | pedido: nBl=7 | quedó: d2 206.3, b2 21.46, nBl 7.0, Psi 0.91 | warn (3 avisos)
+- 2026-10-23 09:37 | evalF_nueva_1 | base evalF_nueva | pedido: sin cambios | quedó: d2 216.44, b2 21.21, nBl 6.0, Psi 0.91 | ok (0 avisos)
