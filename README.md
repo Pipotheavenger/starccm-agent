@@ -89,5 +89,7 @@ carpeta). Reiniciar la sesión de Claude Code para que aparezcan las tools.
   cilindro y bomba `cursocfturbo` convergida en el mismo día.
 - 2026-10-23: `starccm/ui/` en cuatro hitos: página base (chat, casos, solver, escena en vivo);
   progreso tipo terminal, árbol del .sim, parámetros → chat, abrir en la GUI; rediseño estilo cliente
-  de STAR-CCM+ con visor 3D three.js y tema claro; confirmaciones dentro de la página. Endpoints
-  verificados contra el solver real salvo la exportación de superficies.
+  de STAR-CCM+ con visor 3D three.js y tema claro; confirmaciones dentro de la página. Por la tarde,
+  recorrido completo del caso `cursocfturbo` desde la página con el solver real: superficies con campo
+  de todas las fronteras, escenas de plano con vectores y de malla, iteraciones con la Salida en vivo,
+  chat y apagado. Solo queda sin probar el salto a la GUI de STAR-CCM+.
