@@ -1,0 +1,11 @@
+.venv/
+sims/
+cases/*/
+!cases/README.md
+*.sim
+*.sim~
+*.dmprj
+*.log
+__pycache__/
+.starccm-agent.env
+.env
