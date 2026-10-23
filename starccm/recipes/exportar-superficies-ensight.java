@@ -9,6 +9,8 @@ java.util.Vector<Region> regs = new java.util.Vector<Region>();
 java.util.Vector<Boundary> bnds = new java.util.Vector<Boundary>();
 for (Region r : sim.getRegionManager().getRegions())
   for (Boundary b : r.getBoundaryManager().getBoundaries()) {
+    // las fronteras de interfaz (rotor/estator) duplican superficies internas: fuera del visor
+    if (b instanceof DirectBoundaryInterfaceBoundary || b.getPresentationName().contains("[")) continue;
     String full = r.getPresentationName() + "/" + b.getPresentationName();
     if (pat.matcher(full).find()) { bnds.add(b); sim.println("BOUNDARY\t" + full); }
   }

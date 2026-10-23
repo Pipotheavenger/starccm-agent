@@ -46,8 +46,23 @@ Criterio de parada cumplido: ΔH 0,10 % y ΔM 0,00 % en 100 iteraciones, continu
 | Balance de masa | 0,000 % (Q_in = −69,486, Q_out = +69,486 kg/s) |
 | y+ en álabes | 1,7 – 56,7 (all-y+) |
 
-Escenas en `images/`: `presion_alabes.png`, `velocidad_plano.png` (z = 30 mm, 0,4–34 m/s), `yplus.png`.
+Escenas en `images/`: `presion_alabes.png`, `velocidad_plano.png` (z = 30 mm, 0,4–34 m/s), `yplus.png`,
+`plano_vectores.png` (mismo plano con vectores de velocidad, receta `escena-plano-vectores.java`) y
+`malla.png` (malla superficial del impulsor, receta `escena-malla-rotor.java`).
 Historial en `reports/convergencia.csv`.
+
+### Continuación del 2026-10-23 por la tarde (desde la interfaz `ui/`)
+
+| iter | H (m) | M (N·m) | η | continuidad |
+|---|---|---|---|---|
+| 500 | 78,77 | 192,50 | 0,8935 | 7,3e-7 |
+| 550 | 78,77 | 192,50 | 0,8935 | 8,2e-7 |
+| 580 | 78,77 | 192,50 | 0,8935 | 8,1e-7 |
+
+Sin cambio en H ni M (< 0,01 %): el caso está convergido. El solver avisa «Reversed flow on 55 faces
+on voluta: outlet»: algo de reflujo en la salida del difusor; no afecta al balance de masa (Q_in = −Q_out).
+Superficies con campo para el visor 3D: `surfaces/superficies/` (17 fronteras sin interfaces: impulsor,
+voluta, tubo de entrada; 187 400 triángulos; presión, presión total, |velocidad|, y+; 10,7 s de export).
 
 ## Tiempos
 

@@ -175,7 +175,7 @@ const unitOf = n => /pressure/i.test(n) ? ' Pa' : /velocity/i.test(n) ? ' m/s' :
 // nombres internos de STAR-CCM+ -> etiqueta legible (lo que no está aquí se muestra tal cual)
 const LABELS = { Pressure: 'Presión', TotalPressure: 'Presión total', VelocityMagnitude: '|Velocidad|', 'Velocity |mag|': '|Velocidad|', WallY: 'y+', WallYplus: 'y+', WallShearStressMagnitude: '|Esfuerzo cortante|', AbsolutePressure: 'Presión absoluta', Temperature: 'Temperatura' };
 const labelOf = n => LABELS[n] || n;
-const OUTER = /shroud|casing|volute|voluta|carcasa|housing|outer|wall$/i;  // superficies que tapan los álabes
+const OUTER = /shroud|casing|volute|voluta|spiral|diffuser|cutwater|carcasa|housing|outer|wall$/i;  // superficies que tapan los álabes
 
 // ---------------------------------------------------------------- superficies con campo (dataset de surfaces.py)
 const PART_COLORS = [0x7f9fc0, 0xc9a66b, 0x8fb98f, 0xb48ead, 0xd08770, 0x88c0d0, 0xa3be8c, 0xebcb8b];
@@ -417,10 +417,11 @@ async function loadProgress() {
   if (m) { const t0 = new Date(m.started * 1000).toLocaleTimeString('es');
     $('macrostate').innerHTML = m.running && st.status.alive ? `Macro <b>${esc(m.file)}</b> en marcha desde ${t0} <span class="tag ok">corriendo</span>` : `Última macro <b>${esc(m.file)}</b> · ${t0}${m.finished ? ' → ' + new Date(m.finished * 1000).toLocaleTimeString('es') : ''} <span class="tag">${m.running ? 'sin salida' : 'terminada'}</span>`; }
   else $('macrostate').textContent = 'Sin macros inyectadas todavía.';
-  const key = `${p.server_log.file}|${p.server_log.size}|${(p.agent_log || []).slice(-1)[0] || ''}|${m?.file}|${m?.out?.length}`;
+  const key = `${p.server_log.file}|${p.server_log.size}|${(p.agent_log || []).slice(-1)[0] || ''}|${m?.file}|${m?.out?.length}|${m?.out?.slice(-1)[0]}`;
   if (key !== prog.key) { prog.key = key;
+    // orden: la macro actual (en vivo: iteraciones, SCENE, SAVED…) primero; debajo el log del servidor y agent.log
     const lines = p.server_log.tail.length ? p.server_log.tail : ['(sin log del servidor todavía)'];
-    $('term').innerHTML = lines.map(hlLine).join('\n') + (m?.out?.length ? `\n\n<span class="hl">--- ${esc(m.file)} salida</span>\n` + m.out.map(hlLine).join('\n') : '') + (p.agent_log.length ? '\n\n<span class="hl">--- agent.log</span>\n' + p.agent_log.map(esc).join('\n') : '');
+    $('term').innerHTML = (m?.out?.length ? `<span class="hl">--- ${esc(m.file)}${m.running ? ' (en marcha)' : ''}</span>\n` + m.out.map(hlLine).join('\n') + '\n\n' : '') + '<span class="hl">--- servidor</span>\n' + lines.map(hlLine).join('\n') + (p.agent_log.length ? '\n\n<span class="hl">--- agent.log</span>\n' + p.agent_log.map(esc).join('\n') : '');
     if ($('progfollow').checked) $('term').scrollTop = 1e9; }
 }
 setInterval(() => { if (st.tab === 'out' && !$('stage').classList.contains('dock-collapsed')) loadProgress(); }, 3000);

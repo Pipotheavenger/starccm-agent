@@ -130,7 +130,11 @@ macro real, 409 correctos. Verificados contra el solver real el 2026-10-23 12:02
 con `cursocfturbo.sim`): `/api/status` vivo, `/api/tree?refresh=1` (9,9 s, regiones estator/rotor/voluta),
 `POST /api/scene` (9,1 s, PNG regenerado), `/api/scenes` (3 escenas), `/api/progress` con la macro y su
 `.out`, `POST /api/server/stop` (guardó 158 MB y apagó), y a las 12:21 `POST /api/surface` (dataset
-real `cases/cursocfturbo/surfaces/superficies`, en el visor). Por probar con el solver real: `/api/open_gui`. Los `confirm()` del navegador no aparecen en el panel
+real `cases/cursocfturbo/surfaces/superficies`, en el visor). Recorrido completo del caso de uso desde
+la página el 2026-10-23 14:10–14:21 (esta sesión, solver real): exportar TODAS las fronteras con campo
+(187 400 triángulos), escenas nuevas de plano con vectores y de malla regeneradas con «↻», 180
+iteraciones con la Salida mostrando las iteraciones en vivo y `convergencia.csv` creciendo, chat con
+`inspect` (4 turnos, 36 s) y apagado con guardado desde el botón (segundo clic). Por probar: `/api/open_gui`. Los `confirm()` del navegador no aparecen en el panel
 embebido de la app: toda confirmación va dentro de la página (segundo clic «¿Seguro?»).
 
 ## Memoria
@@ -240,5 +244,21 @@ Turbina: mismo flujo, cambia el signo del momento y el objetivo es potencia extr
   `cases/cilindro/RESUMEN.md`.
 - 2026-10-23 · `server_start` falló justo después de que otra sesión apagara el servidor (12:23, stop sin
   guardar): el log del servidor dice `Fatal error in MPI_Init_thread … init called when another process
-  has exited without calling init`. Es un fallo transitorio de MPI, no de licencia: esperar unos segundos
-  y reintentar `server_start`; si persiste, comprobar que no queden `starccm+.exe`/`mpiexec` en `tasklist`.
+  has exited without calling init`. Es un fallo transitorio de MPI, no de licencia: el reintento una hora
+  después arrancó en 32,6 s (arranque en frío con el .sim de 158 MB; en caliente 4,5–6 s).
+- 2026-10-23 · Vectores en un plano (`VectorDisplayer`): `getGlyphSettings().setRelativeToModelLength(x)`
+  es un porcentaje (1.0 = invisibles; 6.0 bien), `setSpacingMode(0)` = GEOMETRIC con
+  `getGeometricSpacing().setOnRatio(6)` (una flecha de cada 6 celdas); `setSpacingMode(1)` = UNIFORM.
+  `PartManager` no tiene `getParts()`: recorrer `getObjects()`. Receta `escena-plano-vectores.java`.
+- 2026-10-23 · Fronteras de interfaz (rotor/estator): `b instanceof DirectBoundaryInterfaceBoundary`, y su
+  nombre lleva `[int_…]`. Fuera de las escenas de malla y de la exportación de superficies (duplican
+  discos internos). Con todas las demás (`pattern "."`): 17 fronteras, 187 400 triángulos, 10,7 s.
+- 2026-10-23 · `_inject` escribe el stdout del cliente EN VIVO en `macros/<macro>.out` (antes lo
+  capturaba al final): la pestaña Salida de `ui/` muestra las iteraciones mientras corren; una macro
+  sigue en marcha mientras su `.out` no contiene `AGENT_END`. El log del servidor NO trae las iteraciones.
+- 2026-10-23 · Herramientas de Claude Code corren en serie: para observar la UI mientras el solver itera,
+  lanzar `iterate` con `python -c "import mcp_server…"` en segundo plano **sin sandbox** (el cliente
+  carga las DLL de STAR-CCM+) y sondear `/api/progress` o el navegador mientras tanto.
+- 2026-10-23 · Bomba cursocfturbo a 580 iteraciones: H 78,77 m, M 192,50 N·m, η 0,8935, continuidad 8e-7;
+  aviso «Reversed flow on 55 faces on voluta: outlet» (reflujo en la salida del difusor, balance de masa
+  intacto). Escenas nuevas: `plano_vectores`, `malla`.

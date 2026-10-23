@@ -354,9 +354,12 @@ def progress() -> dict:
         body = m.read_text(encoding="utf-8", errors="replace")
         i, j = body.find("try {"), body.rfind("} catch")
         core = body[i + 5:j].strip() if 0 <= i < j else body
-        out["macro"] = {"file": m.name, "started": int(m.stat().st_mtime), "running": not o.is_file(),
-                        "finished": int(o.stat().st_mtime) if o.is_file() else None,
-                        "body": scc._redact(core)[:1500], "out": _tail_file(o, 8000, 40) if o.is_file() else []}
+        tail = _tail_file(o, 20_000, 80) if o.is_file() else []
+        # el MCP escribe el .out en vivo: la macro sigue en marcha hasta que aparece AGENT_END (o un error del cliente)
+        done = any(("AGENT_END" in ln) or ln.startswith("--- stderr") for ln in tail)
+        out["macro"] = {"file": m.name, "started": int(m.stat().st_mtime), "running": not done and _solver_alive(),
+                        "finished": int(o.stat().st_mtime) if (o.is_file() and done) else None,
+                        "body": scc._redact(core)[:1500], "out": tail[-40:]}
     return out
 
 

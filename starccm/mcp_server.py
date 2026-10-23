@@ -261,21 +261,24 @@ def _inject(body: str, imports: str = "", timeout: float = 3600) -> dict:
         return {"ok": False, "stdout": "", "stderr": "", "exception": "javac: no compila",
                 "trace": err_c, "seconds": round(time.time() - t0, 2), "macro": str(src), "returncode": 1}
     cmd = _starccm_cmd() + ["-host", f"localhost:{st['port']}", "-batch", str(src), "-noexit"] + _lic_flags()
-    try:
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, cwd=str(MACROS),
-                           encoding="utf-8", errors="replace")
-        rc, out, err = r.returncode, r.stdout, r.stderr
-    except subprocess.TimeoutExpired as e:
-        rc, out, err = -1, (e.stdout or ""), f"timeout {timeout}s"
-        if isinstance(out, bytes):
-            out = out.decode("utf-8", "replace")
+    # El stdout del cliente va EN VIVO a <macro>.out (la pestaña Salida de ui/ lo sigue mientras itera);
+    # una macro está en marcha mientras su .out no contiene AGENT_END. La UI enmascara la clave al leerlo.
+    out_file = src.with_suffix(".out")
+    with open(out_file, "w", encoding="utf-8", errors="replace") as fo:
+        try:
+            r = subprocess.run(cmd, stdout=fo, stderr=subprocess.PIPE, text=True, timeout=timeout, cwd=str(MACROS),
+                               encoding="utf-8", errors="replace")
+            rc, err = r.returncode, r.stderr
+        except subprocess.TimeoutExpired as e:
+            rc, err = -1, f"timeout {timeout}s"
+    out = out_file.read_text(encoding="utf-8", errors="replace")
     secs = round(time.time() - t0, 2)
     # Salida de la macro: entre marcadores, del stdout del cliente; si no, del log del servidor.
     text = _between(out, tag)
     if text is None:
         text = _between(_tail_log(st), tag)
     err_match = re.search(r"AGENT_ERROR: (.*)", text or out)
-    (src.with_suffix(".out")).write_text(_redact(out + ("\n--- stderr\n" + err if err else "")), encoding="utf-8")
+    out_file.write_text(_redact(out + ("\n--- stderr\n" + err if err else "")), encoding="utf-8")
     _prune_macros()
     _touch()
     return {

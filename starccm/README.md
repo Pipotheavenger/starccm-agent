@@ -84,10 +84,19 @@ mínimo arriba a la izquierda; por defecto `cursocfturbo`):
 
 Superficies con campo: `POST /api/surface` inyecta la receta (`ImportManager.export(.case, regiones=[],
 fronteras, parts=[], partsurfaces=[], funciones, append=false, dataAtVerts=true)`), convierte el EnSight
-con `surfaces.py` y deja el dataset en `cases/<caso>/surfaces/<nombre>/` (no va a git). Medido con la
-bomba `cursocfturbo` (370 k celdas): 8 fronteras del impulsor, 107 189 triángulos y 4 campos en 13,5 s
-de solver más 0,3 s de conversión. Para ver los álabes, desmarca `Shroud` y `CasingShroud` en el
-árbol o usa el plano de corte.
+con `surfaces.py` y deja el dataset en `cases/<caso>/surfaces/<nombre>/` (no va a git). Las fronteras
+de interfaz quedan fuera (duplican discos internos). Medido con la bomba `cursocfturbo` (370 k celdas),
+patrón `.`: 17 fronteras (impulsor, voluta, tubo de entrada), 187 400 triángulos y 4 campos en 10,7 s de
+solver más 0,3 s de conversión. El botón «Carcasa» deja voluta, shroud y casing al 25 % para ver los
+álabes; también sirven las casillas del árbol y el plano de corte.
+
+Salida en vivo: el MCP escribe el stdout del cliente batch en `macros/<macro>.out` mientras corre, así
+que la pestaña *Salida* muestra las iteraciones (residuales y reportes) en tiempo real y marca la macro
+«en marcha» hasta que aparece `AGENT_END`.
+
+Recorrido completo verificado el 2026-10-23 con el solver real: exportar superficies, regenerar escenas
+(`plano_vectores`, `malla`, recetas `escena-plano-vectores.java` y `escena-malla-rotor.java`), iterar
+viendo la Salida, chat con `inspect`, apagar con guardado desde el botón.
 
 | método y ruta | qué hace |
 |---|---|
