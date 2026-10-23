@@ -1,6 +1,8 @@
-// CFturbo · Controlador — lógica de la página (módulo ES, sin build). Ver agents/out/ux_1.md y ux_2.md.
-// Secciones: utilidades · parámetros y opciones · proyecto base · sondeo · galería · corrida activa (A) ·
-// comparación (B) · dock · chat · visor 3D · miniaturas · tema/atajos · arranque.
+// CFturbo · Controlador — lógica de la página (módulo ES, sin build). Arquitectura y endpoints: ui/README.md.
+// Secciones: utilidades · parámetros y opciones · proyecto base · bomba nueva · sondeo · galería · corrida activa (A) ·
+// comparación (B) · curvas · dock · chat · visor 3D · miniaturas · tema/atajos · arranque.
+// Datos: /api/poll (cada 3 s, ETag: 304 si nada cambió) trae la fila ligera de cada corrida para la galería;
+// el run.json completo de la activa y de B llega de /api/runs/{id}; los STL del visor, en binario de /stl/.
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { STLLoader } from 'three/addons/loaders/STLLoader.js';
@@ -20,8 +22,10 @@ const st = {
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 // Separador decimal: coma en TODA la interfaz (tabla, placeholders, comparar, duraciones). Los inputs aceptan coma o punto.
 const fmt = (x, d = 1) => x == null || x === '' || isNaN(+x) ? '–' : (+x).toFixed(d).replace('.', ',');
-const fmtIn = (x, d = 1) => x == null || x === '' || isNaN(+x) ? '' : (+x).toFixed(d).replace('.', ',');
+const fmtIn = (x, d = 1) => { const s = fmt(x, d); return s === '–' ? '' : s; };  // para value/placeholder
 const parseNum = v => { const s = String(v).trim().replace(',', '.'); return s === '' ? null : +s; };
+// mismo criterio que mcp_server.safe_name: lo que no sea [A-Za-z0-9_-] pasa a «_»
+const safeName = s => String(s || '').trim().replace(/[^A-Za-z0-9_-]+/g, '_').replace(/^_+|_+$/g, '');
 const MESES = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
 const fdate = iso => { const d = new Date(iso); return isNaN(d) ? '' : `${d.getDate()} ${MESES[d.getMonth()]} ${iso.slice(11, 16)}`; };
 const elapsed = iso => Math.max(0, Math.round((Date.now() - new Date(iso)) / 1000));
@@ -38,15 +42,18 @@ function savedTag(r, short = false) {
 }
 const runLabel = r => r ? (r.saved ? r.id : r.name) : '';
 const fileUrl = (r, f) => `/files/${encodeURIComponent(r.id)}/${encodeURIComponent(f)}`;
-const api = async (url, body, timeoutMs = 0, method = '') => {
-  const ctl = timeoutMs ? new AbortController() : null, t = ctl && setTimeout(() => ctl.abort(), timeoutMs);
+const thumbUrl = r => `${fileUrl(r, 'thumb.png')}?v=${r.thumb}`;
+// fetch con tiempo límite; error con .status y el «detail» del servidor (siempre texto). 304 no es error.
+async function request(url, { body, method = '', timeout = 0, headers = {} } = {}) {
+  const ctl = timeout ? new AbortController() : null, t = ctl && setTimeout(() => ctl.abort(), timeout);
   try {
-    const opt = body === undefined ? (method ? { method } : {}) : { method: method || 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) };
+    const opt = body === undefined ? { method: method || 'GET', headers } : { method: method || 'POST', headers: { 'content-type': 'application/json', ...headers }, body: JSON.stringify(body) };
     const r = await fetch(url, ctl ? { ...opt, signal: ctl.signal } : opt);
-    if (!r.ok) { let d = r.status; try { d = (await r.json()).detail || d; } catch {} const e = new Error(d); e.status = r.status; throw e; }
-    return r.json();
+    if (!r.ok && r.status !== 304) { let d = r.status; try { d = (await r.json()).detail || d; } catch {} const e = new Error(d); e.status = r.status; throw e; }
+    return r;
   } finally { clearTimeout(t); }
-};
+}
+const api = (url, body, timeout = 0, method = '') => request(url, { body, timeout, method }).then(r => r.json());
 
 // ---------------------------------------------------------------- avisos flotantes
 let toastT = 0;
@@ -80,7 +87,7 @@ const PARAMS = [
 ];
 // nombre por defecto: <proyecto>_<n> con n = siguiente libre (no «v2» fijo)
 function defaultName() {
-  const p = (st.project || 'corrida').replace(/[^A-Za-z0-9_-]+/g, '_'), rx = new RegExp('^' + p + '_(\\d+)$');
+  const p = safeName(st.project) || 'corrida', rx = new RegExp('^' + p + '_(\\d+)$');
   const n = Math.max(0, ...st.runs.map(r => +(rx.exec(r.name || '') || [0, 0])[1])) + 1;
   return `${p}_${n}`;
 }
@@ -131,7 +138,7 @@ function nqNew() {
   const e = paramEdits(), src = fromRun() && st.run?.info ? st.run.info : st.info;
   const Q = e.Q_m3h ?? src?.design_point?.Q_m3h, H = e.H_m ?? src?.design_point?.H_m, n = e.n_rpm ?? src?.design_point?.n_rpm;
   if (!(Q > 0 && H > 0 && n > 0)) { $('nqnew').textContent = '–'; $('nqtipo').textContent = ''; return; }
-  const v = n * Math.sqrt(Q / 3600) / Math.pow(H, .75);
+  const v = n * Math.sqrt(Q / 3600) / Math.pow(H, .75);  // bandas = mcp_server.nq_calc (en vivo, sin petición): cambiar las dos
   const tipo = v < 10 ? 'radial muy lenta' : v < 30 ? 'radial lenta' : v < 50 ? 'radial normal' : v < 80 ? 'radial rápida / semiaxial' : v < 160 ? 'flujo mixto' : 'axial';
   $('nqnew').textContent = fmt(v); $('nqtipo').textContent = tipo; const c = $('nqcell'); if (c) c.textContent = fmt(v);
 }
@@ -290,7 +297,7 @@ $('newbtn').onclick = openNew;
 $('newclose').onclick = $('newcancel').onclick = () => $('newdlg').close();
 $('newform').addEventListener('submit', async ev => {
   ev.preventDefault();
-  const v = nVals(), name = ($('nName').value.trim() || autoName()).replace(/[^A-Za-z0-9_-]+/g, '_');
+  const v = nVals(), name = safeName($('nName').value || autoName());
   if (!(v.Q > 0 && v.H > 0 && v.n > 0) || !name) return;
   $('newok').disabled = true; $('newok').textContent = 'Creando…';
   try {
@@ -307,37 +314,43 @@ $('newform').addEventListener('submit', async ev => {
 });
 
 // ---------------------------------------------------------------- sondeo con reconexión
-// UNA petición (/api/poll) cada 3 s, con tiempo límite (AbortController) y nunca dos a la vez.
-// Si falla: banda roja con cuenta atrás real y reintentos a 4 → 8 → 16 → 30 s (≤ 4 errores de red en 40 s).
+// UNA petición (/api/poll) cada 3 s, con tiempo límite (AbortController) y nunca dos a la vez. Con ETag: si nada
+// cambió el servidor responde 304 sin cuerpo y la página no repinta nada (los contadores los lleva tickClock).
+// Si falla: banda roja con cuenta atrás real y reintentos a 4 → 8 → 16 → 30 s (≤ 4 errores de red en 40 s);
+// si el servidor responde con error (500…) la banda lo dice en vez de «sin conexión».
 const BACKOFF = [4, 8, 16, 30];
-let pollT = 0, pollBusy = false;
+let pollT = 0, pollBusy = false, pollTag = '';
 function schedule(s) { clearTimeout(pollT); pollT = setTimeout(poll, s * 1000); }
 function pollNow() { clearTimeout(pollT); poll(); }
 async function poll() {
   if (pollBusy) return; pollBusy = true;
   try {
-    const j = await api('/api/poll?limit=40', undefined, 8000);
+    const r = await request('/api/poll?limit=40', { timeout: 8000, headers: pollTag ? { 'If-None-Match': pollTag } : {} });
     if (!st.online) goOnline();
-    st.status = j.status;
-    $('gcount').title = `Temporales: quedan las ${j.status.keep_tmp ?? 8} últimas (${j.status.workdir || ''}). ★ Guardar las conserva en versions/`;
-    onRuns(j.runs); renderStatus();
+    if (r.status !== 304) {
+      const j = await r.json(); pollTag = r.headers.get('ETag') || '';
+      if (st.status.workdir !== j.status.workdir || st.status.keep_tmp !== j.status.keep_tmp)
+        $('gcount').title = `Temporales: quedan las ${j.status.keep_tmp ?? 8} últimas (${j.status.workdir || ''}). ★ Guardar las conserva en versions/`;
+      st.status = j.status;
+      onRuns(j.runs); renderStatus();
+    }
     schedule(3);
-  } catch {
-    st.failures++; goOffline();
+  } catch (e) {
+    st.failures++; goOffline(e.status ? `El servidor local respondió con error (${e.status}: ${e.message}).` : '');
   } finally { pollBusy = false; }
 }
-function goOffline() {
-  st.online = false;
+function goOffline(why = '') {
+  st.online = false; st.offlineWhy = why; pollTag = '';
   const s = BACKOFF[Math.min(st.failures - 1, BACKOFF.length - 1)];
   st.retryAt = Date.now() + s * 1000;
   $('offline').hidden = false; renderOffline();
-  $('status').innerHTML = '<span class="dot off"></span><span>Sin conexión</span>';
+  $('status').innerHTML = `<span class="dot off"></span><span>${why ? 'Error del servidor' : 'Sin conexión'}</span>`;
   schedule(s);
 }
 function renderOffline() {
   if (st.online) return;
   const s = Math.max(0, Math.ceil((st.retryAt - Date.now()) / 1000));
-  $('offlinetxt').textContent = s ? `Sin conexión con el servidor local. Reintento en ${s} s.` : 'Sin conexión con el servidor local. Reintentando…';
+  $('offlinetxt').textContent = `${st.offlineWhy || 'Sin conexión con el servidor local.'} ${s ? `Reintento en ${s} s.` : 'Reintentando…'}`;
 }
 function goOnline() {
   const was = st.failures > 0; st.online = true; st.failures = 0; $('offline').hidden = true;
@@ -381,12 +394,11 @@ function onRuns(runs) {
 function notifyFinished(runs) {
   for (const r of runs) {
     if (st.prevStatus.get(r.id) !== 'running' || r.status === 'running') continue;
-    const nw = (r.warnings || []).length;
-    const msg = r.status === 'ok' ? `${r.name} terminó: OK` : r.status === 'warn' ? `${r.name} terminó con ${plural(nw, 'aviso')}` : `${r.name} falló: ${(r.errors || [''])[0]}`;
+    const msg = r.status === 'ok' ? `${r.name} terminó: OK` : r.status === 'warn' ? `${r.name} terminó con ${plural(r.n_warn, 'aviso')}` : `${r.name} falló: ${r.error || ''}`;
     const kind = r.status === 'error' ? 'err' : r.status === 'warn' ? 'warn' : 'ok';
     toast(msg, kind === 'err' ? 'error' : kind);
     runMsg(msg, kind, 8000);
-    if (r.status === 'error' && r.edits?.AutoUpdate && $('autoupd').checked) { $('autoupd').checked = false; onEdit(); }
+    if (r.status === 'error' && r.autoupdate && $('autoupd').checked) { $('autoupd').checked = false; onEdit(); }
   }
 }
 // selección automática: salta a una corrida NUEVA salvo que el usuario haya fijado otra (entonces solo avisa).
@@ -410,21 +422,21 @@ let gallerySig = '';
 function thumbHtml(r) {
   if (r.status === 'running') return `<div class="thumb loading" data-started="${esc(r.started)}">Corriendo… ${elapsed(r.started)} s</div>`;
   if (r.status === 'error') return `<div class="thumb err">✕<br>Sin geometría</div>`;
-  if (r.thumb) return `<div class="thumb"><img alt="" loading="lazy" src="/files/${encodeURIComponent(r.id)}/thumb.png?v=${r.thumb}"></div>`;
+  if (r.thumb) return `<div class="thumb"><img alt="" loading="lazy" decoding="async" src="${thumbUrl(r)}"></div>`;
   if (r.n_stl === 0) return `<div class="thumb"><span><span class="ini">${esc(runLabel(r).slice(0, 3))}</span><br>Sin STL para el visor</span></div>`;
   return `<div class="thumb"><span>Sin miniatura<br>se crea al abrirla</span></div>`;
 }
 function cardHtml(r, focusId) {
-  const d = r.info?.dims || {}, a = st.run?.id === r.id, b = st.runB?.id === r.id, nw = (r.warnings || []).length;
+  const a = st.run?.id === r.id, b = st.runB?.id === r.id, nw = r.n_warn;
   return `<div class="card-run${b ? ' is-b' : ''}${versionExists(r.saved_as_version) ? ' dim' : ''}" role="option" tabindex="${r.id === focusId ? 0 : -1}" aria-selected="${a}" data-id="${esc(r.id)}" title="${esc(runLabel(r))} · ${esc(fdate(r.started || ''))} · clic: ver · Ctrl+clic: comparar como B">
     ${thumbHtml(r)}${r.saved ? '<span class="ribbon" aria-hidden="true">★</span>' : ''}
     ${a ? '<span class="ab">A</span>' : b ? '<span class="ab b">B</span>' : `<button class="cmpbtn" tabindex="-1" title="Comparar con la activa (Ctrl+clic)" aria-label="Comparar ${esc(runLabel(r))} con la activa">⇄</button>`}
     ${r.status === 'running' ? '' : `<button class="delbtn" tabindex="-1" title="Borrar${r.saved ? ' la versión' : ''} (Supr)" aria-label="Borrar ${esc(runLabel(r))}">🗑</button>`}
     ${st.confirmDel === r.id ? `<div class="delask" role="alertdialog" aria-label="¿Borrar ${esc(runLabel(r))}?"><span>¿Borrar${r.saved ? ' versión' : ''}?</span><span class="btns"><button class="sm danger" data-del="yes">Sí</button><button class="sm" data-del="no">No</button></span></div>` : ''}
     <div class="meta"><span class="name">${esc(runLabel(r))}</span>
-      <span class="sub"><span>${esc(fdate(r.started || ''))}</span><span>d2 ${fmt(d.d2_mm)}</span><span>z ${d.nBl ?? '–'}</span></span>
+      <span class="sub"><span>${esc(fdate(r.started || ''))}</span><span>d2 ${fmt(r.d2_mm)}</span><span>z ${r.nBl ?? '–'}</span></span>
       <span class="row">${tag(r)}${savedTag(r)}${nw ? `<span class="chipw" title="${plural(nw, 'aviso')}">⚠ ${nw}</span>` : ''}</span>
-      ${r.status === 'error' && r.errors?.length ? `<span class="errline" title="${esc(r.errors[0])}">${esc(r.errors[0])}</span>` : ''}
+      ${r.status === 'error' && r.error ? `<span class="errline" title="${esc(r.error)}">${esc(r.error)}</span>` : ''}
     </div></div>`;
 }
 function renderFilterCounts() {
@@ -475,6 +487,7 @@ async function deleteRun(id) {
   toast(`${row?.saved ? 'Versión borrada' : 'Corrida borrada'}: ${label}`, 'ok');
   st.runs = st.runs.filter(r => r.id !== id);
   if (st.runB?.id === id) clearB();
+  dropGeo(id);
   if (st.run?.id === id) { st.run = null; st.loadedKey = ''; if (next) { st.pinned = true; selectRun(next.id); } else { renderActive(); loadGeometry(null); } }
   renderGallery(true); pollNow();
   setTimeout(() => document.querySelector('.card-run[tabindex="0"]')?.focus(), 0);
@@ -721,7 +734,7 @@ function interp(xs, ys, x) {
   return y0 == null || y1 == null ? null : y0 + (y1 - y0) * (x - x0) / ((x1 - x0) || 1);
 }
 const curveSeries = () => [[st.run, 'a'], [st.runB, 'b']].filter(([r]) => r?.curves?.Q_m3h?.length);
-const curveCtx = [];  // por SVG pintado: escalas y series, para el puntero
+const curveCtx = { tab: [], cmp: [] };  // por zona y SVG pintado: escalas y series, para el puntero (se vacía al repintar la zona)
 function chartSvg(ch, scope) {
   const ser = curveSeries().filter(([r]) => r.curves[ch.k]);
   if (!ser.length) return '';
@@ -739,8 +752,8 @@ function chartSvg(ch, scope) {
       + (dv != null ? `<circle class="dp ${c}" cx="${X(dq)}" cy="${Y(dv)}" r="4"><title>Diseño ${runLabel(r)}: Q ${fmt(dq)} m³/h · ${ch.s} ${fmt(dv, ch.d)} ${ch.u}</title></circle>` : '') : '';
     return `<path class="ln ${c}" d="${d}"/>${mark}`;
   }).join('');
-  const id = curveCtx.push({ ch, ser, X, Y, x0, x1, scope, W: CW, H: CH }) - 1;
-  return `<figure class="chart"><svg viewBox="0 0 ${CW} ${CH}" width="${CW}" height="${CH}" role="img" aria-label="${ch.t}" data-cc="${id}">
+  const id = curveCtx[scope].push({ ch, ser, X, Y, x0, x1, W: CW, H: CH }) - 1;
+  return `<figure class="chart"><svg viewBox="0 0 ${CW} ${CH}" width="${CW}" height="${CH}" role="img" aria-label="${ch.t}" data-scope="${scope}" data-cc="${id}">
     <text class="ax" x="${M.l}" y="10">${ch.s} ${ch.u}</text><text class="ax" x="${CW - M.r}" y="${CH - 4}" text-anchor="end">Q m³/h</text>
     ${grid}<line class="axis" x1="${M.l}" x2="${M.l}" y1="${M.t}" y2="${CH - M.b}"/><line class="axis" x1="${M.l}" x2="${CW - M.r}" y1="${CH - M.b}" y2="${CH - M.b}"/>
     ${lines}<g class="hv"></g><rect class="hit" x="${M.l}" y="${M.t}" width="${CW - M.l - M.r}" height="${CH - M.t - M.b}"/></svg></figure>`;
@@ -754,11 +767,14 @@ function sizeCharts(n, maxW = 9999) {
   const avail = dock.clientHeight - 36 - 52;
   CH = cols >= n && avail > 0 ? Math.max(170, Math.min(260, avail)) : 200;
 }
-function curvesHtml(idx = [0, 1, 2], scope = 'tab') { sizeCharts(idx.length, scope === 'cmp' ? 300 : 9999); return idx.map(i => chartSvg(CHARTS[i], scope)).join(''); }
+function curvesHtml(idx = [0, 1, 2], scope = 'tab') {
+  curveCtx[scope] = []; sizeCharts(idx.length, scope === 'cmp' ? 300 : 9999);
+  return idx.map(i => chartSvg(CHARTS[i], scope)).join('');
+}
 // puntero: línea vertical y valores de A y B al caudal bajo el ratón (o el dedo)
 function bindCurves(root) {
   for (const svg of root.querySelectorAll('svg[data-cc]')) {
-    const c = curveCtx[+svg.dataset.cc], hv = svg.querySelector('.hv');
+    const c = curveCtx[svg.dataset.scope][+svg.dataset.cc], hv = svg.querySelector('.hv');
     const move = e => {
       const p = svg.getBoundingClientRect(), xpx = (e.clientX - p.left) / p.width * c.W;
       const q = c.x0 + (xpx - M.l) / (c.W - M.l - M.r) * (c.x1 - c.x0);
@@ -774,7 +790,6 @@ function bindCurves(root) {
 }
 function renderCurves() {
   const A = st.run, B = st.runB, el = $('curves');
-  if (curveCtx.length > 200) curveCtx.length = 0;  // los SVG viejos ya no están en el DOM
   if (!A?.curves?.Q_m3h?.length) {
     el.innerHTML = `<div class="cmp-empty" title="Las corridas anteriores a la ronda 3 no exportaban PerformanceData">${A ? 'Sin curvas en esta corrida' : '–'}</div>`; return;
   }
@@ -934,8 +949,9 @@ for (const b of document.querySelectorAll('.quick button[data-q]')) b.onclick = 
 st.session = LS.get('cft_session'); if (st.session) $('chatstate').textContent = `sesión ${st.session.slice(0, 8)} (continúa)`;
 
 // ---------------------------------------------------------------- visor 3D
-// Render bajo demanda (dirty) con rAF y respaldo a 30 fps por si la pestaña no anima;
-// el canvas va en posición absoluta y la barra de piezas encima con z-index.
+// Render bajo demanda: render() pide UN frame; mientras OrbitControls amortigua (update() da true) se piden más y,
+// quieto, no hay bucle. Si el rAF no corre (pestaña oculta) un setTimeout pinta igual (lección: cámara sin orientar).
+// El canvas va en posición absoluta y la barra de piezas encima con z-index.
 const V = $('viewer');
 const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true }); V.appendChild(renderer.domElement);
 const scene = new THREE.Scene();
@@ -943,13 +959,20 @@ const cssVar = n => getComputedStyle(document.documentElement).getPropertyValue(
 const applyBg = () => { scene.background = new THREE.Color(cssVar('--viewer-bg') || '#0b1016'); render(); };
 const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 100000);
 const controls = new OrbitControls(camera, renderer.domElement); controls.enableDamping = true; controls.dampingFactor = .12;
-let dirty = true, lastTick = 0;
-const render = () => { dirty = true; };
+let frame = 0, frameT = 0, renders = 0;
+function tick() {
+  cancelAnimationFrame(frame); clearTimeout(frameT); frame = 0;
+  const moving = controls.update();  // con amortiguación sigue moviéndose unos frames tras soltar
+  renderer.render(scene, camera); renders++;
+  if (moving) render();
+}
+function render() {
+  if (frame) return;
+  frame = requestAnimationFrame(tick);
+  frameT = setTimeout(tick, 100);  // respaldo si el rAF no llega
+}
 controls.addEventListener('change', render);
 controls.addEventListener('start', () => setViewPressed(null));  // el usuario orbita: ya no hay vista predefinida activa
-function tick() { lastTick = performance.now(); if (controls.update()) dirty = true; if (dirty) { renderer.render(scene, camera); dirty = false; } }
-(function raf() { requestAnimationFrame(raf); tick(); })();
-setInterval(() => { if (performance.now() - lastTick > 40) tick(); }, 33);  // respaldo si el rAF no corre
 scene.add(new THREE.HemisphereLight(0xffffff, 0x334455, 1.6));
 const dl = new THREE.DirectionalLight(0xffffff, 1.8); dl.position.set(1, 1, 2); scene.add(dl);
 const dl2 = new THREE.DirectionalLight(0xffffff, 0.8); dl2.position.set(-1, -2, -1); scene.add(dl2);
@@ -968,12 +991,32 @@ const COLORS = { Stator: 0x7aa2f7, Impeller: 0xff9e64, Volute: 0x9ece6a, ext: 0x
 const colorFor = c => c.includes('ext') ? COLORS.ext : c.includes('Impeller') ? COLORS.Impeller : c.includes('Volute') ? COLORS.Volute : COLORS.Stator;
 const isCap = g => /inflow|outflow/i.test(g.boundary || '');
 const loader = new STLLoader();
-const stlUrl = (r, g) => `/files/${encodeURIComponent(r.id)}/${encodeURIComponent(g.file)}`;
+// /stl/ sirve el STL en binario (5× menos que el ASCII de CFturbo y sin parsear texto); /files/ queda para descargar
+const stlUrl = (r, g) => `/stl/${encodeURIComponent(r.id)}/${encodeURIComponent(g.file)}`;
+
+// Caché de geometrías por corrida (LRU): volver a una corrida no recarga sus STL. Se conservan la A, la B y las
+// GEO_KEEP últimas vistas; las demás se liberan de la GPU (dispose). Los materiales son de cada malla y se liberan
+// al quitarla del visor.
+const GEO_KEEP = 3, geoCache = new Map();  // id -> Map(archivo -> Promise<BufferGeometry|null>), la más reciente al final
+function stlGeometry(r, g) {
+  let m = geoCache.get(r.id);
+  if (m) geoCache.delete(r.id); else m = new Map();
+  geoCache.set(r.id, m);
+  if (!m.has(g.file)) m.set(g.file, new Promise(res => loader.load(stlUrl(r, g), bg => { bg.computeVertexNormals(); res(bg); }, undefined, () => { m.delete(g.file); res(null); })));
+  return m.get(g.file);
+}
+function dropGeo(id) { for (const p of geoCache.get(id)?.values() || []) p.then(g => g?.dispose()); geoCache.delete(id); }
+function pruneGeo() {
+  const keep = new Set([st.run?.id, st.runB?.id]), old = [...geoCache.keys()].filter(id => !keep.has(id));
+  for (const id of old.slice(0, Math.max(0, old.length - GEO_KEEP))) dropGeo(id);
+}
+function clearGroup(g) { for (const m of g.children) m.material?.dispose(); g.clear(); }
+
 function vEmpty(html) { $('vempty').innerHTML = html; $('vempty').hidden = !html; const a = $('vempty').querySelector('a'); if (a) a.onclick = e => { e.preventDefault(); openTab('events'); }; }
 let geoSeq = 0;
 async function loadGeometry(r) {
   const seq = ++geoSeq;
-  group.clear(); st.meshes.clear(); render();
+  clearGroup(group); st.meshes.clear(); render();
   const geo = (r?.geometry || []).filter(g => g.kind === 'stl');
   if (!geo.length) {
     $('vtools').innerHTML = '';
@@ -981,7 +1024,7 @@ async function loadGeometry(r) {
     else if (r.status === 'running') { vEmpty('CFturbo trabajando…'); $('vmsg').textContent = `${runLabel(r)} · corriendo`; }
     else if (r.status === 'error') { vEmpty('Error, sin geometría · <a href="#">ver hitos</a>'); $('vmsg').textContent = `${runLabel(r)} · error`; }
     else { vEmpty('Sin STL <span class="mut" title="Vuelve a correrla con Exportar › STL">(no exportado)</span>'); $('vmsg').textContent = `${runLabel(r)} · sin STL`; }
-    renderRunbar(); return;
+    renderRunbar(); pruneGeo(); return;
   }
   vEmpty('');
   $('vmsg').textContent = `Cargando 0/${geo.length} superficies…`;
@@ -992,17 +1035,18 @@ async function loadGeometry(r) {
   $('caps').onchange = e => { st.showCaps = e.target.checked; applyVis(); };
   renderOverlayToggle();
   let n = 0;
-  await Promise.all(geo.map(g => new Promise(res => loader.load(stlUrl(r, g), bg => {
-    if (seq !== geoSeq) return res();
-    bg.computeVertexNormals();
+  await Promise.all(geo.map(g => stlGeometry(r, g).then(bg => {
+    if (seq !== geoSeq || !bg) return;
     const m = new THREE.Mesh(bg, new THREE.MeshStandardMaterial({ color: colorFor(g.component), metalness: .1, roughness: .6, side: THREE.DoubleSide, transparent: !g.component.includes('Impeller'), opacity: g.component.includes('Impeller') ? 1 : .7 }));
-    m.userData = g; group.add(m); st.meshes.set(g.file, m); n++; $('vmsg').textContent = `Cargando ${n}/${geo.length} superficies…`; render(); res();
-  }, undefined, () => res()))));
+    m.userData = g; group.add(m); st.meshes.set(g.file, m); n++; $('vmsg').textContent = `Cargando ${n}/${geo.length} superficies…`; render();
+  })));
   if (seq !== geoSeq) return;
-  applyVis(); fit();
+  pruneGeo(); applyVis(); fit();
   $('vmsg').textContent = `${runLabel(r)} · ${comps.join(', ')}`;
   renderRunbar();
-  captureThumb(r).then(done => done || !r.thumb ? done : thumbIsDark(r).then(dark => dark && captureThumb(r, false, true))).catch(() => {});
+  // la miniatura automática espera a que el navegador esté libre: primero se ve la geometría
+  const idle = window.requestIdleCallback || (f => setTimeout(f, 200));
+  idle(() => captureThumb(r).then(done => done || !r.thumb ? done : thumbIsDark(r).then(dark => dark && captureThumb(r, false, true))).catch(() => {}), { timeout: 2000 });
 }
 function applyVis() {
   const on = new Set([...$('vtools').querySelectorAll('input[data-c]:checked')].map(i => i.dataset.c));
@@ -1017,12 +1061,13 @@ function renderOverlayToggle() {
   if ($('ovb')) $('ovb').onchange = e => setOverlay(e.target.checked);
 }
 async function loadOverlay() {
-  const seq = ++ovSeq; groupB.clear(); render();
-  const B = st.runB; if (!B || !st.overlayB) return;
+  const seq = ++ovSeq; groupB.children[0]?.material.dispose(); groupB.clear(); render();  // un material compartido
+  const B = st.runB; if (!B || !st.overlayB) { pruneGeo(); return; }
   const geo = (B.geometry || []).filter(g => g.kind === 'stl' && !g.component.includes('ext') && !isCap(g));
   const mat = new THREE.MeshBasicMaterial({ color: new THREE.Color(cssVar('--cmp') || '#2dd4bf'), wireframe: true, transparent: true, opacity: .35, depthWrite: false });
-  await Promise.all(geo.map(g => new Promise(res => loader.load(stlUrl(B, g), bg => { if (seq === ovSeq) groupB.add(new THREE.Mesh(bg, mat)); res(); }, undefined, () => res()))));
-  if (seq === ovSeq) { fit(st.view || 'iso'); if (!geo.length) toast('La corrida B no tiene STL para superponer', 'warn'); }
+  await Promise.all(geo.map(g => stlGeometry(B, g).then(bg => { if (seq === ovSeq && bg) groupB.add(new THREE.Mesh(bg, mat)); })));
+  if (seq !== ovSeq) { mat.dispose(); return; }
+  pruneGeo(); fit(st.view || 'iso'); if (!geo.length) toast('La corrida B no tiene STL para superponer', 'warn');
 }
 // Vistas: iso = la de siempre; axial mira a lo largo de z (eje de la bomba en CFturbo); lateral con z horizontal.
 // camera.up se deja en +y porque OrbitControls fija su orientación al crearse.
@@ -1065,7 +1110,7 @@ function thumbIsDark(r) {
     img.onload = () => { try { const c = document.createElement('canvas'); c.width = c.height = 1; const x = c.getContext('2d');
       x.drawImage(img, 0, 0, 1, 1, 0, 0, 1, 1); const [R, G, B] = x.getImageData(0, 0, 1, 1).data; res((R + G + B) / 3 < 110); } catch { res(false); } };
     img.onerror = () => res(false);
-    img.src = `/files/${encodeURIComponent(r.id)}/thumb.png?v=${r.thumb}`;
+    img.src = thumbUrl(r);
   });
 }
 async function captureThumb(r, current = false, force = false) {
@@ -1149,5 +1194,5 @@ $('opts').open = LS.get('cft_opts_open') != null ? LS.get('cft_opts_open') === '
 $('optsum').addEventListener('click', () => setTimeout(() => LS.set('cft_opts_open', $('opts').open ? '1' : '0')));
 setDensity(st.compact); placeQuick(); setViewPressed(null);
 renderCompare(); renderActive(); applyExtDefault();
-window.__cft = { st, group, groupB, camera, controls, scene, fit, renderer, captureThumb, selectRun, setB, clearB, setOverlay, poll, renderCurves, deleteRun, askDelete };
+window.__cft = { st, group, groupB, camera, controls, scene, fit, renderer, captureThumb, selectRun, setB, clearB, setOverlay, poll, renderCurves, deleteRun, askDelete, geoCache, renders: () => renders };
 loadProjects(); poll();
