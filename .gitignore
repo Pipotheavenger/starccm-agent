@@ -9,3 +9,7 @@ cases/*/
 __pycache__/
 .starccm-agent.env
 .env
+work/
+projects/*/
+!projects/README.md
+*.cft-res
