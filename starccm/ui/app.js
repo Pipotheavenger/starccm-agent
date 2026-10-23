@@ -193,7 +193,9 @@ async function loadDatasets() {
   $('b-geo').textContent = st.datasets.length || '';
   if (!st.datasets.length) { dsel.innerHTML = 'Sin superficies exportadas.'; $('vempty').hidden = false; return; }
   dsel.innerHTML = `<select id="dsel" aria-label="Dataset">${st.datasets.map(d => `<option value="${esc(d.name)}">${esc(d.name)} · ${new Date(d.mtime * 1000).toLocaleString('es', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}</option>`).join('')}</select>`;
-  const want = LS.get('scc_ds_' + st.case); const pick = st.datasets.find(d => d.name === want) || st.datasets[0];
+  // por defecto el más nuevo que no sea «demo» (el sintético de prueba), salvo preferencia guardada
+  const want = LS.get('scc_ds_' + st.case);
+  const pick = (want && want !== 'demo' && st.datasets.find(d => d.name === want)) || st.datasets.find(d => d.name !== 'demo') || st.datasets[0];
   $('dsel').value = pick.name; $('dsel').onchange = () => loadDataset(st.datasets.find(d => d.name === $('dsel').value));
   await loadDataset(pick);
 }

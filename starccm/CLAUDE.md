@@ -129,8 +129,8 @@ volar a una frontera, pestañas de escena, corte), chat con `server_status` (10 
 macro real, 409 correctos. Verificados contra el solver real el 2026-10-23 12:02 (otra sesión, servidor
 con `cursocfturbo.sim`): `/api/status` vivo, `/api/tree?refresh=1` (9,9 s, regiones estator/rotor/voluta),
 `POST /api/scene` (9,1 s, PNG regenerado), `/api/scenes` (3 escenas), `/api/progress` con la macro y su
-`.out`, `POST /api/server/stop` (guardó 158 MB y apagó). Por probar con el solver real: `/api/surface`
-(la receta compila con javac) y `/api/open_gui`. Los `confirm()` del navegador no aparecen en el panel
+`.out`, `POST /api/server/stop` (guardó 158 MB y apagó), y a las 12:21 `POST /api/surface` (dataset
+real `cases/cursocfturbo/surfaces/superficies`, en el visor). Por probar con el solver real: `/api/open_gui`. Los `confirm()` del navegador no aparecen en el panel
 embebido de la app: toda confirmación va dentro de la página (segundo clic «¿Seguro?»).
 
 ## Memoria
@@ -230,6 +230,11 @@ Turbina: mismo flujo, cambia el signo del momento y el objetivo es potencia extr
   porque indexa mal `ImportManager`: grep en `doc/client/html/star/common/ImportManager.html`). Las
   constantes de opciones viven en `AutoExport` (`OptionDataAtVerts`, `OptionTriangulatePoly`…).
   Vectores → `getMagnitudeFunction()`. `ui/surfaces.py` lee ASCII y C Binary, `tria3/quad4/nsided`.
+  Verificado con el solver real el 2026-10-23 12:21 (sesión hermana): 8 fronteras del impulsor,
+  107 189 triángulos, 4 campos en 13,5 s; conversión 0,3 s. Trampas del EnSight de STAR-CCM+: el
+  `.case` nombra las variables con asteriscos (`superficies*****.Pressure` → índice `00000`) y los
+  archivos de variables binarios NO llevan la cabecera «C Binary» (su primera línea es la descripción):
+  el formato lo fija la geometría.
 - 2026-10-23 · Caso cilindro (r 50 mm, L 0,5 m, 11 463 celdas poliédricas + prismas, agua 1 m/s,
   SST): 100 iteraciones, residuales 1e-6, Q_in = −Q_out = 7,755 kg/s. Recetas de cada paso guardadas.
   `cases/cilindro/RESUMEN.md`.

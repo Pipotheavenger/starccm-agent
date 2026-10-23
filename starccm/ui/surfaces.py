@@ -104,7 +104,7 @@ def read_case(case_file: Path) -> dict:
                 toks.pop(0)
             if len(toks) < 2:
                 continue
-            fn = toks[-1]
+            fn = toks[-1].replace("*", "0")  # STAR-CCM+ escribe «nombre*****.Pressure»: índice 00000 sin series temporales
             name = " ".join(toks[:-1])
             item = {"name": name, "file": d / fn, "per": "node" if "node" in kind.lower() else "element"}
             out["scalars" if kind.lower().startswith("scalar") else "vectors"].append(item)
@@ -324,11 +324,14 @@ def _read_geo_binary(geo: Path) -> tuple[Dataset, dict]:
     return ds, emap
 
 
-def read_scalar(var: Path, per: str, ds: Dataset, emap: dict, ncomp: int = 1) -> array.array:
+def read_scalar(var: Path, per: str, ds: Dataset, emap: dict, ncomp: int = 1, binary: bool | None = None) -> array.array:
     """Un valor por vértice del dataset. per='element' -> promedio en los vértices del elemento.
-    ncomp=3 (vector) -> magnitud."""
+    ncomp=3 (vector) -> magnitud. binary: el formato lo fija la geometría (los archivos de variables
+    binarios no llevan la cabecera «C Binary»: su primera línea es la descripción)."""
     vals = array.array("f", [math.nan]) * (len(ds.xyz) // 3)
-    if _is_binary(var):
+    if binary is None:
+        binary = _is_binary(var)
+    if binary:
         r = _Bin(var.read_bytes())
         r.s80()
         while not r.eof():
@@ -399,12 +402,13 @@ def convert_case(case_file: Path, out: Path, extra: dict | None = None) -> dict:
     if not info["geometry"] or not Path(info["geometry"]).is_file():
         raise FileNotFoundError(f"el .case no apunta a una geometría legible: {info['geometry']}")
     ds, emap = read_geometry(Path(info["geometry"]))
+    binary = _is_binary(Path(info["geometry"]))
     for s in info["scalars"]:
         if Path(s["file"]).is_file():
-            ds.scalars[s["name"]] = read_scalar(Path(s["file"]), s["per"], ds, emap)
+            ds.scalars[s["name"]] = read_scalar(Path(s["file"]), s["per"], ds, emap, 1, binary)
     for v in info["vectors"]:
         if Path(v["file"]).is_file():
-            ds.scalars[v["name"] + " |mag|"] = read_scalar(Path(v["file"]), v["per"], ds, emap, 3)
+            ds.scalars[v["name"] + " |mag|"] = read_scalar(Path(v["file"]), v["per"], ds, emap, 3, binary)
     return ds.write(out, {"source": case_file.name, **(extra or {})})
 
 

@@ -84,8 +84,10 @@ mínimo arriba a la izquierda; por defecto `cursocfturbo`):
 
 Superficies con campo: `POST /api/surface` inyecta la receta (`ImportManager.export(.case, regiones=[],
 fronteras, parts=[], partsurfaces=[], funciones, append=false, dataAtVerts=true)`), convierte el EnSight
-con `surfaces.py` y deja el dataset en `cases/<caso>/surfaces/<nombre>/` (no va a git). Una bomba de
-370 k celdas da unos cientos de miles de triángulos: el visor los pinta sin problema.
+con `surfaces.py` y deja el dataset en `cases/<caso>/surfaces/<nombre>/` (no va a git). Medido con la
+bomba `cursocfturbo` (370 k celdas): 8 fronteras del impulsor, 107 189 triángulos y 4 campos en 13,5 s
+de solver más 0,3 s de conversión. Para ver los álabes, desmarca `Shroud` y `CasingShroud` en el
+árbol o usa el plano de corte.
 
 | método y ruta | qué hace |
 |---|---|
