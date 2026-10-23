@@ -5,100 +5,130 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>STAR-CCM+ · Agente</title>
 <link rel="stylesheet" href="/style.css">
+<script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"}}</script>
+<link rel="modulepreload" href="/app.js">
+<link rel="modulepreload" href="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js">
+<link rel="modulepreload" href="https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/controls/OrbitControls.js">
 </head>
 <body>
 <header class="topbar">
-  <h1 class="brand" title="Claude opera STAR-CCM+; aquí se ven los casos y el estado del solver">STAR-CCM+ <span>Agente</span></h1>
+  <h1 class="brand">STAR-CCM+ <span>Agente</span></h1>
+  <span class="simname mono" id="simname"></span>
   <span class="sp"></span>
   <span id="solver" role="status" aria-live="polite"><span class="dot"></span><span>Conectando…</span></span>
   <button class="sm danger" id="stopsolver" hidden title="Guarda el .sim y apaga el servidor de STAR-CCM+ (server_stop)">Apagar solver</button>
-  <button class="sm icon" id="theme" title="Cambiar tema claro / oscuro" aria-label="Cambiar tema">◐</button>
+  <button class="sm" id="opengui" title="Abre este .sim en la GUI de STAR-CCM+ (solo sin servidor batch vivo; la licencia PoD cobra por hora)">Abrir en STAR-CCM+</button>
+  <button class="sm icon" id="theme" title="Tema claro / oscuro" aria-label="Cambiar tema">◐</button>
 </header>
 <div id="offline" class="offline-band" role="alert" hidden><span id="offlinetxt">Sin conexión con el servidor local.</span><button class="sm" id="retry">Reintentar</button></div>
 
-<main class="app">
-  <aside class="explorer" aria-label="Casos">
-    <section class="pane-sec grow">
-      <h2 class="sec-h">Casos <span id="ccount" class="mut"></span></h2>
-      <div id="cases" class="cases" role="listbox" aria-label="Casos"></div>
-    </section>
-    <section class="pane-sec" id="solverpane">
-      <h2 class="sec-h">Solver <span class="sp"></span><span id="solvertag"></span></h2>
+<main class="app" id="app">
+  <!-- Panel izquierdo: el árbol de la simulación, como en STAR-CCM+ -->
+  <aside class="simtree" aria-label="Simulación">
+    <div class="tree-head"><span class="sec-h">Simulación</span><span class="sp"></span><select id="case" aria-label="Caso" title="Caso (carpeta en cases/)"></select></div>
+    <div class="tree" id="tree">
+      <details open id="n-geo"><summary>Superficies 3D <span class="badge" id="b-geo"></span><button class="sm mini" id="exportbtn" title="Exportar fronteras con campo desde el solver vivo (EnSight → visor)">↓ solver</button></summary>
+        <div id="datasets" class="mut small">Sin superficies exportadas.</div>
+        <ul id="parts" class="parts"></ul>
+      </details>
+      <details open id="n-scenes"><summary>Escenas <span class="badge" id="b-scenes"></span></summary><ul id="scenes" class="items"></ul></details>
+      <details id="n-sim"><summary>Árbol del .sim <span class="badge" id="b-sim"></span><button class="sm mini" id="treerefresh" title="Leer del solver vivo (inspect tree, ~10 s)">↻</button></summary>
+        <div id="treestate" class="mut small"></div>
+        <div id="simtree"></div>
+      </details>
+    </div>
+    <div class="solverpane">
+      <div class="sec-h">Solver <span class="sp"></span><span id="solvertag"></span></div>
       <table class="kv" id="solverkv"><tbody></tbody></table>
-      <details class="log"><summary>agent.log</summary><pre id="agentlog" class="mono"></pre></details>
-    </section>
+    </div>
   </aside>
 
-  <section class="stage">
-    <div class="runbar">
-      <span class="runname" id="casetitle">Sin caso</span>
-      <span id="casemeta" class="mut mono"></span>
+  <!-- Centro: visor 3D con pestañas de escena y dock inferior -->
+  <section class="stage" id="stage">
+    <div class="vtabs" role="tablist" aria-label="Vistas">
+      <button role="tab" data-view="3d" aria-selected="true">3D</button>
+      <span id="scenetabs"></span>
       <span class="sp"></span>
-      <div class="tabs" role="tablist" aria-label="Vistas">
-        <button role="tab" data-tab="resumen" aria-selected="true">Resumen</button>
-        <button role="tab" data-tab="escenas" aria-selected="false">Escenas <span class="badge" id="bimg"></span></button>
-        <button role="tab" data-tab="conv" aria-selected="false">Convergencia <span class="badge" id="bconv"></span></button>
-        <button role="tab" data-tab="live" aria-selected="false" title="Escena grande exportada del solver vivo (PNG a demanda, ~10 s cada una)">En vivo <span class="dot" id="livedot" hidden></span></button>
-        <button role="tab" data-tab="tree" aria-selected="false" title="Árbol del .sim abierto: regiones, física, malla, reportes, monitores, escenas (como el panel izquierdo de STAR-CCM+)">Árbol</button>
-        <button role="tab" data-tab="prog" aria-selected="false" title="Qué está pasando: log del servidor y última macro inyectada">Progreso <span class="dot" id="progdot" hidden></span></button>
-      </div>
-      <button class="sm" id="opengui" title="Abre este .sim en la GUI de STAR-CCM+ (solo sin servidor batch vivo; la licencia PoD cobra por hora)">Abrir en STAR-CCM+</button>
+      <span id="vstate" class="mut small"></span>
     </div>
-    <div class="stage-body">
-      <section class="tabpane" id="tab-resumen" role="tabpanel"><div id="resumen" class="md"><p class="mut">Elige un caso a la izquierda.</p></div></section>
-      <section class="tabpane" id="tab-escenas" role="tabpanel" hidden><div id="scenes" class="scenes"></div></section>
-      <section class="tabpane" id="tab-conv" role="tabpanel" hidden><div id="conv"></div></section>
-      <section class="tabpane live" id="tab-live" role="tabpanel" hidden>
-        <div class="livebar">
-          <input id="scenename" list="scenelist" placeholder="nombre de la escena (p.ej. presion)" aria-label="Escena" title="Nombre exacto o prefijo de una escena del .sim abierto">
-          <datalist id="scenelist"></datalist>
-          <button class="sm" id="listscenes" title="Pregunta al solver qué escenas tiene (inspect, ~10 s)">Listar</button>
-          <button class="sm pri" id="refreshscene" title="Exporta la escena a PNG desde el solver vivo (~10 s)">Actualizar</button>
-          <label class="check small"><input type="checkbox" id="liveauto"> cada 60 s</label>
-          <span class="sp"></span>
-          <span id="livestate" class="mut small" aria-live="polite"></span>
-        </div>
-        <div id="liveview"><div class="empty mut">Sin escenas exportadas todavía. Con el solver vivo, escribe el nombre de una escena y pulsa Actualizar; o pide a Claude que exporte una.</div></div>
-        <div id="livestrip" class="strip"></div>
-      </section>
-      <section class="tabpane" id="tab-tree" role="tabpanel" hidden>
-        <div class="livebar"><button class="sm pri" id="treerefresh" title="Lee el árbol del solver vivo (inspect tree, ~10 s)">Leer del solver</button><span id="treestate" class="mut small" aria-live="polite"></span></div>
-        <div id="tree" class="tree"><p class="mut">Sin lectura todavía. Con el solver vivo pulsa «Leer del solver».</p></div>
-      </section>
-      <section class="tabpane prog" id="tab-prog" role="tabpanel" hidden>
-        <div class="livebar"><span id="macrostate" class="small"></span><span class="sp"></span><label class="check small"><input type="checkbox" id="progfollow" checked> seguir</label></div>
-        <details id="macrobody" class="log"><summary>Última macro</summary><pre class="mono"></pre></details>
-        <pre id="term" class="term mono" aria-live="polite"></pre>
-        <div id="termfile" class="mut small mono"></div>
-      </section>
+    <div id="viewer" title="Arrastra para orbitar · rueda para zoom · botón derecho para desplazar">
+      <canvas id="gl"></canvas>
+      <img id="sceneimg" alt="" hidden>
+      <div id="vtools" class="vtools">
+        <label>Campo <select id="scalar"><option value="">(geometría)</option></select></label>
+        <label>Paleta <select id="cmap"><option value="ccm">Azul→rojo</option><option value="viridis">Viridis</option><option value="gray">Gris</option></select></label>
+        <label class="range">Mín <input id="rmin" type="number" step="any"></label>
+        <label class="range">Máx <input id="rmax" type="number" step="any"></label>
+        <button class="sm" id="rauto" title="Rango automático">auto</button>
+      </div>
+      <div id="vactions" class="vtools right">
+        <button class="sm" data-view="iso" title="Vista isométrica (1)">Iso</button>
+        <button class="sm" data-view="axial" title="Mirando a lo largo del eje Z (2)">Axial</button>
+        <button class="sm" data-view="lateral" title="Eje Z horizontal (3)">Lateral</button>
+        <button class="sm" id="fit" title="Encuadrar (F)">Encuadrar</button>
+        <button class="sm" id="spin" aria-pressed="false" title="Giro automático">⟳</button>
+        <button class="sm" id="wire" aria-pressed="false" title="Malla superficial">Malla</button>
+        <label class="clip"><input type="checkbox" id="clipon"> Corte <select id="clipax"><option>Z</option><option>X</option><option>Y</option></select><input type="range" id="clipv" min="0" max="1000" value="500"></label>
+      </div>
+      <div id="legend" hidden><div class="lg-title" id="lgtitle"></div><canvas id="lgbar" width="14" height="160"></canvas><div class="lg-ticks" id="lgticks"></div></div>
+      <div id="vtip" hidden></div>
+      <div id="vempty" class="vempty"><div><b>Sin superficies 3D todavía.</b><br>Con el solver vivo pulsa «↓ solver» en el árbol para exportar las fronteras con campo, o pídeselo a Claude en el chat.</div></div>
+      <div id="vbusy" class="vbusy" hidden><span class="spinner"></span><span id="vbusytxt">cargando…</span></div>
+    </div>
+    <div class="dock" id="dock">
+      <div class="dock-resize" id="dockresize" title="Arrastra para cambiar la altura"></div>
+      <div class="dock-tabs" role="tablist">
+        <button role="tab" data-tab="out" aria-selected="true">Salida <span class="dot" id="progdot" hidden></span></button>
+        <button role="tab" data-tab="plots" aria-selected="false">Gráficos <span class="badge" id="bconv"></span></button>
+        <button role="tab" data-tab="res" aria-selected="false">Resumen</button>
+        <span class="sp"></span>
+        <button class="sm" id="docktoggle" title="Plegar o desplegar (tecla `)">▾</button>
+      </div>
+      <div class="dock-body">
+        <section class="tabpane prog" id="tab-out" role="tabpanel">
+          <div class="livebar"><span id="macrostate" class="small"></span><span class="sp"></span><label class="check small"><input type="checkbox" id="progfollow" checked> seguir</label></div>
+          <pre id="term" class="term mono" aria-live="polite"></pre>
+        </section>
+        <section class="tabpane" id="tab-plots" role="tabpanel" hidden><div id="conv"></div></section>
+        <section class="tabpane" id="tab-res" role="tabpanel" hidden><div id="resumen" class="md"></div></section>
+      </div>
     </div>
   </section>
 
+  <!-- Derecha: la IA -->
   <aside class="chatcol" aria-label="Chat">
-    <div class="chat-head">
-      <span id="chatstate" aria-live="polite"></span><span class="sp"></span>
-      <button class="sm" id="newchat">Nueva conversación</button>
-      <button class="sm danger" id="stopchat" disabled>Detener</button>
-    </div>
-    <div id="chatlog"><div class="chat-empty" id="chatempty"><p title="Claude usa las tools del MCP starccm (server_start, run_java, iterate, export_scene…)">«¿está vivo el solver?» · «resume el caso cursocfturbo» · «abre sims/cursocfturbo.sim y exporta la escena de presión»</p></div></div>
+    <div class="chat-head"><span class="sec-h">Claude</span><span id="chatstate" aria-live="polite"></span><span class="sp"></span>
+      <button class="sm" id="newchat">Nueva</button><button class="sm danger" id="stopchat" disabled>Detener</button></div>
+    <div id="chatlog"><div class="chat-empty" id="chatempty"><p>Pide escenas, planos de corte, vectores, cambios de parámetros o que corra iteraciones. Claude opera STAR-CCM+ por el MCP y la página se actualiza sola.</p></div></div>
     <details class="params" id="params">
-      <summary>Parámetros de la simulación <span class="mut">(los cambia Claude vía MCP, nunca la página)</span></summary>
+      <summary>Parámetros <span class="mut">(los cambia Claude, nunca la página)</span></summary>
       <div class="pgrid">
         <label>rpm<input id="p_rpm" inputmode="decimal" placeholder="2980"></label>
         <label>caudal <span class="mut">kg/s</span><input id="p_mdot" inputmode="decimal" placeholder="69,486"></label>
         <label>base malla <span class="mut">mm</span><input id="p_base" inputmode="decimal" placeholder="5"></label>
         <label>iteraciones<input id="p_iter" inputmode="numeric" placeholder="400"></label>
       </div>
-      <div class="row"><button class="sm" id="pclear">Limpiar</button><span class="sp"></span><button class="sm pri" id="paskbtn" title="Genera el prompt con los cambios y lo envía al chat">Pedir a Claude</button></div>
+      <div class="row"><button class="sm" id="pclear">Limpiar</button><span class="sp"></span><button class="sm pri" id="paskbtn">Pedir a Claude</button></div>
     </details>
     <div class="quick" id="quick">
       <button class="sm" data-q="¿Está vivo el servidor de STAR-CCM+? Dame server_status y, si está vivo, inspect('reports').">Estado</button>
+      <button class="sm" data-q="Exporta una escena nueva de presión total en un plano de corte z = 30 mm con vectores de velocidad (export_scene a cases/<caso>/images/plano_vectores.png) y dime qué se ve.">Plano + vectores</button>
       <button class="sm" data-q="Resume el caso seleccionado: geometría, malla, física, resultados (H, M, eficiencia, balance de masa) en una tabla.">Resumen</button>
-      <button class="sm" data-q="Busca en recipe_search las recetas de bomba y dime en una tabla qué paso cubre cada una.">Recetas</button>
     </div>
     <div id="chatin"><textarea id="chattext" aria-label="Mensaje para Claude" placeholder="Mensaje para Claude" title="Enter envía · Shift+Enter salto de línea · ↑ recupera el último"></textarea><button class="pri" id="send">Enviar</button></div>
   </aside>
 </main>
+
+<dialog id="expdlg" aria-labelledby="expdlg-h">
+  <form id="expform" method="dialog">
+    <h2 class="sec-h" id="expdlg-h">Exportar superficies del solver</h2>
+    <label>Nombre<input id="e_name" value="superficies" pattern="[A-Za-z0-9_\-]+" required></label>
+    <label>Fronteras <span class="mut">(regex sobre «región/frontera»)</span><input id="e_pat" value="blade|hub|shroud|volute|casing|wall"></label>
+    <label>Campos <span class="mut">(field functions internas)</span><input id="e_fun" value="Pressure,TotalPressure,Velocity,WallYplus"></label>
+    <p class="mut small">Una macro (~10 s) más la exportación EnSight (segundos a minutos según la malla). Requiere solver vivo y el chat en reposo.</p>
+    <div class="row end"><button type="button" class="sm" id="expcancel">Cancelar</button><button type="submit" class="pri">Exportar</button></div>
+  </form>
+</dialog>
 <div id="lightbox" hidden><img alt=""><div class="lb-cap"></div></div>
 <div id="toast" role="status" aria-live="polite"></div>
 <script type="module" src="/app.js"></script>

@@ -107,23 +107,27 @@ Reglas del servidor:
 
 ## Interfaz web: `ui/`
 
-`ui/server.py` (FastAPI) + `ui/index.html` + `ui/app.js` + `ui/style.css`, sin build. Preview
-`starccm-ui` (`.claude/launch.json` de la raíz, puerto 8767). Endpoints y paneles: `README.md`.
-Comprobación: `python ui/server.py --selftest` (HTTP contra los casos, sin solver ni CLI).
-Gira en torno a UNA simulación (Sebastián, 2026-10-23: «primero a 1 simulación»): pestañas Resumen,
-Escenas (con «↻» por escena), Convergencia, En vivo (PNG grande a demanda), Árbol (`inspect("tree")`)
-y Progreso (la «terminal»: log del servidor, última macro y su salida); botones Apagar solver y
-Abrir en STAR-CCM+ (GUI con `sims/<caso>.sim`, solo sin servidor batch vivo); formulario de
-parámetros (rpm, caudal, base de malla, iteraciones) que se convierte en un prompt para el chat.
-Reglas: la UI solo **lee** (casos, `.server.json`, logs, `macros/`) y pide al MCP importado como
-módulo: `server_stop`, `export_scene`, `inspect`. Nunca arranca el solver batch, nunca edita el .sim,
-nunca inyecta macros mientras el chat trabaja (el candado del MCP es por proceso).
-El chat lanza `claude -p` con cwd `starccm/` y solo las tools `mcp__starccm__*`, Read, Glob, Grep.
-Verificado el 2026-10-23 en el preview sin solver: galería `cursocfturbo` (resumen, 3 escenas,
-convergencia), chat con `server_status` (10 s), Progreso con la última macro real, 409 correctos.
-Por probar con el solver real (cuesta licencia PoD): `/api/scene`, `/api/scenes`, `/api/tree?refresh=1`,
-`/api/open_gui`. Siguiente hito: 3D interactivo con campo (exportar superficies desde STAR-CCM+ y
-pintarlas con three.js como en `cfturbo/ui`).
+`ui/server.py` (FastAPI) + `ui/surfaces.py` (EnSight/STL → dataset) + `ui/index.html` + `ui/app.js`
+(three.js por CDN) + `ui/style.css`, sin build, tema claro por defecto. Preview `starccm-ui`
+(`.claude/launch.json` de la raíz, puerto 8767). Paneles y endpoints: `README.md`.
+Comprobación: `python ui/server.py --selftest` (HTTP contra los casos + conversión de un EnSight
+mínimo, sin solver ni CLI).
+Imita el cliente de STAR-CCM+ asistido por IA, alrededor de UNA simulación (Sebastián, 2026-10-23:
+«primero a 1 simulación», «todo animado tipo 3D, como el cliente de ccm pero IA driven, tema claro»):
+árbol a la izquierda (superficies 3D, escenas, árbol del .sim, solver), visor three.js en el centro
+(campo en los vértices, leyenda, tooltip, corte, vistas animadas; las escenas PNG como pestañas),
+dock abajo (Salida = terminal, Gráficos, Resumen), Claude a la derecha (chat + parámetros → prompt).
+Reglas: la UI solo **lee** (casos, `.server.json`, logs, `macros/`, `surfaces/`) y pide al MCP importado
+como módulo: `server_stop`, `export_scene`, `inspect`, `run_java` (solo la receta de exportación).
+Nunca arranca el solver batch, nunca edita el .sim, nunca inyecta macros mientras el chat trabaja
+(el candado del MCP es por proceso). El chat lanza `claude -p` con cwd `starccm/` y solo las tools
+`mcp__starccm__*`, Read, Glob, Grep. Cuando el agente termine un bloque de trabajo debe dejar lo que
+la página muestra: `images/*.png`, `reports/convergencia.csv` y las superficies (receta
+`exportar-superficies-ensight.java` o `POST /api/surface`).
+Verificado el 2026-10-23 en el preview sin solver: visor con un dataset sintético (colores, leyenda,
+volar a una frontera, pestañas de escena, corte), chat con `server_status` (10 s), Salida con la última
+macro real, 409 correctos. Por probar con el solver real (cuesta licencia PoD): `/api/surface`
+(la receta compila con javac), `/api/scene`, `/api/scenes`, `/api/tree?refresh=1`, `/api/open_gui`.
 
 ## Memoria
 
@@ -216,6 +220,12 @@ Turbina: mismo flujo, cambia el signo del momento y el objetivo es potencia extr
 - 2026-10-23 · Caso cursocfturbo (bomba CFturbo, D2 270 mm, 250 m³/h, 2980 rpm): 370 k celdas,
   converge en 400 iteraciones (82 s/100 con 4 procesos): H 78,8 m, M 192,5 N·m, η 89,4 %, balance
   de masa 0 %. Guion reproducible `cases/cursocfturbo/pump.py`; recetas `bomba-*.java`.
+- 2026-10-23 · Exportar superficies con campo para el visor: `ImportManager.export(String, Collection<Region>,
+  Collection<Boundary>, Collection<Part>, Collection<PartSurface>, Collection<FieldFunction>, boolean append,
+  boolean dataAtVerts)` con un `.case` escribe EnSight Gold (javadoc 2410; `docs_search` no lo encuentra
+  porque indexa mal `ImportManager`: grep en `doc/client/html/star/common/ImportManager.html`). Las
+  constantes de opciones viven en `AutoExport` (`OptionDataAtVerts`, `OptionTriangulatePoly`…).
+  Vectores → `getMagnitudeFunction()`. `ui/surfaces.py` lee ASCII y C Binary, `tria3/quad4/nsided`.
 - 2026-10-23 · Caso cilindro (r 50 mm, L 0,5 m, 11 463 celdas poliédricas + prismas, agua 1 m/s,
   SST): 100 iteraciones, residuales 1e-6, Q_in = −Q_out = 7,755 kg/s. Recetas de cada paso guardadas.
   `cases/cilindro/RESUMEN.md`.

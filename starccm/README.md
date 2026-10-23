@@ -54,22 +54,37 @@ starccm\.venv\Scripts\python -m uvicorn --app-dir starccm ui.server:app --port 8
 
 | archivo | qué tiene |
 |---|---|
-| `ui/server.py` | FastAPI: página, casos, estado del solver, escena en vivo, chat SSE; `--selftest` (HTTP, sin solver ni CLI, ~3 s) |
-| `ui/index.html` · `ui/app.js` · `ui/style.css` | marcado, lógica (módulo ES, sin build) y estilos (mismos tokens que cfturbo/ui) |
+| `ui/server.py` | FastAPI: página, caso, superficies 3D, escenas, árbol, progreso, estado del solver, chat SSE; `--selftest` (HTTP, sin solver ni CLI, ~3 s) |
+| `ui/surfaces.py` | EnSight Gold (ASCII o C Binary) o STL → dataset binario del visor (`positions.f32`, `indices.u32`, `<campo>.f32`, `manifest.json`); sin numpy |
+| `ui/index.html` · `ui/app.js` · `ui/style.css` | marcado, lógica (módulo ES, three.js por CDN, sin build) y estilos; tema claro por defecto |
+| `recipes/exportar-superficies-ensight.java` | macro: fronteras que casan con un regex + field functions → `.case` con datos en los vértices |
 
-La página gira en torno a UNA simulación (el caso elegido a la izquierda; por defecto `cursocfturbo`).
-Pestañas: **Resumen** (RESUMEN.md renderizado), **Escenas** (PNG de `images/`, zoom y «↻» que
-re-exporta esa escena desde el solver vivo), **Convergencia** (`reports/convergencia.csv`: H y M
-frente a iteración, un gráfico por magnitud, tabla y criterio < 0,5 %), **En vivo** (escena grande:
-STAR-CCM+ en modo servidor no tiene ventana; se exporta un PNG a demanda, ~10 s, con auto cada 60 s),
-**Árbol** (`inspect("tree")`: regiones, física, malla, reportes, monitores, escenas, como el panel
-izquierdo de STAR-CCM+; se lee a demanda y se cachea) y **Progreso** (la «terminal»: cola del
-`sims/<sim>.server.log`, última macro inyectada con su salida y `agent.log`, cada 3 s).
-Además: **Solver** (`.server.json`, inactividad, botón «Apagar solver»), **Abrir en STAR-CCM+** (lanza
-la GUI con `sims/<caso>.sim`, solo sin servidor batch vivo, avisando del coste PoD), **Chat** (Claude
-Code CLI con cwd en `starccm/` y el MCP `starccm` del `.mcp.json` de la raíz) y **Parámetros**
-(rpm, caudal, tamaño base de malla, iteraciones): la página los convierte en un prompt y Claude los
-cambia vía MCP; la UI nunca edita el .sim. Planos de corte, vectores y escenas nuevas se piden por el chat.
+Imita el cliente de STAR-CCM+, pero asistido por IA, alrededor de UNA simulación (selector de caso
+mínimo arriba a la izquierda; por defecto `cursocfturbo`):
+
+- **Izquierda, árbol de la simulación**: *Superficies 3D* (datasets exportados, una fila por frontera
+  con casilla de visibilidad, color y nº de triángulos; clic = volar a ella; «↓ solver» abre el diálogo
+  de exportación), *Escenas* (PNG de `images/`, «↻» re-exporta desde el solver), *Árbol del .sim*
+  (`inspect("tree")`: regiones, física, malla, reportes, monitores, escenas; a demanda y cacheado) y
+  el panel *Solver* (`.server.json`, inactividad).
+- **Centro, visor 3D** (three.js): superficies con el campo pintado en los vértices (presión, presión
+  total, |velocidad|, y+…), paleta azul→rojo / viridis / gris, rango editable, leyenda, tooltip con el
+  valor bajo el ratón, resaltado de la frontera, vistas iso/axial/lateral con transición animada,
+  encuadrar, giro automático, malla, plano de corte X/Y/Z con deslizador, tríada de ejes. Las escenas
+  PNG se abren como pestañas sobre el mismo visor.
+- **Abajo, dock** (plegable, arrastrable): *Salida* (la «terminal»: cola del `sims/<sim>.server.log`,
+  última macro inyectada y su salida, `agent.log`, cada 3 s), *Gráficos* (`reports/convergencia.csv`:
+  H y M frente a iteración, un gráfico por magnitud, tabla y criterio < 0,5 %) y *Resumen* (RESUMEN.md).
+- **Derecha, Claude**: chat (Claude Code CLI con cwd en `starccm/` y el MCP `starccm` del `.mcp.json`
+  de la raíz) y *Parámetros* (rpm, caudal, tamaño base de malla, iteraciones) que la página convierte
+  en un prompt; la UI nunca edita el .sim. Planos, vectores y escenas nuevas se piden por el chat.
+- **Arriba**: estado del solver, «Apagar solver», «Abrir en STAR-CCM+» (GUI con `sims/<caso>.sim`,
+  solo sin servidor batch vivo, avisando del coste PoD), tema claro/oscuro.
+
+Superficies con campo: `POST /api/surface` inyecta la receta (`ImportManager.export(.case, regiones=[],
+fronteras, parts=[], partsurfaces=[], funciones, append=false, dataAtVerts=true)`), convierte el EnSight
+con `surfaces.py` y deja el dataset en `cases/<caso>/surfaces/<nombre>/` (no va a git). Una bomba de
+370 k celdas da unos cientos de miles de triángulos: el visor los pinta sin problema.
 
 | método y ruta | qué hace |
 |---|---|
@@ -83,6 +98,9 @@ cambia vía MCP; la UI nunca edita el .sim. Planos de corte, vectores y escenas 
 | `GET /api/progress` | `server_log {file size mtime tail[]}`, `agent_log[]`, `macro {file started running finished body out[]}` |
 | `GET /api/tree[?refresh=1]` | árbol cacheado; con `refresh` lee del solver (`inspect("tree")`, ~10 s; 409 sin solver o con el chat trabajando) |
 | `POST /api/open_gui {case}` | lanza la GUI de STAR-CCM+ con `sims/<caso>.sim` y la licencia de `.env`; 404 sin .sim, 409 con servidor batch vivo |
+| `GET /api/surfaces?case=` | datasets del visor (`cases/<caso>/surfaces/*/manifest.json`), el más nuevo primero |
+| `GET /surfaces/{caso}/{dataset}/{archivo}` | `positions.f32`, `indices.u32`, `<campo>.f32`, `manifest.json` (caché 1 h) |
+| `POST /api/surface {case, name, pattern, funcs}` | exporta fronteras (regex sobre «región/frontera») con field functions desde el solver vivo y convierte; 409 sin solver o con el chat trabajando |
 | `POST /api/chat {message, session_id, case}` | SSE: `status init text tool tool_result ping raw result error stopped done`; un chat a la vez |
 | `POST /api/chat/stop` | mata la CLI y sus hijos |
 

@@ -46,6 +46,7 @@ HERE = Path(__file__).resolve().parent          # starccm/ui
 ROOT = HERE.parent                              # starccm/
 REPO = ROOT.parent                              # raíz del repo (.mcp.json)
 sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(HERE))  # surfaces.py, también cuando uvicorn carga «ui.server»
 import mcp_server as scc  # noqa: E402  (no arranca nada al importar; solo lee .env)
 
 CASES = ROOT / "cases"
@@ -410,6 +411,82 @@ def api_open_gui(req: GuiReq) -> dict:
     return {"pid": p.pid, "sim": str(sim)}
 
 
+# ---------------------------------------------------------------- superficies con campo para el visor 3D
+import surfaces as surf  # noqa: E402  (starccm/ui/surfaces.py: EnSight/STL -> dataset binario)
+
+SURF_LOCK = threading.Lock()
+RECIPE_ENSIGHT = scc.RECIPES / "exportar-superficies-ensight.java"
+
+
+def _surf_dir(case: str) -> Path:
+    return _case_dir(case) / "surfaces"
+
+
+@app.get("/api/surfaces")
+def api_surfaces(case: str) -> dict:
+    """Datasets listos del caso: cases/<caso>/surfaces/<nombre>/manifest.json."""
+    d = _surf_dir(case)
+    out = []
+    for m in sorted(d.glob("*/manifest.json"), key=lambda p: p.stat().st_mtime, reverse=True) if d.is_dir() else []:
+        try:
+            man = json.loads(m.read_text(encoding="utf-8"))
+        except ValueError:
+            continue
+        out.append({"name": m.parent.name, "mtime": int(m.stat().st_mtime), "manifest": man,
+                    "url": f"/surfaces/{case}/{m.parent.name}"})
+    return {"datasets": out}
+
+
+@app.get("/surfaces/{case}/{ds}/{fname}")
+def surface_file(case: str, ds: str, fname: str) -> FileResponse:
+    if not re.fullmatch(r"[A-Za-z0-9_\-.]+", ds) or not re.fullmatch(r"[A-Za-z0-9_\-.]+\.(f32|u32|json)", fname) or ".." in ds + fname:
+        raise HTTPException(400, "ruta inválida")
+    f = _surf_dir(case) / ds / fname
+    if not f.is_file():
+        raise HTTPException(404, "no existe")
+    media = "application/json" if fname.endswith(".json") else "application/octet-stream"
+    return FileResponse(f, media_type=media, headers={"Cache-Control": "private, max-age=3600"})
+
+
+class SurfaceReq(BaseModel):
+    case: str = Field(min_length=1, max_length=100)
+    name: str = Field("superficies", min_length=1, max_length=60, pattern=r"^[A-Za-z0-9_\-]+$")
+    pattern: str = Field("blade|hub|shroud|volute|wall|casing", max_length=300)   # regex sobre "region/frontera"
+    funcs: str = Field("Pressure,TotalPressure,Velocity,WallYplus", max_length=300)  # field functions internas
+
+
+@app.post("/api/surface")
+def api_surface(req: SurfaceReq) -> dict:
+    """Exporta las fronteras que casan con `pattern` (EnSight, campos en vértices) con el solver vivo y las
+    convierte al dataset del visor. Tarda lo que una macro (10 s) más la exportación (segundos a minutos)."""
+    _solver_busy_409()
+    if not SURF_LOCK.acquire(blocking=False):
+        raise HTTPException(409, "ya se está exportando una superficie")
+    try:
+        raw = _surf_dir(req.case) / "_raw" / req.name
+        raw.mkdir(parents=True, exist_ok=True)
+        case_file = raw / f"{req.name}.case"
+        body = (RECIPE_ENSIGHT.read_text(encoding="utf-8")
+                .replace("PATTERN", req.pattern.replace("\\", "\\\\").replace('"', '\\"'))
+                .replace("FUNCS", req.funcs.replace('"', ""))
+                .replace("OUT", scc._jpath(case_file)))
+        t0 = time.time()
+        r = scc.run_java(body, timeout_s=3600)
+        if not r.get("ok"):
+            raise HTTPException(500, f"export falló: {r.get('exception') or r.get('stdout', '')[-500:]}")
+        if not case_file.is_file():
+            raise HTTPException(500, f"STAR-CCM+ no escribió {case_file.name}; salida: {r.get('stdout', '')[-500:]}")
+        bounds = [ln.split("\t", 1)[1] for ln in r["stdout"].splitlines() if ln.startswith("BOUNDARY\t")]
+        man = surf.convert_case(case_file, _surf_dir(req.case) / req.name,
+                                {"boundaries": bounds, "pattern": req.pattern, "funcs": req.funcs,
+                                 "exported": time.strftime("%Y-%m-%d %H:%M:%S"), "seconds": round(time.time() - t0, 1)})
+        log.info("superficie %s/%s: %d partes, %d triángulos, %s escalares en %.0f s", req.case, req.name,
+                 len(man["parts"]), man["n_triangles"], len(man["scalars"]), time.time() - t0)
+        return {"name": req.name, "url": f"/surfaces/{req.case}/{req.name}", "manifest": man, "macro_seconds": r.get("seconds")}
+    finally:
+        SURF_LOCK.release()
+
+
 # ---------------------------------------------------------------- estado del solver
 def _last_activity() -> float | None:
     """Última macro inyectada (macros/Agent_*.java) o el arranque del servidor. El MCP mide la inactividad
@@ -650,6 +727,17 @@ def _selftest() -> int:
     check(c in (400, 404), "ruta con .. rechazada")
     c, lv = get("/api/live?case=cursocfturbo" if "cursocfturbo" in names else "/api/live")
     check(c == 200 and isinstance(lv.get("scenes"), list), f"GET /api/live -> {len(lv.get('scenes', []))} PNG")
+    import array
+    import tempfile
+    tmp = Path(tempfile.mkdtemp(prefix="starccm-ui-ens-"))
+    man = surf.convert_case(surf.write_mini_case(tmp), tmp / "out")
+    yp = array.array("f")
+    yp.frombytes((tmp / "out" / "WallYplus.f32").read_bytes())
+    check(man["n_vertices"] == 7 and man["n_triangles"] == 3 and len(man["scalars"]) == 3, "EnSight mini -> dataset (7 vértices, 3 triángulos, 3 escalares)")
+    check(list(yp) == [30.0] * 4 + [45.0] * 3, "escalar por elemento repartido a los vértices de su parte")
+    shutil.rmtree(tmp, ignore_errors=True)
+    c, sf = get("/api/surfaces?case=cursocfturbo" if "cursocfturbo" in names else "/api/surfaces?case=" + (names[0] if names else "x"))
+    check(c in (200, 404) and (c == 404 or isinstance(sf.get("datasets"), list)), f"GET /api/surfaces -> {len(sf.get('datasets', [])) if c == 200 else c}")
     c, pg = get("/api/progress")
     check(c == 200 and "server_log" in pg and "macro" in pg, f"GET /api/progress ({len(pg.get('server_log', {}).get('tail', []))} líneas de log, macro={bool(pg.get('macro'))})")
     c, tr = get("/api/tree")
@@ -667,6 +755,8 @@ def _selftest() -> int:
         check(c == 409 and "solver" in r.get("detail", ""), "POST /api/scene sin servidor -> 409")
         c, r = get("/api/tree?refresh=1")
         check(c == 409, "GET /api/tree?refresh=1 sin servidor -> 409")
+        c, r = post("/api/surface", {"case": names[0] if names else "x"})
+        check(c in (404, 409), "POST /api/surface sin servidor -> 409")
     c, r = post("/api/chat/stop", {})
     check(c == 200 and r.get("stopped") is False, "POST /api/chat/stop sin chat -> stopped=false")
     c, r = post("/api/chat", {"message": ""})
