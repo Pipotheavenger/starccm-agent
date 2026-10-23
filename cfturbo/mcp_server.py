@@ -134,6 +134,8 @@ def _to_si(key: str, value) -> str:
     """Valor como texto para el XML, convertido a SI si la clave trae unidad."""
     if isinstance(value, bool):
         return "True" if value else "False"
+    if isinstance(value, str) and value.strip().lower() in ("true", "false"):  # "false" -> "False" (como CFturbo)
+        return value.strip().capitalize()
     if key in CONV:
         return repr(float(value) * CONV[key][1])
     if isinstance(value, (int, float)):
@@ -332,10 +334,82 @@ def _geometry(run_dir: Path) -> list[dict]:
     return geo
 
 
+# ---------------------------------------------------------------- candado: una corrida de CFturbo a la vez
+# Vale entre procesos (UI, chat por MCP, otra sesión de Claude Code): WORKDIR/running.lock con PID y nombre.
+LOCK_MAX_AGE = 40 * 60  # s; run_batch corta a CFturbo a los 30 min, así que más viejo es basura
+
+
+def _pid_alive(pid: int) -> bool:
+    if pid <= 0:
+        return False
+    if os.name == "nt":  # ojo: os.kill(pid, 0) en Windows MATA el proceso; se consulta con la API
+        import ctypes
+        k32 = ctypes.windll.kernel32
+        h = k32.OpenProcess(0x1000, False, pid)  # PROCESS_QUERY_LIMITED_INFORMATION
+        if not h:
+            return False
+        code = ctypes.c_ulong()
+        ok = k32.GetExitCodeProcess(h, ctypes.byref(code))
+        k32.CloseHandle(h)
+        return bool(ok) and code.value == 259  # STILL_ACTIVE
+    try:
+        os.kill(pid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+
+
+def run_lock_info() -> dict | None:
+    """Corrida en marcha según el candado, o None. Borra candados de procesos muertos."""
+    f = WORKDIR / "running.lock"
+    try:
+        info = read_json(f)
+    except FileNotFoundError:
+        return None
+    except (OSError, ValueError):
+        info = {}
+    if _pid_alive(int(info.get("pid", 0))) and time.time() - info.get("t", 0) < LOCK_MAX_AGE:
+        return info
+    f.unlink(missing_ok=True)
+    return None
+
+
+class CFturboBusy(RuntimeError):
+    pass
+
+
+def _acquire_lock(name: str) -> Path:
+    WORKDIR.mkdir(parents=True, exist_ok=True)
+    f = WORKDIR / "running.lock"
+    for _ in range(2):
+        try:
+            with f.open("x", encoding="utf-8") as fh:  # creación atómica
+                json.dump({"pid": os.getpid(), "name": name, "t": time.time(), "started": _now()}, fh)
+            return f
+        except FileExistsError:
+            busy = run_lock_info()  # si estaba muerto lo borra y se reintenta
+            if busy:
+                raise CFturboBusy(f"CFturbo ocupado con «{busy.get('name')}» (pid {busy.get('pid')}); espera a que termine")
+    raise CFturboBusy("no pude tomar el candado de CFturbo")
+
+
 def run_batch(project: str, edits: dict | None = None, name: str = "design",
               exports: list[str] | tuple[str, ...] | None = None, save: bool = True) -> dict:
     """Copia el .cft a work/, aplica edits {alias|clave_unidad|sufijo: valor}, corre CFturbo
-    (exporta y guarda) y devuelve realizados, correcciones, avisos, errores y archivos."""
+    (exporta y guarda) y devuelve realizados, correcciones, avisos, errores y archivos.
+    Lanza CFturboBusy si otra corrida (de cualquier proceso) tiene el candado."""
+    resolve_project(project)  # 404 antes de tomar el candado
+    lock = _acquire_lock(re.sub(r"[^A-Za-z0-9_-]+", "_", name) or "design")
+    try:
+        return _run_batch(project, edits, name, exports, save)
+    finally:
+        lock.unlink(missing_ok=True)
+
+
+def _run_batch(project: str, edits: dict | None, name: str,
+               exports: list[str] | tuple[str, ...] | None, save: bool) -> dict:
     edits = dict(edits or {})
     exports = list(exports if exports is not None else EXPORTS_DEFAULT)
     src = resolve_project(project)
@@ -425,8 +499,8 @@ def run_batch(project: str, edits: dict | None = None, name: str = "design",
             try:
                 if abs(float(real) - float(res["requested_si"][k])) > 1e-9 * max(1.0, abs(float(real))):
                     res["corrected"][k] = [res["requested_si"][k], real]
-            except ValueError:
-                if real != res["requested_si"][k]:
+            except ValueError:  # booleanos y texto: CFturbo puede cambiar mayúsculas (false/False)
+                if real.lower() != str(res["requested_si"][k]).lower():
                     res["corrected"][k] = [res["requested_si"][k], real]
         try:
             res["info"] = project_info(str(out_cft))
@@ -485,8 +559,14 @@ def save_version(run_id: str, name: str | None = None, note: str = "") -> dict:
         raise FileExistsError(f"ya existe versions/{name}")
     if dst != src:
         VERSIONS.mkdir(exist_ok=True)
-        shutil.copytree(src, dst)
+        shutil.copytree(src, dst)  # incluye thumb.png (miniatura de la UI) si existe
+        if src.parent != VERSIONS:  # la temporal queda marcada para no verse como duplicada en la galería
+            rs = read_json(src / "run.json")
+            rs["saved_as_version"] = dst.name
+            (src / "run.json").write_text(json.dumps(rs, indent=1, ensure_ascii=False), encoding="utf-8")
     r = read_json(dst / "run.json")
+    r.pop("saved_as_version", None)
+    r["saved_from"] = src.name
     r.update(saved=True, saved_as=str(dst), id=dst.name, run_dir=str(dst), note=note or r.get("note", ""))
     r.setdefault("events", []).append({"t": _now(), "msg": f"Guardada como versión «{name}»"})
     (dst / "run.json").write_text(json.dumps(r, indent=1, ensure_ascii=False), encoding="utf-8")
@@ -506,16 +586,26 @@ def prune_tmp(keep: int = KEEP_TMP, exclude: str = "") -> list[str]:
     return gone
 
 
-def list_runs(limit: int = 50) -> list[dict]:
+def list_runs(limit: int = 50, summary: bool = False) -> list[dict]:
+    """summary=True: versión ligera para el sondeo de la UI (sin eventos, geometría ni lista de archivos)."""
     runs = []
+    keys = ("id", "name", "started", "status", "seconds", "edits", "realized", "corrected",
+            "errors", "warnings", "exports", "geometry", "events", "info", "run_dir", "note",
+            "saved_as_version", "saved_from")
     for d in _all_run_dirs():
         try:
             r = read_json(d / "run.json")
         except (OSError, ValueError):
             continue
-        row = {k: r.get(k) for k in ("id", "name", "started", "status", "seconds", "edits", "realized", "corrected",
-                                      "errors", "warnings", "exports", "geometry", "events", "info", "run_dir", "note")}
+        row = {k: r.get(k) for k in keys}
         row["saved"] = d.parent == VERSIONS
+        th = d / "thumb.png"  # miniatura que captura el visor de la UI; el mtime sirve de ?v= anti-caché
+        row["thumb"] = int(th.stat().st_mtime) if th.is_file() else 0
+        if summary:
+            row["n_stl"] = sum(1 for g in r.get("geometry") or [] if g.get("kind") == "stl")
+            row["n_files"] = sum(len(v) for v in (r.get("exports") or {}).values())
+            for k in ("events", "geometry", "exports"):
+                row.pop(k)
         runs.append(row)
     runs.sort(key=lambda r: (r.get("started") or "", r.get("id") or ""), reverse=True)
     return runs[:limit]
@@ -723,12 +813,36 @@ def selftest() -> None:
     r3 = run_batch("fake", {"noexiste": 1}, "t3")
     assert r3["status"] == "error" and "noexiste" in r3["errors"][0], r3
     assert [x["name"] for x in list_runs(2)] == ["t3", "t2"]
+    assert _to_si("AutoUpdate", "false") == "False" and _to_si("x", "TRUE") == "True"
+
+    # candado entre procesos: vivo -> CFturboBusy; muerto (pid inexistente) -> se limpia y corre
+    lockf = WORKDIR / "running.lock"
+    assert run_lock_info() is None and not lockf.exists()
+    lockf.write_text(json.dumps({"pid": os.getpid(), "name": "otra", "t": time.time()}), encoding="utf-8")
+    assert run_lock_info()["name"] == "otra"
+    try:
+        run_batch("fake", {}, "bloqueada", exports=[])
+        raise AssertionError("debió fallar con CFturboBusy")
+    except CFturboBusy as e:
+        assert "otra" in str(e)
+    lockf.write_text(json.dumps({"pid": 2 ** 30, "name": "muerta", "t": time.time()}), encoding="utf-8")
+    assert run_batch("fake", {}, "tras_muerta", exports=[])["status"] in ("ok", "warn")
+    assert not lockf.exists() and run_lock_info() is None
     assert nq_calc(227, 70, 3600)["tipo"] == "radial normal"
 
     # versiones y poda: t1 guardada sobrevive, las temporales se reducen a KEEP
+    # miniatura de la UI: list_runs la anuncia y save_version la copia con la versión
+    (Path(r["run_dir"]) / "thumb.png").write_bytes(b"\x89PNG\r\n\x1a\nfake")
+    assert [x for x in list_runs() if x["id"] == r["id"]][0]["thumb"] > 0
+    lite = list_runs(summary=True)[0]
+    assert "events" not in lite and "geometry" not in lite and "n_stl" in lite and "thumb" in lite, lite
     sv = save_version(r["id"], "bomba_v1", note="sirve")
     assert (VERSIONS / "bomba_v1" / "run.json").exists() and sv["id"] == "bomba_v1"
+    assert (VERSIONS / "bomba_v1" / "thumb.png").read_bytes().startswith(b"\x89PNG")
+    assert read_json(Path(r["run_dir"]) / "run.json")["saved_as_version"] == "bomba_v1"
+    assert read_json(VERSIONS / "bomba_v1" / "run.json")["saved_from"] == r["id"]
     assert [x for x in list_runs() if x["saved"]][0]["id"] == "bomba_v1"
+    assert [x for x in list_runs() if x["saved"]][0]["thumb"] > 0
     for i in range(KEEP_TMP + 2):
         run_batch("fake", {}, f"p{i}", exports=[])
     assert len([d for d in WORKDIR.iterdir() if d.is_dir()]) == KEEP_TMP, list(WORKDIR.iterdir())

@@ -4,7 +4,8 @@ Uso:  cfturbo\\.venv\\Scripts\\python -m uvicorn --app-dir cfturbo ui.server:app
       (o el preview "cfturbo-ui" definido en .claude/launch.json)
 
 Qué hace:
-  - sirve la página (ui/index.html) y la geometría de work/<corrida>/
+  - sirve la página (ui/index.html + app.js + style.css) y la geometría de work/<corrida>/
+  - POST /api/runs/{id}/thumb -> guarda la miniatura PNG que captura el visor (thumb.png en la corrida)
   - POST /api/run   -> corre CFturbo directamente (mcp_server.run_batch) con los edits del formulario
   - POST /api/chat  -> lanza `claude -p` (Claude Code CLI, suscripción, sin API key) con las tools
                        cft_* y devuelve los eventos por SSE; `--resume` mantiene la conversación
@@ -23,7 +24,7 @@ import threading
 import time
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 from pydantic import BaseModel
 
@@ -33,9 +34,10 @@ sys.path.insert(0, str(ROOT))
 import mcp_server as cft  # noqa: E402
 
 app = FastAPI(title="cfturbo-ui")
+PNG_SIG = bytes([0x89]) + b"PNG" + bytes([13, 10, 26, 10])  # firma de un PNG
 RUN_LOCK = threading.Lock()
 CHAT_LOCK = threading.Lock()
-CHAT_PROC: dict[str, subprocess.Popen | None] = {"p": None}
+CHAT_PROC: dict = {"p": None, "stopped": False}
 
 CLAUDE_BIN = os.environ.get("CFT_CLAUDE_BIN") or shutil.which("claude") or "claude"
 CHAT_SYSTEM = (
@@ -43,10 +45,13 @@ CHAT_SYSTEM = (
     "los hitos y la tabla de corridas, que se refrescan solos. Responde en español, corto, con tablas "
     "para números. Cuando pidan crear o variar una bomba usa cft_run directamente (sin pedir confirmación); "
     "cuando pidan resumen usa cft_runs y cft_info. Si CFturbo corrige un valor, dilo. "
-    "REGLA FIJA: revisa warnings y errors de cada corrida y corrige SIEMPRE los de geometría "
-    "(solapamientos, intersecciones, extensiones, flujo secundario) en una corrida nueva, sin que te lo pidan, "
-    "hasta que desaparezcan o hasta 3 intentos; luego reporta qué quedó. Busca primero la solución en "
-    "cft_recipe_search (p.ej. receta 'fix-extension-overlap': ext_outlet=False). "
+    "Si te piden resumen, comparación, explicación o información, SOLO lees y respondes: no lances cft_run ni "
+    "cft_save (si ves avisos, menciónalos y ofrece corregirlos). "
+    "REGLA FIJA para las corridas que TÚ lances en esta petición (diseñar o variar): revisa warnings y errors y "
+    "corrige SIEMPRE los de geometría (solapamientos, intersecciones, extensiones, flujo secundario) en una "
+    "corrida nueva, sin que te lo pidan, hasta que desaparezcan o hasta 3 intentos; luego reporta qué quedó. "
+    "Busca primero la solución en cft_recipe_search (p.ej. receta 'fix-extension-overlap': ext_outlet=False). "
+    "Si cft_run responde que CFturbo está ocupado, espera y reintenta una vez; no insistas. "
     "Las corridas son temporales: cuando el usuario diga que un diseño le sirve, guárdalo con cft_save "
     "(nombre corto, note con el porqué) y registra el aprendizaje con cft_recipe_save. Antes de proponer "
     "un diseño consulta cft_recipe_search (recetas + bitácora de lo que funcionó). "
@@ -65,6 +70,16 @@ def index() -> str:
     return (HERE / "index.html").read_text(encoding="utf-8")
 
 
+@app.get("/app.js")
+def app_js() -> FileResponse:
+    return FileResponse(HERE / "app.js", media_type="text/javascript", headers={"Cache-Control": "no-cache"})
+
+
+@app.get("/style.css")
+def style_css() -> FileResponse:
+    return FileResponse(HERE / "style.css", media_type="text/css", headers={"Cache-Control": "no-cache"})
+
+
 @app.get("/api/projects")
 def projects() -> list[dict]:
     return cft.list_projects()
@@ -79,8 +94,9 @@ def project(name: str) -> dict:
 
 
 @app.get("/api/runs")
-def runs(limit: int = 50) -> list[dict]:
-    return cft.list_runs(limit)
+def runs(limit: int = 50, fields: str = "") -> list[dict]:
+    """fields=summary: sin eventos ni geometría (lo usa el sondeo cada 3 s; el detalle va en /api/runs/{id})."""
+    return cft.list_runs(limit, summary=fields == "summary")
 
 
 def _run_dir(rid: str) -> Path:
@@ -113,6 +129,15 @@ def run(rid: str) -> dict:
     return cft.read_json(_run_dir(rid) / "run.json")
 
 
+@app.post("/api/runs/{rid}/thumb")
+async def api_thumb(rid: str, request: Request) -> dict:
+    data = await request.body()
+    if not data.startswith(PNG_SIG) or len(data) > 512_000:
+        raise HTTPException(400, "se espera un PNG de menos de 500 KB")
+    (_run_dir(rid) / "thumb.png").write_bytes(data)
+    return {"thumb": f"/files/{rid}/thumb.png"}
+
+
 @app.get("/files/{rid}/{fname}")
 def files(rid: str, fname: str) -> FileResponse:
     if any(c in fname for c in "/\\") or ".." in fname:
@@ -120,7 +145,9 @@ def files(rid: str, fname: str) -> FileResponse:
     f = _run_dir(rid) / fname
     if not f.is_file():
         raise HTTPException(404, "archivo no encontrado")
-    media = "model/stl" if f.suffix.lower() == ".stl" else "application/octet-stream"
+    media = {".stl": "model/stl", ".png": "image/png"}.get(f.suffix.lower(), "application/octet-stream")
+    if media == "image/png":  # la miniatura se muestra en línea, no se descarga
+        return FileResponse(f, media_type=media)
     return FileResponse(f, media_type=media, filename=fname)
 
 
@@ -135,8 +162,9 @@ class RunReq(BaseModel):
 
 @app.post("/api/run")
 def api_run(req: RunReq) -> dict:
-    if not RUN_LOCK.acquire(blocking=False):
-        raise HTTPException(409, "ya hay una corrida de CFturbo en marcha")
+    busy = cft.run_lock_info()  # candado por archivo: cubre también las corridas del chat (MCP) y otros clientes
+    if busy or not RUN_LOCK.acquire(blocking=False):
+        raise HTTPException(409, f"CFturbo trabajando ({busy.get('name')})" if busy else "ya hay una corrida de CFturbo en marcha")
     try:
         cft.resolve_project(req.project)
     except FileNotFoundError as e:
@@ -146,6 +174,8 @@ def api_run(req: RunReq) -> dict:
     def work() -> None:
         try:
             cft.run_batch(req.project, req.edits, req.name, req.exports, req.save)
+        except cft.CFturboBusy:
+            pass  # otro proceso tomó el candado entre la comprobación y el arranque
         finally:
             RUN_LOCK.release()
 
@@ -155,7 +185,9 @@ def api_run(req: RunReq) -> dict:
 
 @app.get("/api/status")
 def status() -> dict:
-    return {"running": RUN_LOCK.locked(), "chatting": CHAT_LOCK.locked(), "claude": CLAUDE_BIN,
+    lock = cft.run_lock_info()
+    return {"running": RUN_LOCK.locked() or lock is not None, "running_name": (lock or {}).get("name"),
+            "running_since": (lock or {}).get("started"), "chatting": CHAT_LOCK.locked(), "claude": CLAUDE_BIN,
             "workdir": str(cft.WORKDIR), "versions": str(cft.VERSIONS), "keep_tmp": cft.KEEP_TMP}
 
 
@@ -207,6 +239,8 @@ def _chat_events(req: ChatReq):
             yield _sse({"kind": "error", "text": f"no pude lanzar la CLI de Claude Code ({CLAUDE_BIN}): {e}"})
             return
         CHAT_PROC["p"] = p
+        CHAT_PROC["stopped"] = False
+        hidden: set[str] = set()  # ids de tools internas (ToolSearch, Read…) que no se muestran al usuario
         q: queue.Queue = queue.Queue()
         threading.Thread(target=lambda: ([q.put(l) for l in p.stdout], q.put(None)), daemon=True).start()
         yield _sse({"kind": "status", "text": "Claude Code arrancando…"})
@@ -236,11 +270,14 @@ def _chat_events(req: ChatReq):
                     if b.get("type") == "text" and b.get("text"):
                         yield _sse({"kind": "text", "text": b["text"]})
                     elif b.get("type") == "tool_use":
-                        yield _sse({"kind": "tool", "name": b.get("name", "").replace("mcp__cfturbo__", ""),
-                                    "input": b.get("input")})
+                        name = b.get("name", "").replace("mcp__cfturbo__", "")
+                        if not name.startswith("cft_"):
+                            hidden.add(b.get("id", ""))
+                            continue
+                        yield _sse({"kind": "tool", "name": name, "input": b.get("input")})
             elif t == "user":
                 for b in o.get("message", {}).get("content", []):
-                    if isinstance(b, dict) and b.get("type") == "tool_result":
+                    if isinstance(b, dict) and b.get("type") == "tool_result" and b.get("tool_use_id") not in hidden:
                         c = b.get("content")
                         txt = c if isinstance(c, str) else " ".join(x.get("text", "") for x in c if isinstance(x, dict))
                         yield _sse({"kind": "tool_result", "text": txt[:600], "is_error": bool(b.get("is_error"))})
@@ -250,7 +287,9 @@ def _chat_events(req: ChatReq):
                             "text": o.get("result") if o.get("subtype") != "success" else None})
         rc = p.wait()
         err = p.stderr.read().strip() if p.stderr else ""
-        if rc not in (0, None) and err:
+        if CHAT_PROC.get("stopped"):
+            yield _sse({"kind": "stopped", "text": "Detenido por el usuario"})
+        elif rc not in (0, None) and err:
             yield _sse({"kind": "error", "text": err[-800:]})
         yield _sse({"kind": "done", "rc": rc})
     finally:
@@ -268,6 +307,7 @@ def api_chat(req: ChatReq) -> StreamingResponse:
 def api_chat_stop() -> dict:
     p = CHAT_PROC["p"]
     if p and p.poll() is None:
+        CHAT_PROC["stopped"] = True
         p.kill()
         return {"stopped": True}
     return {"stopped": False}
