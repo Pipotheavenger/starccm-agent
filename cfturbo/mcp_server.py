@@ -23,6 +23,9 @@ interfaz controladora en ui/) y thumb.png (miniatura que sube la UI). Se conserv
 Una corrida a la vez EN EL PC: %TEMP%/cfturbo-agent/running.lock (pid, nombre, hora), ruta fija
 que no cambia con CFTURBO_WORKDIR (una sola licencia de CFturbo).
 Cada corrida no fallida y cada versión guardada dejan una línea en recipes/bitacora.md.
+run.json["timing"] = segundos de cada fase de run_batch (preparar, cfturbo, leer, cerrar, total).
+list_runs relee un run.json solo si cambió su mtime (caché en memoria); stl_binary convierte los STL ASCII
+de CFturbo a binario (5× menos bytes) para el visor y lo guarda en <corrida>/.visor/.
 """
 from __future__ import annotations
 
@@ -35,10 +38,12 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import xml.etree.ElementTree as ET
 from datetime import datetime
 from pathlib import Path
+from xml.sax.saxutils import escape as _xesc, quoteattr as _xattr
 
 HERE = Path(__file__).resolve().parent
 # Las corridas van a una carpeta temporal y se podan solas; solo lo que el usuario guarda
@@ -92,6 +97,18 @@ def cfturbo_exe() -> str:
 
 def read_json(f: Path) -> dict:
     return json.loads(f.read_text(encoding="utf-8"))
+
+
+def write_json(f: Path, obj: dict) -> None:
+    """run.json se escribe a un temporal y se renombra: quien lo lea a la vez (el sondeo) nunca ve medio archivo."""
+    tmp = f.with_name(f".{f.name}.{os.getpid()}.{threading.get_ident()}.tmp")
+    tmp.write_text(json.dumps(obj, indent=1, ensure_ascii=False), encoding="utf-8")
+    os.replace(tmp, f)
+
+
+def safe_name(name: str | None, default: str = "design", extra: str = "") -> str:
+    """Nombre de corrida/versión/proyecto válido como carpeta: lo que no sea [A-Za-z0-9_-] (+extra) pasa a «_»."""
+    return re.sub(rf"[^A-Za-z0-9_{re.escape(extra)}-]+", "_", (name or "").strip()).strip("_") or default
 
 
 def _now() -> str:
@@ -345,10 +362,10 @@ def resolve_project(name_or_path: str) -> Path:
 def list_projects() -> list[dict]:
     out = []
     if PROJECTS.exists():
+        runs = sum(1 for _ in WORKDIR.glob("*/run.json")) if WORKDIR.exists() else 0  # una vez, no por proyecto
         for d in sorted(p for p in PROJECTS.iterdir() if p.is_dir()):
             cfts = sorted(d.glob("*.cft"))
             if cfts:
-                runs = len(list(WORKDIR.glob(f"*/run.json"))) if WORKDIR.exists() else 0
                 out.append({"name": d.name, "cft": str(cfts[0]), "runs_total": runs})
     return out
 
@@ -383,7 +400,11 @@ def nq_calc(Q_m3h: float, H_m: float, n_rpm: float) -> dict:
 def project_info(name_or_path: str) -> dict:
     cft = resolve_project(name_or_path)
     root = ET.parse(cft).getroot()
-    leaves = _leaves(root)
+    return _project_info(cft, root, _leaves(root))
+
+
+def _project_info(cft: Path, root: ET.Element, leaves: list[tuple[str, ET.Element]]) -> dict:
+    """project_info sobre un XML ya leído (run_batch lo reutiliza: el _out.cft se parsea una sola vez)."""
     Q, H, n = _get(leaves, "Q"), _get(leaves, "H"), _get(leaves, "n")
     info = {
         "name": cft.parent.name if cft.parent.parent == PROJECTS else cft.stem,
@@ -442,18 +463,26 @@ def list_params(name_or_path: str, filter: str = "", limit: int = 300) -> dict:
 
 
 # ---------------------------------------------------------------- batch
+EXPORTS_KNOWN = ("StarCCM", "OpenFOAM", "General", "Report", "PerformanceData")
+# archivos que deja cada export (para run.json["exports"])
+_EXPORT_PATS = {"StarCCM": ("*.stp", "*.cfturbo-ccm", "*.java"), "OpenFOAM": ("*.stl",),
+                "General": ("*.geo-xml", "*.stp", "*.igs", "*.stl"), "Report": ("*.html",),
+                "PerformanceData": ("*.cft-pp",)}
+
+
 def _batch_xml(cft: Path, run_dir: Path, base: str, exports: list[str], comps: list[dict], save: Path | None) -> str:
+    """Rutas y captions escapadas: una carpeta con «&» o un caption raro no deben romper el XML del batch."""
     vals = "".join(
-        f'<Value Type="Integer" Caption="{c["caption"]}" Index="{i}">{c["index"] + 1}</Value>'
+        f'<Value Type="Integer" Caption={_xattr(c["caption"])} Index="{i}">{c["index"] + 1}</Value>'
         for i, c in enumerate(comps) if c["active"])
     ec = f'<ExportComponents Type="Array1" Count="{sum(c["active"] for c in comps)}">{vals}</ExportComponents>'
     acts = "".join(
-        f'<BatchAction Name="Export"><WorkingDir>{run_dir}</WorkingDir><BaseFileName>{base}</BaseFileName>'
-        f'<ExportInterface Type="Enum">{x}</ExportInterface>{ec}</BatchAction>' for x in exports)
+        f'<BatchAction Name="Export"><WorkingDir>{_xesc(str(run_dir))}</WorkingDir><BaseFileName>{_xesc(base)}</BaseFileName>'
+        f'<ExportInterface Type="Enum">{_xesc(x)}</ExportInterface>{ec}</BatchAction>' for x in exports)
     if save:
-        acts += f'<BatchAction Name="Save"><OutputFile>{save}</OutputFile></BatchAction>'
+        acts += f'<BatchAction Name="Save"><OutputFile>{_xesc(str(save))}</OutputFile></BatchAction>'
     return ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<CFturboFile Version="2026.1">\n'
-            f'<CFturboBatchProject InputFile="{cft}"><Updates/><Output/>{acts}</CFturboBatchProject>\n</CFturboFile>\n')
+            f'<CFturboBatchProject InputFile={_xattr(str(cft))}><Updates/><Output/>{acts}</CFturboBatchProject>\n</CFturboFile>\n')
 
 
 _LOG_RX = re.compile(r"^\S+ \S+ \[(WARN|ERROR)\]\s+(\S.*?) - (.*)$")
@@ -462,12 +491,14 @@ _LOG_RX = re.compile(r"^\S+ \S+ \[(WARN|ERROR)\]\s+(\S.*?) - (.*)$")
 _STL_RX = re.compile(r"_Co(\d+)_\[?(.+?)\]?(Extension)?-(?:CFD)?Flowdomain(?:\(virtual\))?-(\w+)\.stl$", re.I)
 
 
-def _parse_log(run_dir: Path) -> tuple[list[str], list[str]]:
+def _parse_log(run_dir: Path, names: list[str]) -> tuple[list[str], list[str]]:
     """Avisos y errores de todos los .log de la corrida: el de -log trae poco; los hints del
     proyecto (acoplamientos, extensiones, licencia) van al <name>.log que CFturbo crea solo."""
     warns, errs = [], []
-    for log in sorted(run_dir.glob("*.log")):
-        for line in log.read_text(encoding="utf-8", errors="replace").splitlines():
+    for fn in names:
+        if not fn.lower().endswith(".log"):
+            continue
+        for line in (run_dir / fn).read_text(encoding="utf-8", errors="replace").splitlines():
             m = _LOG_RX.match(line)
             if not m:
                 continue
@@ -480,14 +511,69 @@ def _parse_log(run_dir: Path) -> tuple[list[str], list[str]]:
     return dd(warns), dd(errs)
 
 
-def _geometry(run_dir: Path) -> list[dict]:
+def _geometry(run_dir: Path, names: list[str]) -> list[dict]:
     geo = []
-    for f in sorted(run_dir.glob("*.stl")):
-        m = _STL_RX.search(f.name)
-        geo.append({"file": f.name, "kind": "stl",
-                    "component": (m.group(2) + (" ext" if m.group(3) else "")) if m else f.stem,
-                    "boundary": m.group(4) if m else "", "bytes": f.stat().st_size})
+    for fn in names:
+        if not fn.lower().endswith(".stl"):
+            continue
+        m = _STL_RX.search(fn)
+        geo.append({"file": fn, "kind": "stl",
+                    "component": (m.group(2) + (" ext" if m.group(3) else "")) if m else fn[:-4],
+                    "boundary": m.group(4) if m else "", "bytes": (run_dir / fn).stat().st_size})
     return geo
+
+
+# ---------------------------------------------------------------- STL para el visor
+# CFturbo exporta STL ASCII (~250 B por triángulo; una bomba con voluta son 60-130 MB). El visor los pide en
+# binario (50 B por triángulo, se leen sin parsear texto): se convierten la primera vez y quedan en .visor/.
+VISOR_DIR = ".visor"
+_STL_LOCKS: dict[str, threading.Lock] = {}
+_STL_LOCKS_GUARD = threading.Lock()
+
+
+def _ascii_to_binary_stl(data: bytes) -> bytes | None:
+    """STL ASCII -> binario (cabecera 80 B, nº de triángulos, normal + 3 vértices + 2 B). None si no es ASCII
+    válido (p.ej. ya es binario): entonces se sirve tal cual."""
+    import array
+    if not data.lstrip()[:5].lower() == b"solid":
+        return None
+    tok = data.split()
+    out = array.array("f")
+    try:
+        for k, w in enumerate(tok):
+            if w == b"facet":  # facet normal nx ny nz outer loop vertex x y z vertex x y z vertex x y z
+                out.extend(float(tok[k + j]) for j in (2, 3, 4, 8, 9, 10, 12, 13, 14, 16, 17, 18))
+    except (IndexError, ValueError):
+        return None
+    n = len(out) // 12
+    if not n:
+        return None
+    if sys.byteorder != "little":
+        out.byteswap()
+    raw = out.tobytes()
+    import struct
+    body = b"".join(raw[i * 48:(i + 1) * 48] + b"\0\0" for i in range(n))
+    return b"cfturbo-agent visor (binario desde STL ASCII)".ljust(80, b" ") + struct.pack("<I", n) + body
+
+
+def stl_binary(run_dir: Path, fname: str) -> Path:
+    """Ruta del STL binario del visor para run_dir/fname (lo crea si falta o si el ASCII es más nuevo).
+    Peticiones simultáneas del mismo archivo esperan a la primera conversión, no la repiten."""
+    src = run_dir / fname
+    dst = run_dir / VISOR_DIR / fname
+    with _STL_LOCKS_GUARD:
+        lk = _STL_LOCKS.setdefault(str(dst), threading.Lock())
+    with lk:
+        if dst.is_file() and dst.stat().st_mtime >= src.stat().st_mtime:
+            return dst
+        b = _ascii_to_binary_stl(src.read_bytes())
+        if b is None:
+            return src
+        dst.parent.mkdir(exist_ok=True)
+        tmp = dst.with_suffix(f".{os.getpid()}.tmp")
+        tmp.write_bytes(b)
+        os.replace(tmp, dst)
+        return dst
 
 
 # ---------------------------------------------------------------- curvas (PerformanceData) y reporte (Report)
@@ -665,7 +751,7 @@ def acquire_lock(name: str) -> Path:
     """Toma el candado global o lanza CFturboBusy. La UI lo toma ANTES de responder a /api/run."""
     f = LOCK_FILE
     f.parent.mkdir(parents=True, exist_ok=True)
-    name = re.sub(r"[^A-Za-z0-9_-]+", "_", name) or "design"
+    name = safe_name(name)
     for _ in range(2):
         try:
             with f.open("x", encoding="utf-8") as fh:  # creación atómica
@@ -678,20 +764,53 @@ def acquire_lock(name: str) -> Path:
     raise CFturboBusy("no pude tomar el candado de CFturbo")
 
 
+# CFturbo.exe en marcha lanzados por este proceso: kill_children() los mata (apagado del servidor web)
+_CHILDREN: set[subprocess.Popen] = set()
+
+
+def kill_children() -> int:
+    """Mata los CFturbo que siga corriendo este proceso (y sus hijos). Devuelve cuántos había."""
+    n = 0
+    for p in list(_CHILDREN):
+        if p.poll() is None:
+            n += 1
+            if os.name == "nt":
+                subprocess.run(["taskkill", "/PID", str(p.pid), "/T", "/F"], capture_output=True)
+            if p.poll() is None:
+                p.kill()
+    return n
+
+
+def _cfturbo(cmd: list[str], cwd: Path, timeout: float) -> int:
+    """Lanza CFturbo registrado en _CHILDREN. Salida a DEVNULL: CFturbo escribe en sus .log y una tubería
+    sin leer podría bloquearlo. -1 si pasa del tiempo límite (se mata)."""
+    p = subprocess.Popen(cmd, cwd=cwd, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    _CHILDREN.add(p)
+    try:
+        return p.wait(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        p.kill()
+        p.wait()
+        return -1
+    finally:
+        _CHILDREN.discard(p)
+
+
 def run_batch(project: str, edits: dict | None = None, name: str = "design",
               exports: list[str] | tuple[str, ...] | None = None, save: bool = True,
               lock: Path | None = None) -> dict:
     """Copia el .cft a WORKDIR/<name>_<ts>/, aplica edits {alias|clave_unidad|sufijo: valor}, corre CFturbo
-    (exporta y guarda) y devuelve realizados, correcciones, avisos, errores y archivos.
+    (exporta y guarda) y devuelve realizados, correcciones, avisos, errores, archivos y tiempos por fase.
     Lanza CFturboBusy si otra corrida (de cualquier proceso) tiene el candado. `lock`: candado ya
-    tomado con acquire_lock (se libera al terminar)."""
-    if lock is None:
-        resolve_project(project)  # 404 antes de tomar el candado
-        lock = acquire_lock(name)
+    tomado con acquire_lock (se libera siempre al terminar, también si algo falla)."""
     try:
+        if lock is None:
+            resolve_project(project)  # 404 antes de tomar el candado
+            lock = acquire_lock(name)
         return _run_batch(project, edits, name, exports, save)
     finally:
-        lock.unlink(missing_ok=True)
+        if lock is not None:
+            lock.unlink(missing_ok=True)
 
 
 def _run_batch(project: str, edits: dict | None, name: str,
@@ -701,7 +820,7 @@ def _run_batch(project: str, edits: dict | None, name: str,
     if "PerformanceData" not in exports:  # curvas características: siempre (28 KB, no cuesta tiempo)
         exports.append("PerformanceData")
     src = resolve_project(project)
-    name = re.sub(r"[^A-Za-z0-9_-]+", "_", name) or "design"
+    name = safe_name(name)
     run_dir = WORKDIR / f"{name}_{time.strftime('%Y%m%d-%H%M%S')}"
     for i in range(1, 100):  # dos corridas en el mismo segundo
         if not run_dir.exists():
@@ -709,35 +828,59 @@ def _run_batch(project: str, edits: dict | None, name: str,
         run_dir = run_dir.with_name(f"{name}_{time.strftime('%Y%m%d-%H%M%S')}_{i}")
     run_dir.mkdir(parents=True)
     t0 = time.time()
+    timing: dict[str, float] = {}
     events: list[dict] = []
     res: dict = {"id": run_dir.name, "name": name, "project": str(src),
                  "started": datetime.now().isoformat(timespec="milliseconds"),
                  "status": "running", "edits": edits, "requested_si": {}, "realized": {}, "corrected": {},
                  "exports": {}, "geometry": [], "warnings": [], "errors": [], "events": events,
-                 "run_dir": str(run_dir)}
+                 "run_dir": str(run_dir), "timing": timing}
 
     def ev(msg: str) -> None:
         events.append({"t": _now(), "msg": msg})
-        (run_dir / "run.json").write_text(json.dumps(res, indent=1, ensure_ascii=False), encoding="utf-8")
+        write_json(run_dir / "run.json", res)
 
+    def lap(phase: str, since: float) -> float:
+        now = time.time()
+        timing[phase] = round(now - since, 2)
+        return now
+
+    try:
+        _run_phases(res, ev, lap, src, run_dir, name, edits, exports, save, t0)
+    except Exception as err:  # nunca dejar run.json en «running»: el error queda en la corrida
+        res.update(status="error", errors=res["errors"] + [f"{type(err).__name__}: {err}"],
+                   seconds=res.get("seconds", round(time.time() - t0, 1)))
+        timing["total"] = round(time.time() - t0, 2)
+        ev("Corrida con errores")
+    return res
+
+
+def _run_phases(res: dict, ev, lap, src: Path, run_dir: Path, name: str, edits: dict,
+                exports: list[str], save: bool, t0: float) -> None:
+    """Fases de run_batch con su tiempo en res["timing"]: preparar (copia y edits), cfturbo, leer (log, .cft-res,
+    exports, _out.cft, curvas, reporte) y cerrar (bitácora y poda)."""
+    import fnmatch
     ev(f"Proyecto base: {src.name}")
     cft = run_dir / f"{name}.cft"
     shutil.copy2(src, cft)
     tree = ET.parse(cft)
-    leaves = _leaves(tree.getroot())
-    comps = _components(tree.getroot())
+    root = tree.getroot()
+    comps = _components(root)
+    leaves = None  # solo hacen falta si hay edits por alias o ruta
     try:
         for k, v in edits.items():
             if k in SPECIAL:
-                res["requested_si"][k] = SPECIAL[k][0](tree.getroot(), v)
+                res["requested_si"][k] = SPECIAL[k][0](root, v)
                 continue
-            p, e = _resolve(leaves, k)
+            leaves = leaves if leaves is not None else _leaves(root)
+            e = _resolve(leaves, k)[1]
             e.text = _to_si(k, v)
             res["requested_si"][k] = e.text
     except (KeyError, ValueError, TypeError) as err:
         res.update(status="error", errors=[f"parámetro no encontrado o valor inválido: {err}"], seconds=0)
+        res["timing"]["total"] = round(lap("preparar", t0) - t0, 2)
         ev("Parámetro no encontrado")
-        return res
+        return
     if edits:
         tree.write(cft, xml_declaration=True, encoding="UTF-8")
         ev(f"Editados {len(edits)} parámetros en la copia del .cft")
@@ -745,18 +888,18 @@ def _run_batch(project: str, edits: dict | None, name: str,
     batch = run_dir / f"{name}.cft-batch"
     batch.write_text(_batch_xml(cft, run_dir, name, exports, comps, out_cft), encoding="utf-8")
     log = run_dir / "cfturbo.log"
+    t = lap("preparar", t0)
     ev("CFturbo arrancando (batch)")
-    try:
-        p = subprocess.run([cfturbo_exe(), "-batch", str(batch), "-log", str(log)],
-                           capture_output=True, text=True, timeout=1800, cwd=run_dir)
-        rc = p.returncode
-    except subprocess.TimeoutExpired:
-        rc = -1
+    rc = _cfturbo([cfturbo_exe(), "-batch", str(batch), "-log", str(log)], run_dir, 1800)
+    if rc == -1:
         res["errors"].append("CFturbo no terminó en 30 min")
     res["returncode"] = rc  # 0 limpio, 1 con avisos, 2 con errores
     res["seconds"] = round(time.time() - t0, 1)
+    t = lap("cfturbo", t)
     ev(f"CFturbo terminó (rc={rc}, {res['seconds']} s)")
-    w, e_ = _parse_log(run_dir)
+
+    names = sorted(os.listdir(run_dir))  # un solo listado para log, exports y geometría
+    w, e_ = _parse_log(run_dir, names)
     res["warnings"], res["errors"] = w, res["errors"] + e_
     res_file = cft.with_suffix(".cft-res")
     if res_file.exists():
@@ -766,15 +909,13 @@ def _run_batch(project: str, edits: dict | None, name: str,
             st = a.findtext("State") or ",".join(f"{v.get('Caption')}={v.get('State')}" for v in a.iter("Value")) or "?"
             res["actions"].append(f"{a.get('Name')}{(' ' + a.findtext('ExportInterface')) if a.findtext('ExportInterface') else ''}: {st}")
     for x in exports:
-        pats = {"StarCCM": ["*.stp", "*.cfturbo-ccm", "*.java"], "OpenFOAM": ["*.stl"],
-                "General": ["*.geo-xml", "*.stp", "*.igs", "*.stl"], "Report": ["*.html"],
-                "PerformanceData": ["*.cft-pp"]}.get(x, ["*"])
-        res["exports"][x] = sorted({f.name for pt in pats for f in run_dir.glob(pt)})
-    res["geometry"] = _geometry(run_dir)
+        pats = _EXPORT_PATS.get(x, ("*",))
+        res["exports"][x] = [n for n in names if any(fnmatch.fnmatch(n, pt) for pt in pats)]
+    res["geometry"] = _geometry(run_dir, names)
     n_files = sum(len(v) for v in res["exports"].values())
     ev(f"Exportados {n_files} archivos" if n_files else "Sin archivos exportados")
     if out_cft and out_cft.exists():
-        out_root = ET.parse(out_cft).getroot()
+        out_root = ET.parse(out_cft).getroot()  # una sola lectura para realizados e info
         lv = _leaves(out_root)
         for k in edits:
             try:
@@ -785,23 +926,25 @@ def _run_batch(project: str, edits: dict | None, name: str,
             if _differs(res["requested_si"][k], real):
                 res["corrected"][k] = [res["requested_si"][k], real]
         try:
-            res["info"] = project_info(str(out_cft))
+            res["info"] = _project_info(out_cft.resolve(), out_root, lv)
         except Exception as err:  # ponytail: info es cortesía, no debe tumbar la corrida
             res["info_error"] = str(err)
     dp = (res.get("info") or {}).get("design_point") or {}
     curves = parse_perf(run_dir / f"{name}.cft-pp", dp)
     if curves:
         res["curves"] = curves
-    if (run_dir / f"{name}.html").exists():
+    if f"{name}.html" in names:
         res["report"] = parse_report(run_dir / f"{name}.html")
         res["report_file"] = f"{name}.html"
     res["status"] = "error" if res["errors"] or rc not in (0, 1) else ("warn" if res["warnings"] else "ok")
     res["saved"] = False
-    ev({"ok": "Corrida OK", "warn": "Corrida con avisos", "error": "Corrida con errores"}[res["status"]])
+    t = lap("leer", t)
     if res["status"] != "error":
         _bitacora(res)
     prune_tmp(exclude=run_dir.name)
-    return res
+    lap("cerrar", t)
+    res["timing"]["total"] = round(time.time() - t0, 2)
+    ev({"ok": "Corrida OK", "warn": "Corrida con avisos", "error": "Corrida con errores"}[res["status"]])
 
 
 def _bitacora(r: dict, note: str = "") -> None:
@@ -833,32 +976,35 @@ def _all_run_dirs() -> list[Path]:
 
 
 def find_run(run_id: str) -> Path:
-    for d in _all_run_dirs():
-        if d.name == run_id:
-            return d
+    """Carpeta de una corrida temporal o versión por id (= nombre de carpeta). Sin barras ni «..»."""
+    if not run_id or any(c in run_id for c in "/\\:") or run_id.strip(".") == "":
+        raise FileNotFoundError(f"id de corrida inválido: '{run_id}'")
+    for base in (WORKDIR, VERSIONS):
+        if (base / run_id / "run.json").is_file():
+            return base / run_id
     raise FileNotFoundError(f"corrida '{run_id}' no encontrada (ni temporal ni guardada)")
 
 
 def save_version(run_id: str, name: str | None = None, note: str = "") -> dict:
     """Copia una corrida temporal a versions/<name>/ (lo único que sobrevive a la poda)."""
     src = find_run(run_id)
-    name = re.sub(r"[^A-Za-z0-9_.-]+", "_", name or run_id) or run_id
+    name = safe_name(name or run_id, run_id, extra=".").strip(".") or run_id  # «..» no sale de versions/
     dst = VERSIONS / name
     if dst.exists() and dst != src:
         raise FileExistsError(f"ya existe versions/{name}")
     if dst != src:
         VERSIONS.mkdir(exist_ok=True)
-        shutil.copytree(src, dst)  # incluye thumb.png (miniatura de la UI) si existe
+        shutil.copytree(src, dst)  # incluye thumb.png (miniatura) y .visor/ (STL binarios) si existen
         if src.parent != VERSIONS:  # la temporal queda marcada para no verse como duplicada en la galería
             rs = read_json(src / "run.json")
             rs["saved_as_version"] = dst.name
-            (src / "run.json").write_text(json.dumps(rs, indent=1, ensure_ascii=False), encoding="utf-8")
+            write_json(src / "run.json", rs)
     r = read_json(dst / "run.json")
     r.pop("saved_as_version", None)
     r["saved_from"] = src.name
     r.update(saved=True, saved_as=str(dst), id=dst.name, run_dir=str(dst), note=note or r.get("note", ""))
     r.setdefault("events", []).append({"t": _now(), "msg": f"Guardada como versión «{name}»"})
-    (dst / "run.json").write_text(json.dumps(r, indent=1, ensure_ascii=False), encoding="utf-8")
+    write_json(dst / "run.json", r)
     _bitacora(r, note=f"VERSIÓN GUARDADA versions/{name}" + (f": {note}" if note else ""))
     return {"saved_as": str(dst), "id": dst.name}
 
@@ -877,6 +1023,7 @@ def delete_run(run_id: str) -> dict:
         raise CFturboBusy(f"«{run_id}» está corriendo; espera a que termine")
     version = d.parent.resolve() == VERSIONS.resolve()
     shutil.rmtree(d)
+    _RUN_CACHE.pop(str(d / "run.json"), None)
     if d.exists():
         raise OSError(f"no pude borrar {d} (¿archivo abierto?)")
     if version:
@@ -914,7 +1061,10 @@ def suggest_base(Q_m3h: float, H_m: float, n_rpm: float, base: str | None = None
     """Base más cercana en nq (o la pedida), factor de escala k y aviso si el salto de nq es > ×1,5."""
     nq = n_rpm * math.sqrt(Q_m3h / 3600) / H_m ** 0.75
     cands = pump_bases()
-    b = next((c for c in cands if c["cft"] == base or Path(c["cft"]).stem == base), None) if base else         min(cands, key=lambda c: abs(math.log(nq / c["nq"])), default=None)
+    if base:
+        b = next((c for c in cands if c["cft"] == base or Path(c["cft"]).stem == base), None)
+    else:
+        b = min(cands, key=lambda c: abs(math.log(nq / c["nq"])), default=None)
     if b is None:
         raise FileNotFoundError(f"no hay base {'«' + base + '»' if base else 'disponible'}")
     ratio = nq / b["nq"]
@@ -928,11 +1078,11 @@ def suggest_base(Q_m3h: float, H_m: float, n_rpm: float, base: str | None = None
 
 def new_project(Q_m3h: float, H_m: float, n_rpm: float, name: str, base: str | None = None) -> dict:
     """Crea projects/<name>/<name>.cft escalando por semejanza la base más cercana en nq (no corre CFturbo)."""
-    name = re.sub(r"[^A-Za-z0-9_-]+", "_", name or "").strip("_")
+    name = safe_name(name, "")
     if not name:
         raise ValueError("falta el nombre del proyecto")
-    if not (Q_m3h > 0 and H_m > 0 and n_rpm > 0):
-        raise ValueError("Q, H y n deben ser positivos")
+    if not all(math.isfinite(x) and x > 0 for x in (Q_m3h, H_m, n_rpm)):
+        raise ValueError("Q, H y n deben ser números positivos")
     dst = PROJECTS / name / f"{name}.cft"
     if dst.parent.exists():
         raise FileExistsError(f"ya existe projects/{name}")
@@ -947,14 +1097,24 @@ def new_project(Q_m3h: float, H_m: float, n_rpm: float, name: str, base: str | N
     return out
 
 
+_TS_RX = re.compile(r"_(\d{8}-\d{6})(?:_(\d+))?$")
+
+
 def prune_tmp(keep: int = KEEP_TMP, exclude: str = "") -> list[str]:
-    """Borra las corridas temporales más viejas dejando `keep`. Las de versions/ no se tocan."""
+    """Borra las corridas temporales más viejas dejando `keep`. Las de versions/ no se tocan. El orden lo da la
+    hora del nombre (<name>_AAAAMMDD-HHMMSS): abrir una corrida (miniatura, .visor/) no la rejuvenece."""
     if not WORKDIR.exists():
         return []
-    dirs = sorted((d for d in WORKDIR.iterdir() if d.is_dir() and d.name != exclude), key=lambda d: d.stat().st_mtime, reverse=True)
+
+    def age(d: Path):
+        m = _TS_RX.search(d.name)
+        return (m.group(1), int(m.group(2) or 0)) if m else (time.strftime("%Y%m%d-%H%M%S", time.localtime(d.stat().st_mtime)), 0)
+
+    dirs = sorted((d for d in WORKDIR.iterdir() if d.is_dir() and d.name != exclude), key=age, reverse=True)
     gone = []
     for d in dirs[max(keep - 1, 0):]:
         shutil.rmtree(d, ignore_errors=True)
+        _RUN_CACHE.pop(str(d / "run.json"), None)
         gone.append(d.name)
     return gone
 
@@ -964,44 +1124,81 @@ def _mark_orphan(d: Path, r: dict) -> dict:
     lanzó). Se marca como error para que no quede «Corriendo…» para siempre."""
     try:
         age = time.time() - datetime.fromisoformat(r.get("started", "")).timestamp()
-    except ValueError:
+    except (TypeError, ValueError):
         age = LOCK_MAX_AGE
     if age < 15:  # margen: el candado se toma antes de crear la carpeta, pero no cuesta nada esperar
         return r
-    r.update(status="error", errors=(r.get("errors") or []) + ["Corrida interrumpida: el proceso que la lanzó terminó"])
-    r.setdefault("events", []).append({"t": _now(), "msg": "Corrida interrumpida"})
+    r = dict(r, status="error", errors=(r.get("errors") or []) + ["Corrida interrumpida: el proceso que la lanzó terminó"],
+             events=(r.get("events") or []) + [{"t": _now(), "msg": "Corrida interrumpida"}])
     try:
-        (d / "run.json").write_text(json.dumps(r, indent=1, ensure_ascii=False), encoding="utf-8")
+        write_json(d / "run.json", r)
     except OSError:
         pass
     return r
 
 
+# run.json leídos, por ruta: (mtime_ns, tamaño, contenido). El sondeo de la UI (cada 3 s) solo relee lo que cambió.
+_RUN_CACHE: dict[str, tuple[int, int, dict]] = {}
+
+
+def _read_run(f: Path) -> dict | None:
+    """run.json con caché por mtime y tamaño; None si falta o está corrupto (se ignora en la galería)."""
+    try:
+        s = f.stat()
+    except OSError:
+        _RUN_CACHE.pop(str(f), None)
+        return None
+    hit = _RUN_CACHE.get(str(f))
+    if hit and hit[0] == s.st_mtime_ns and hit[1] == s.st_size:
+        return hit[2]
+    try:
+        r = read_json(f)
+    except (OSError, ValueError):
+        return None
+    if not isinstance(r, dict):
+        return None
+    _RUN_CACHE[str(f)] = (s.st_mtime_ns, s.st_size, r)
+    return r
+
+
+_LIST_KEYS = ("id", "name", "started", "status", "seconds", "edits", "realized", "corrected",
+              "errors", "warnings", "exports", "geometry", "events", "info", "run_dir", "note",
+              "saved_as_version", "saved_from", "report", "report_file", "timing")  # curvas: solo en run.json
+
+
+def _summary(r: dict) -> dict:
+    """Fila de la galería: solo lo que pintan las tarjetas, el contador y los avisos de fin de corrida."""
+    d = (r.get("info") or {}).get("dims") or {}
+    return {"id": r.get("id"), "name": r.get("name"), "started": r.get("started"), "status": r.get("status"),
+            "seconds": r.get("seconds"), "d2_mm": d.get("d2_mm"), "nBl": d.get("nBl"),
+            "n_warn": len(r.get("warnings") or []), "error": (r.get("errors") or [None])[0],
+            "autoupdate": bool((r.get("edits") or {}).get("AutoUpdate")),
+            "n_stl": sum(1 for g in r.get("geometry") or [] if g.get("kind") == "stl"),
+            "n_files": sum(len(v) for v in (r.get("exports") or {}).values())}
+
+
 def list_runs(limit: int = 50, summary: bool = False) -> list[dict]:
-    """summary=True: versión ligera para el sondeo de la UI (sin eventos, geometría ni lista de archivos)."""
+    """Corridas temporales y versiones, la más reciente primero. summary=True: fila ligera para la galería de la UI
+    (ver _summary); sin summary, las claves de _LIST_KEYS (lo que devuelve cft_runs)."""
+    lock_name = (run_lock_info() or {}).get("name")
+    dirs = _all_run_dirs()
+    versions = {d.name for d in dirs if d.parent == VERSIONS}
     runs = []
-    keys = ("id", "name", "started", "status", "seconds", "edits", "realized", "corrected",
-            "errors", "warnings", "exports", "geometry", "events", "info", "run_dir", "note",
-            "saved_as_version", "saved_from", "report", "report_file")  # curvas: solo en run.json
-    lock = run_lock_info()
-    for d in _all_run_dirs():
-        try:
-            r = read_json(d / "run.json")
-        except (OSError, ValueError):
+    for d in dirs:
+        r = _read_run(d / "run.json")
+        if r is None:
             continue
-        if r.get("status") == "running" and (lock or {}).get("name") != r.get("name"):
+        if r.get("status") == "running" and lock_name != r.get("name"):
             r = _mark_orphan(d, r)
-        row = {k: r.get(k) for k in keys}
-        if row["saved_as_version"] and not (VERSIONS / row["saved_as_version"] / "run.json").is_file():
-            row["saved_as_version"] = None  # la versión se borró (o vive en otra carpeta): no anunciarla
+        row = _summary(r) if summary else {k: r.get(k) for k in _LIST_KEYS}
+        sv = r.get("saved_as_version")
+        row["saved_as_version"] = sv if sv in versions else None  # la versión se borró: no anunciarla
         row["saved"] = d.parent == VERSIONS
         th = d / "thumb.png"  # miniatura que captura el visor de la UI; el mtime sirve de ?v= anti-caché
-        row["thumb"] = int(th.stat().st_mtime) if th.is_file() else 0
-        if summary:
-            row["n_stl"] = sum(1 for g in r.get("geometry") or [] if g.get("kind") == "stl")
-            row["n_files"] = sum(len(v) for v in (r.get("exports") or {}).values())
-            for k in ("events", "geometry", "exports", "report"):
-                row.pop(k)
+        try:
+            row["thumb"] = int(th.stat().st_mtime)
+        except OSError:
+            row["thumb"] = 0
         runs.append(row)
     runs.sort(key=lambda r: (r.get("started") or "", r.get("id") or ""), reverse=True)
     return runs[:limit]
@@ -1229,6 +1426,201 @@ sys.exit(1)  # 1 = con avisos, como CFturbo
 '''
 
 
+_STL_ASCII = (b"solid x\r\n facet normal 0 0 1\r\n  outer loop\r\n   vertex 0 0 0\r\n   vertex 1 0 0\r\n   vertex 0 1.5 0\r\n"
+              b"  endloop\r\n endfacet\r\n facet normal 0 0 -1\n outer loop vertex 0 0 0 vertex 0 1 0 vertex 1e-1 0 0 endloop"
+              b" endfacet\nendsolid x\n")
+
+
+def _selftest_bordes(tmp: Path) -> None:
+    """Casos de borde: sin voluta ni CFDSetup, nombres con espacios/acentos/«&», run.json corrupto, versión
+    borrada, excepción dentro de la corrida, candado huérfano o corrupto, 0 y 30 corridas, caché, STL binario."""
+    global WORKDIR, VERSIONS
+    import struct
+    # proyecto sin voluta y sin CFDSetup, en una carpeta con espacios y acentos; WORKDIR con «&» (XML escapado)
+    xml = re.sub(r"<CFturboDesign_OutletVolute.*?</CFturboDesign_OutletVolute>", "", FAKE_CFT, flags=re.S)
+    xml = re.sub(r"<CFDSetup_RotSym .*?</CFDSetup_RotSym>", "", xml, flags=re.S)
+    pdir = PROJECTS / "sin voluta ñandú"
+    pdir.mkdir()
+    (pdir / "sin voluta ñandú.cft").write_text(xml, encoding="utf-8")
+    pi = project_info("sin voluta ñandú")
+    assert pi["cfd_ext_outlet"] is None and pi["dims"]["volute_d_out_mm"] is None and len(pi["components"]) == 2, pi
+    wd0 = WORKDIR
+    WORKDIR = tmp / "work & ñ"
+    rv = run_batch("sin voluta ñandú", {"d2_mm": 210}, "café con leche", exports=["StarCCM"])
+    assert rv["status"] == "warn" and rv["name"] == "caf_con_leche" and rv["realized"]["d2_mm"] == "0.21", rv
+    assert rv["exports"]["StarCCM"] == ["caf_con_leche.cfturbo-ccm", "caf_con_leche_Co1.stp", "caf_con_leche_Co2.stp"], rv["exports"]
+    assert {"preparar", "cfturbo", "leer", "cerrar", "total"} <= set(rv["timing"]), rv["timing"]
+    assert read_json(Path(rv["run_dir"]) / "run.json")["timing"]["total"] == rv["timing"]["total"]
+    rx = run_batch("sin voluta ñandú", {"ext_outlet": False}, "sin_cfd", exports=[])
+    assert rx["status"] == "error" and "CFDSetup_RotSym" in rx["errors"][0], rx["errors"]
+    # una excepción dentro de la corrida (aquí: CFturbo.exe no existe) deja error en run.json y libera el candado
+    exe0 = os.environ["CFTURBO_EXE"]
+    os.environ["CFTURBO_EXE"] = str(tmp / "no_existe.exe")
+    rf = run_batch("fake", {}, "sin_exe", exports=[])
+    os.environ["CFTURBO_EXE"] = exe0
+    assert rf["status"] == "error" and "FileNotFoundError" in rf["errors"][0], rf["errors"]
+    assert read_json(Path(rf["run_dir"]) / "run.json")["status"] == "error" and not LOCK_FILE.exists()
+    WORKDIR = wd0
+
+    # run.json corrupto: la galería lo ignora, find_run lo encuentra y se puede borrar
+    bad = WORKDIR / "corrupta_20260101-000000"
+    bad.mkdir()
+    (bad / "run.json").write_text("{esto no es json", encoding="utf-8")
+    assert all(x["id"] != bad.name for x in list_runs(100)) and find_run(bad.name) == bad
+    assert delete_run(bad.name)["deleted"] == bad.name and not bad.exists()
+    for rid in ("", "..", "a/b", "a\\b", "c:x"):
+        try:
+            find_run(rid)
+            raise AssertionError(rid)
+        except FileNotFoundError:
+            pass
+    # versión borrada mientras otra corrida la anuncia: 404 al pedirla y la temporal deja de decir «★ como»
+    src_id = list_runs(1)[0]["id"]
+    vv = save_version(src_id, "ver sión/../ñ")
+    assert vv["id"] == "ver_si_n_", vv  # sin barras ni puntos sueltos: no sale de versions/
+    delete_run(vv["id"])
+    try:
+        find_run(vv["id"])
+        raise AssertionError("la versión borrada no debe encontrarse")
+    except FileNotFoundError:
+        pass
+    assert [x for x in list_runs(100) if x["id"] == src_id][0]["saved_as_version"] is None
+
+    # candado huérfano: JSON corrupto o demasiado viejo -> se descarta y se borra
+    LOCK_FILE.parent.mkdir(parents=True, exist_ok=True)
+    for content in ("{basura", json.dumps({"pid": os.getpid(), "name": "vieja", "t": time.time() - LOCK_MAX_AGE - 5})):
+        LOCK_FILE.write_text(content, encoding="utf-8")
+        assert run_lock_info() is None and not LOCK_FILE.exists(), content
+    # tiempo límite y apagado: _cfturbo mata lo que pasa del límite; kill_children mata lo que sigue vivo
+    sleeper = [sys.executable, "-c", "import time; time.sleep(30)"]
+    t = time.time()
+    assert _cfturbo(sleeper, tmp, 0.3) == -1 and time.time() - t < 5 and not _CHILDREN
+    out: list[int] = []
+    th = threading.Thread(target=lambda: out.append(_cfturbo(sleeper, tmp, 60)))
+    th.start()
+    for _ in range(50):
+        if _CHILDREN:
+            break
+        time.sleep(0.02)
+    assert kill_children() == 1
+    th.join(5)
+    assert out and out[0] != 0 and not _CHILDREN, out
+
+    # STL ASCII -> binario del visor (y no se reconvierte si ya está)
+    bb = _ascii_to_binary_stl(_STL_ASCII)
+    assert len(bb) == 84 + 2 * 50 and struct.unpack_from("<I", bb, 80)[0] == 2, len(bb)
+    assert struct.unpack_from("<12f", bb, 84)[10] == 1.5 and abs(struct.unpack_from("<12f", bb, 134)[9] - 0.1) < 1e-7
+    assert _ascii_to_binary_stl(bb) is None and _ascii_to_binary_stl(b"solid vacio\nendsolid\n") is None
+    rs = run_batch("fake", {}, "stl_t", exports=["OpenFOAM"])
+    sd, fn = Path(rs["run_dir"]), rs["geometry"][0]["file"]
+    (sd / fn).write_bytes(_STL_ASCII)
+    b1 = stl_binary(sd, fn)
+    assert b1 == sd / VISOR_DIR / fn and b1.read_bytes() == bb
+    m1 = b1.stat().st_mtime_ns
+    assert stl_binary(sd, fn) == b1 and b1.stat().st_mtime_ns == m1  # caché en disco
+    assert stl_binary(sd, rs["geometry"][1]["file"]) == sd / rs["geometry"][1]["file"]  # sin facetas: tal cual
+
+    # 0 y 30 corridas (galería aislada), orden, fila ligera, caché por mtime y poda por la hora del nombre
+    wd0, vs0 = WORKDIR, VERSIONS
+    WORKDIR, VERSIONS = tmp / "g0" / "w", tmp / "g0" / "v"
+    assert list_runs() == [] and list_runs(summary=True) == [] and prune_tmp() == []
+    WORKDIR.mkdir(parents=True)
+    for i in range(30):
+        d = WORKDIR / f"g{i:02d}_20261023-08{i:02d}00"
+        d.mkdir()
+        write_json(d / "run.json", {"id": d.name, "name": f"g{i:02d}", "status": "ok", "started": f"2026-10-23T08:{i:02d}:00",
+                                    "warnings": ["w"] * (i % 3), "info": {"dims": {"d2_mm": 200 + i, "nBl": 6}},
+                                    "geometry": [{"kind": "stl", "file": "x.stl"}], "events": [{"t": "", "msg": "x" * 500}]})
+    lr = list_runs(40, summary=True)
+    assert len(lr) == 30 and lr[0]["name"] == "g29" and lr[-1]["name"] == "g00", [x["name"] for x in lr[:3]]
+    assert set(lr[0]) == {"id", "name", "started", "status", "seconds", "d2_mm", "nBl", "n_warn", "error", "autoupdate",
+                          "n_stl", "n_files", "saved_as_version", "saved", "thumb"}, set(lr[0])
+    assert lr[0]["d2_mm"] == 229 and lr[0]["n_warn"] == 2 and lr[0]["n_stl"] == 1 and len(list_runs(5)) == 5
+    f29 = WORKDIR / lr[0]["id"] / "run.json"
+    cached = _RUN_CACHE[str(f29)][2]
+    assert list_runs(1)[0]["status"] == "ok" and _RUN_CACHE[str(f29)][2] is cached  # sin cambios: no relee
+    write_json(f29, dict(read_json(f29), status="warn"))
+    assert list_runs(1, summary=True)[0]["status"] == "warn"  # cambió el mtime: relee
+    (WORKDIR / "g00_20261023-080000" / "thumb.png").write_bytes(b"x")  # abrirla no la rejuvenece para la poda
+    gone = prune_tmp(keep=8)
+    assert len(gone) == 23 and "g00_20261023-080000" in gone and len(list_runs(100)) == 7, gone
+    WORKDIR, VERSIONS = wd0, vs0
+
+
+def _selftest_ui(tmp: Path) -> None:
+    """Servidor web de verdad (uvicorn en un hilo, puerto libre): ETag/304, errores JSON con detail de texto,
+    validación de entradas y STL binario. Se salta si el entorno no tiene fastapi/uvicorn."""
+    try:
+        import uvicorn
+        import fastapi  # noqa: F401
+    except ImportError:
+        print("(sin fastapi/uvicorn: prueba del servidor web omitida)")
+        return
+    import importlib
+    import socket
+    import urllib.error
+    import urllib.request
+    sys.modules["mcp_server"] = sys.modules[__name__]  # el servidor usa ESTE módulo (rutas del selftest)
+    sys.path.insert(0, str(HERE))
+    srv = importlib.import_module("ui.server")
+    s = socket.socket()
+    s.bind(("127.0.0.1", 0))
+    port = s.getsockname()[1]
+    s.close()
+    server = uvicorn.Server(uvicorn.Config(srv.app, host="127.0.0.1", port=port, log_level="warning", lifespan="on"))
+    th = threading.Thread(target=server.run, daemon=True)
+    th.start()
+    for _ in range(200):
+        if server.started:
+            break
+        time.sleep(0.02)
+    base = f"http://127.0.0.1:{port}"
+
+    def call(path, body=None, method=None, headers=None):
+        data = json.dumps(body).encode() if body is not None else None
+        req = urllib.request.Request(base + path, data=data, method=method,
+                                     headers={**({"content-type": "application/json"} if data else {}), **(headers or {})})
+        try:
+            with urllib.request.urlopen(req, timeout=10) as r:
+                return r.status, r.headers, r.read()
+        except urllib.error.HTTPError as e:
+            return e.code, e.headers, e.read()
+
+    try:
+        code, h, b = call("/api/poll")
+        assert code == 200 and h.get("ETag") and "runs" in json.loads(b), (code, b[:200])
+        assert call("/api/poll", headers={"If-None-Match": h["ETag"]})[0] == 304
+        rid = json.loads(b)["runs"][0]["id"]
+        assert call("/api/runs?fields=summary")[0] == 200 and call("/api/runs?fields=raro")[0] == 400
+        for path, want in (("/api/runs/no_existe", 404), ("/api/runs/..%5Cx", 400), ("/files/x/..%5Crun.json", 400),
+                           ("/api/new/suggest?Q=inf&H=1&n=1", 400), ("/api/project/noexiste", 404)):
+            code, _, b = call(path)
+            assert code == want and isinstance(json.loads(b)["detail"], str), (path, code, b)
+        for body, want, word in (({"project": "fake", "exports": ["Nope"]}, 422, "exports"),
+                                 ({"project": "fake", "edits": {"d2_mm": [1, 2, 3]}}, 422, "edits"),
+                                 ({"project": "noexiste"}, 404, "noexiste")):
+            code, _, b = call("/api/run", body)
+            d = json.loads(b)["detail"]
+            assert code == want and isinstance(d, str) and word in d, (body, code, d)
+        code, _, b = call("/api/chat", {"message": ""})
+        assert code == 422 and isinstance(json.loads(b)["detail"], str), b
+        assert call("/api/save", {"run_id": "no_existe"})[0] == 404
+        bad = WORKDIR / "rota_20260101-000000"
+        bad.mkdir()
+        (bad / "run.json").write_text("{", encoding="utf-8")
+        code, _, b = call(f"/api/runs/{bad.name}")
+        assert code == 500 and "ilegible" in json.loads(b)["detail"], (code, b)
+        shutil.rmtree(bad)
+        rr = read_json(find_run(rid) / "run.json")
+        stls = [g["file"] for g in rr.get("geometry") or []]
+        if stls:
+            code, h, b = call(f"/stl/{rid}/{urllib.request.quote(stls[0])}")
+            assert code == 200 and h.get("Cache-Control", "").startswith("private"), (code, h)
+    finally:
+        server.should_exit = True
+        th.join(5)
+
+
 def selftest() -> None:
     global WORKDIR, PROJECTS, RECIPES, VERSIONS, LOCK_FILE
     tmp = Path(tempfile.mkdtemp())
@@ -1409,6 +1801,9 @@ def selftest() -> None:
     except FileExistsError:
         pass
     assert run_batch("nueva_bomba", {}, "nueva_1", exports=[])["status"] in ("ok", "warn")
+
+    _selftest_bordes(tmp)
+    _selftest_ui(tmp)
 
     recipe_save("prueba-d2", "# sube d2 para más altura\nd2 +10% => H +20%")
     assert recipe_search("altura d2")[0]["file"] == "prueba-d2.md"

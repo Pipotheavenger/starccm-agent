@@ -6,6 +6,11 @@
 <title>CFturbo · Controlador</title>
 <link rel="stylesheet" href="/style.css">
 <script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"}}</script>
+<!-- descarga en paralelo de app.js y three.js (sin esperar a que app.js declare sus import) -->
+<link rel="modulepreload" href="/app.js">
+<link rel="modulepreload" href="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js">
+<link rel="modulepreload" href="https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/controls/OrbitControls.js">
+<link rel="modulepreload" href="https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/loaders/STLLoader.js">
 </head>
 <body>
 <header class="topbar">

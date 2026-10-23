@@ -18,11 +18,14 @@ La lógica de CFturbo no vive aquí: `server.py` importa `../mcp_server.py` (`ru
 ```
 run_batch (UI o chat/MCP) ──escribe──> %TEMP%\cfturbo-agent\<id>\run.json  (en cada hito)
                                        + running.lock mientras corre
-app.js cada 3 s ──> GET /api/poll  (= runs summary + status, UNA petición, límite 8 s)
+app.js cada 3 s ──> GET /api/poll  (= fila ligera de galería + status, UNA petición, límite 8 s,
+   │                                  If-None-Match: 304 sin cuerpo si nada cambió → no se repinta nada)
    ├─ galería, topbar, botón Ejecutar
    └─ si cambia la corrida activa ──> GET /api/runs/{id} (run.json completo)
-          ├─ hitos/avisos, archivos, tabla «Corrida», comparar
-          └─ visor: GET /files/{id}/<stl> ; si no hay thumb ──> POST /api/runs/{id}/thumb
+          ├─ hitos/avisos, archivos, tabla «Corrida», curvas, comparar
+          └─ visor: GET /stl/{id}/<stl> (binario, caché .visor/ en el servidor y 1 h en el navegador;
+                    geometrías en memoria para A, B y las 3 últimas vistas, el resto con dispose)
+                    si no hay thumb ──> POST /api/runs/{id}/thumb (cuando el navegador está libre)
 ```
 
 Versiones: `versions/<nombre>/run.json` aparece en el mismo listado con `saved=true`.
@@ -35,15 +38,18 @@ de red en consola en 40 s de caída).
 |---|---|
 | `GET /` · `/app.js` · `/style.css` | página (js/css con `Cache-Control: no-cache`) |
 | `GET /api/projects` · `/api/project/{name}` | proyectos base e info (`project_info`) |
-| `GET /api/runs?limit=50&fields=summary` | listado; `summary` quita eventos/geometría/exports y añade `n_stl`, `n_files` |
-| `GET /api/runs/{id}` | `run.json` completo |
+| `GET /api/runs?limit=50&fields=summary` | listado con ETag; `summary` = fila de galería: `id name started status seconds d2_mm nBl n_warn error autoupdate n_stl n_files saved saved_as_version thumb` |
+| `GET /api/runs/{id}` | `run.json` completo (con `timing`: segundos de preparar · cfturbo · leer · cerrar · total) |
+| `DELETE /api/runs/{id}` | borra temporal o versión (409 si corre) |
 | `POST /api/run` `{project, edits, name, exports, save}` | toma el candado global ANTES de responder (409 si otro lo tiene, 404 si no existe el proyecto) y corre en un hilo |
 | `GET /api/status` | `running`, `running_name`, `running_since`, `chatting`, `workdir`, `versions`, `lock_file`, `keep_tmp` |
-| `GET /api/poll?limit=40` | `{runs (summary), status}`: lo único que sondea la página |
+| `GET /api/poll?limit=40` | `{runs (summary), status}` con ETag (304 si no cambió): lo único que sondea la página |
 | `POST /api/save` `{run_id, name, note}` | guarda versión; 404 / 409 si el nombre existe |
 | `POST /api/open` `{run_id}` | abre la carpeta en el Explorador |
 | `POST /api/runs/{id}/thumb` (cuerpo PNG) | guarda `thumb.png`; 400 si no es PNG o > 500 KB |
-| `GET /files/{id}/{archivo}` | descarga (STL, STEP…); los PNG se sirven en línea |
+| `GET /files/{id}/{archivo}` | descarga (STL, STEP…); PNG y reporte HTML en línea |
+| `GET /stl/{id}/{archivo}.stl` | el STL en binario para el visor (se convierte una vez y queda en `<corrida>/.visor/`) |
+| `GET /api/new/suggest` · `POST /api/new` | bomba nueva por semejanza (base más cercana en nq) |
 | `POST /api/chat` `{message, session_id, project}` | SSE: `init`, `status`, `text`, `tool`, `tool_result`, `ping`, `result`, `error`, `stopped`, `done` |
 | `POST /api/chat/stop` | mata la CLI del chat y sus hijos (`taskkill /T /F`); una corrida a medias queda «interrumpida» |
 
