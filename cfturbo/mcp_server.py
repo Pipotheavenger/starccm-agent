@@ -524,13 +524,18 @@ def list_runs(limit: int = 50) -> list[dict]:
 # ---------------------------------------------------------------- recipes
 def recipe_search(query: str) -> list[dict]:
     RECIPES.mkdir(exist_ok=True)
-    q = query.lower().split()
+    q = [w for w in re.split(r"[\s,;]+", query.lower()) if len(w) > 2]
     hits = []
     for f in sorted(RECIPES.glob("*.md")):
         text = f.read_text(encoding="utf-8")
-        if all(w in text.lower() or w in f.name.lower() for w in q):
-            hits.append({"file": f.name, "head": text.splitlines()[0] if text else ""})
-    return hits
+        low = text.lower() + " " + f.name.lower()
+        score = sum(1 for w in q if w in low)
+        if score:  # ranking por palabras coincidentes: una consulta larga no debe dejar sin resultados
+            lines = text.splitlines()
+            hits.append({"file": f.name, "score": score, "head": lines[0] if lines else "",
+                         "snippet": " ".join(l.strip() for l in lines[1:8] if l.strip())[:300]})
+    hits.sort(key=lambda h: -h["score"])
+    return hits[:10]
 
 
 def recipe_save(name: str, body: str) -> str:
