@@ -24,14 +24,26 @@ de servidor y 4× la RAM: bomba de 370 k celdas debería ir claramente más ráp
 2026-10-23; log en `~/installers/wget.log`). Versión 2502 (en el PC hay 2410): las recetas Java y el
 MCP valen igual, pero medir de nuevo tiempos y revisar que la API no cambió en lo que usan las recetas.
 
-## Siguiente paso (no hecho)
+## Instalación (2026-10-23, Sebastián escribió el sudo)
 
-1. Descomprimir e instalar **sin sudo** en `~/Siemens` (el instalador `.sh` acepta `-i silent
-   -DINSTALLDIR=$HOME/Siemens -DINSTALLFLEX=false`), o en `/opt/Siemens` con sudo escrito por Sebastián.
-2. Licencia PoD: misma clave que en el PC, en `~/.starccm-agent.env` del servidor (`STARCCM_PODKEY`,
-   `STARCCM_LICPATH=1999@flex.cd-adapco.com`); el servidor necesita salida al puerto 1999 de
-   `flex.cd-adapco.com`.
-3. `vm/bootstrap.sh` adaptado a este host (python3 + venv + `mcp`, `STARCCM_HOME`, `STARCCM_NP=14`).
-4. Opciones para el agente: MCP remoto por SSH (`mcp_server.py` corriendo en el servidor y Claude Code
-   en una sesión SSH), o el MCP local lanzando `starccm+` remoto. La UI (`ui/`) sirve igual con el
-   `.server.json`, `macros/` y `cases/` del host donde corra el MCP.
+El tar trae un ejecutable ELF `STAR-CCM+2502.0001_008_linux-x86_64-2.28_clang17.0-r8.aol` (7 GB) con
+`--help`. Línea usada (modo silencioso, sin licencia configurada: la PoD se pasa al arrancar):
+
+```bash
+sudo ./STAR-CCM+2502.0001_008_linux-x86_64-2.28_clang17.0-r8.aol -i silent -DINSTALLMETHOD=custom \
+  -DPRODUCTEXCELLENCEPROGRAM=decline -DINSTALLDIR=/opt/Siemens -DINSTALL_CCM=true -DINSTALL_DOC=true \
+  -DINSTALL_SVIEW=false -DINSTALL_LICENSING=false -DINSTALL_JDK=true -DADDSYSTEMPATH=true
+```
+
+Queda en `/opt/Siemens/20.02.008-R8/STAR-CCM+20.02.008-R8` (lanzador `star/bin/starccm+`, JDK en
+`/opt/Siemens/20.02.008-R8/jdk/…`). Variables en `~/.starccm-agent.env` del servidor (chmod 600, sin
+copia en el repo): `STARCCM_PODKEY`, `STARCCM_LICPATH`, `STARCCM_HOME`, `STARCCM_NP=14`.
+
+## Decisión: el MCP sigue en el PC; el servidor solo corre STAR-CCM+
+
+Ubuntu 20.04 trae Python 3.8 sin `venv`/`pip`, y el paquete `mcp` pide ≥ 3.10: montar Python en el
+servidor exige sudo o `uv`. No hace falta: `mcp_server.py` corre en Windows y, con
+`STARCCM_RUN_HOST=server`, lanza por SSH `starccm+ -server` en el servidor, copia cada macro con `scp`,
+la inyecta con el cliente batch **del servidor** (misma versión 2502; el cliente 2410 del PC no puede
+conectarse a un servidor 2502) y trae de vuelta `.out`, PNG y exportaciones. La UI no cambia: sigue
+leyendo `.server.json`, `macros/` y `cases/` locales. Pendiente de implementar y medir.
