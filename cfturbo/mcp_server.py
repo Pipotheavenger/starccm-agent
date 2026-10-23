@@ -13,12 +13,15 @@ Uso:   python mcp_server.py            (stdio, lo lanza Claude Code desde .mcp.j
 
 Env:   CFTURBO_EXE      ruta a CFturbo.exe (si falta, se busca en Program Files)
        CFTURBO_WORKDIR  carpeta de corridas temporales (default: %TEMP%/cfturbo-agent)
+       CFTURBO_VERSIONS carpeta de versiones guardadas (default: ./versions); junto con WORKDIR
+                        permite una galería aislada (pruebas con 0 o 20 corridas)
 
 Cada corrida vive en WORKDIR/<name>_<timestamp>/ con: <name>.cft (copia editada), .cft-batch,
 .cft-res, <name>_out.cft (lo que CFturbo guardó), *.log, exportes, run.json (resumen que lee la
 interfaz controladora en ui/) y thumb.png (miniatura que sube la UI). Se conservan las KEEP_TMP
 últimas; lo que el usuario guarda (cft_save) se copia a versions/<nombre>/.
-Una corrida a la vez entre procesos: WORKDIR/running.lock (pid, nombre, hora).
+Una corrida a la vez EN EL PC: %TEMP%/cfturbo-agent/running.lock (pid, nombre, hora), ruta fija
+que no cambia con CFTURBO_WORKDIR (una sola licencia de CFturbo).
 Cada corrida no fallida y cada versión guardada dejan una línea en recipes/bitacora.md.
 """
 from __future__ import annotations
@@ -41,7 +44,9 @@ HERE = Path(__file__).resolve().parent
 # Las corridas van a una carpeta temporal y se podan solas; solo lo que el usuario guarda
 # (cft_save / botón "Guardar versión") pasa a versions/ dentro del proyecto.
 WORKDIR = Path(os.environ.get("CFTURBO_WORKDIR", Path(tempfile.gettempdir()) / "cfturbo-agent"))
-VERSIONS = HERE / "versions"
+VERSIONS = Path(os.environ.get("CFTURBO_VERSIONS", HERE / "versions"))
+# Candado global: misma ruta para todos los procesos aunque cada uno use otro WORKDIR (D-N2).
+LOCK_FILE = Path(tempfile.gettempdir()) / "cfturbo-agent" / "running.lock"
 PROJECTS = HERE / "projects"
 RECIPES = HERE / "recipes"
 KEEP_TMP = 8  # corridas temporales que se conservan (las guardadas no cuentan)
@@ -264,6 +269,10 @@ def project_info(name_or_path: str) -> dict:
     }
     if Q and H and n:
         info["nq"] = nq_calc(Q * 3600, H, n * 60)
+    # extensión CFD de salida del impulsor: None = no hay CFDSetup_RotSym (ext_outlet daría error),
+    # True = activa (la UI marca «Quitar extensión» por defecto), False = ya apagada
+    flags = [f.text.strip() == "True" for f in root.iter("CFDSetup_RotSym_Extension_Outlet_Active") if f.text]
+    info["cfd_ext_outlet"] = any(flags) if flags else None
     return info
 
 
@@ -338,7 +347,7 @@ def _geometry(run_dir: Path) -> list[dict]:
 
 
 # ---------------------------------------------------------------- candado: una corrida de CFturbo a la vez
-# Vale entre procesos (UI, chat por MCP, otra sesión de Claude Code): WORKDIR/running.lock con PID y nombre.
+# Vale entre procesos (UI, chat por MCP, otra sesión de Claude Code, otro WORKDIR): LOCK_FILE con PID y nombre.
 LOCK_MAX_AGE = 40 * 60  # s; run_batch corta a CFturbo a los 30 min, así que más viejo es basura
 
 
@@ -366,7 +375,7 @@ def _pid_alive(pid: int) -> bool:
 
 def run_lock_info() -> dict | None:
     """Corrida en marcha según el candado, o None. Borra candados de procesos muertos."""
-    f = WORKDIR / "running.lock"
+    f = LOCK_FILE
     try:
         info = read_json(f)
     except FileNotFoundError:
@@ -383,9 +392,11 @@ class CFturboBusy(RuntimeError):
     pass
 
 
-def _acquire_lock(name: str) -> Path:
-    WORKDIR.mkdir(parents=True, exist_ok=True)
-    f = WORKDIR / "running.lock"
+def acquire_lock(name: str) -> Path:
+    """Toma el candado global o lanza CFturboBusy. La UI lo toma ANTES de responder a /api/run."""
+    f = LOCK_FILE
+    f.parent.mkdir(parents=True, exist_ok=True)
+    name = re.sub(r"[^A-Za-z0-9_-]+", "_", name) or "design"
     for _ in range(2):
         try:
             with f.open("x", encoding="utf-8") as fh:  # creación atómica
@@ -399,12 +410,15 @@ def _acquire_lock(name: str) -> Path:
 
 
 def run_batch(project: str, edits: dict | None = None, name: str = "design",
-              exports: list[str] | tuple[str, ...] | None = None, save: bool = True) -> dict:
+              exports: list[str] | tuple[str, ...] | None = None, save: bool = True,
+              lock: Path | None = None) -> dict:
     """Copia el .cft a WORKDIR/<name>_<ts>/, aplica edits {alias|clave_unidad|sufijo: valor}, corre CFturbo
     (exporta y guarda) y devuelve realizados, correcciones, avisos, errores y archivos.
-    Lanza CFturboBusy si otra corrida (de cualquier proceso) tiene el candado."""
-    resolve_project(project)  # 404 antes de tomar el candado
-    lock = _acquire_lock(re.sub(r"[^A-Za-z0-9_-]+", "_", name) or "design")
+    Lanza CFturboBusy si otra corrida (de cualquier proceso) tiene el candado. `lock`: candado ya
+    tomado con acquire_lock (se libera al terminar)."""
+    if lock is None:
+        resolve_project(project)  # 404 antes de tomar el candado
+        lock = acquire_lock(name)
     try:
         return _run_batch(project, edits, name, exports, save)
     finally:
@@ -589,18 +603,41 @@ def prune_tmp(keep: int = KEEP_TMP, exclude: str = "") -> list[str]:
     return gone
 
 
+def _mark_orphan(d: Path, r: dict) -> dict:
+    """Corrida que dice «running» sin candado: su proceso murió (p.ej. Detener mató el chat que la
+    lanzó). Se marca como error para que no quede «Corriendo…» para siempre."""
+    try:
+        age = time.time() - datetime.fromisoformat(r.get("started", "")).timestamp()
+    except ValueError:
+        age = LOCK_MAX_AGE
+    if age < 15:  # margen: el candado se toma antes de crear la carpeta, pero no cuesta nada esperar
+        return r
+    r.update(status="error", errors=(r.get("errors") or []) + ["Corrida interrumpida: el proceso que la lanzó terminó"])
+    r.setdefault("events", []).append({"t": _now(), "msg": "Corrida interrumpida"})
+    try:
+        (d / "run.json").write_text(json.dumps(r, indent=1, ensure_ascii=False), encoding="utf-8")
+    except OSError:
+        pass
+    return r
+
+
 def list_runs(limit: int = 50, summary: bool = False) -> list[dict]:
     """summary=True: versión ligera para el sondeo de la UI (sin eventos, geometría ni lista de archivos)."""
     runs = []
     keys = ("id", "name", "started", "status", "seconds", "edits", "realized", "corrected",
             "errors", "warnings", "exports", "geometry", "events", "info", "run_dir", "note",
             "saved_as_version", "saved_from")
+    lock = run_lock_info()
     for d in _all_run_dirs():
         try:
             r = read_json(d / "run.json")
         except (OSError, ValueError):
             continue
+        if r.get("status") == "running" and (lock or {}).get("name") != r.get("name"):
+            r = _mark_orphan(d, r)
         row = {k: r.get(k) for k in keys}
+        if row["saved_as_version"] and not (VERSIONS / row["saved_as_version"] / "run.json").is_file():
+            row["saved_as_version"] = None  # la versión se borró (o vive en otra carpeta): no anunciarla
         row["saved"] = d.parent == VERSIONS
         th = d / "thumb.png"  # miniatura que captura el visor de la UI; el mtime sirve de ?v= anti-caché
         row["thumb"] = int(th.stat().st_mtime) if th.is_file() else 0
@@ -745,6 +782,8 @@ FAKE_CFT = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
           <dH Type="Float">0.03725</dH><dS Type="Float">0.1227</dS><b2 Type="Float">0.02146</b2><d2 Type="Float">0.2063</d2>
         </MainDimensionsElement></MainDimensions>
         <BladeProperties Type="Object"><nBl Type="Integer">6</nBl></BladeProperties>
+        <CFDSetup_RotSym Type="Object"><CFDSetup_RotSym_Extension_Outlet_Active Type="Boolean">True</CFDSetup_RotSym_Extension_Outlet_Active>
+          <CFDSetup_RotSym_Extension_Outlet Type="Object"></CFDSetup_RotSym_Extension_Outlet></CFDSetup_RotSym>
       </CFturboDesign_RadialImpeller>
       <CFturboDesign_OutletVolute Type="Object" Name="[Volute_1]" Index="2"><Active Type="Boolean">True</Active><Caption>[Volute_1]</Caption>
         <SpiralCasingDiff Type="Object"><Diameter Type="Float">0.1</Diameter></SpiralCasingDiff></CFturboDesign_OutletVolute>
@@ -782,9 +821,10 @@ sys.exit(1)  # 1 = con avisos, como CFturbo
 
 
 def selftest() -> None:
-    global WORKDIR, PROJECTS, RECIPES, VERSIONS
+    global WORKDIR, PROJECTS, RECIPES, VERSIONS, LOCK_FILE
     tmp = Path(tempfile.mkdtemp())
     WORKDIR, PROJECTS, RECIPES, VERSIONS = tmp / "work", tmp / "projects", tmp / "recipes", tmp / "versions"
+    LOCK_FILE = tmp / "lock" / "running.lock"  # el selftest no debe tocar el candado real del PC
     (PROJECTS / "fake").mkdir(parents=True)
     (PROJECTS / "fake" / "fake.cft").write_text(FAKE_CFT, encoding="utf-8")
     fake = tmp / "fake_cfturbo.py"
@@ -804,6 +844,7 @@ def selftest() -> None:
     assert info["dims"]["nBl"] == 6 and [c["caption"] for c in info["components"]] == ["[Stator_1]", "[Impeller_1]", "[Volute_1]"], info
     pr = list_params("fake", "nBl|d2$")
     assert pr["aliases"]["d2"]["value"] == "0.2063" and pr["total"] == 2, pr
+    assert info["cfd_ext_outlet"] is True, info.get("cfd_ext_outlet")
 
     r = run_batch("fake", {"d2_mm": 220, "nBl": 7, "Q_m3h": 250, "AutoUpdate": True}, "t1")
     assert r["status"] == "warn" and r["returncode"] == 1, (r["status"], r["errors"])
@@ -823,8 +864,9 @@ def selftest() -> None:
     assert _to_si("AutoUpdate", "false") == "False" and _to_si("x", "TRUE") == "True"
 
     # candado entre procesos: vivo -> CFturboBusy; muerto (pid inexistente) -> se limpia y corre
-    lockf = WORKDIR / "running.lock"
+    lockf = LOCK_FILE
     assert run_lock_info() is None and not lockf.exists()
+    lockf.parent.mkdir(parents=True, exist_ok=True)
     lockf.write_text(json.dumps({"pid": os.getpid(), "name": "otra", "t": time.time()}), encoding="utf-8")
     assert run_lock_info()["name"] == "otra"
     try:
@@ -832,6 +874,30 @@ def selftest() -> None:
         raise AssertionError("debió fallar con CFturboBusy")
     except CFturboBusy as e:
         assert "otra" in str(e)
+    # el candado es global: otro WORKDIR (otro proceso, p.ej. el Explorador) también queda bloqueado
+    wd0 = WORKDIR
+    WORKDIR = tmp / "otro_workdir"
+    try:
+        run_batch("fake", {}, "otro_wd", exports=[])
+        raise AssertionError("otro WORKDIR debió ver el candado")
+    except CFturboBusy:
+        pass
+    WORKDIR = wd0
+    # la UI toma el candado antes de responder y se lo pasa a run_batch, que lo libera al terminar
+    lockf.unlink()
+    lk = acquire_lock("ui run")
+    assert run_lock_info()["name"] == "ui_run"
+    assert run_batch("fake", {"ext_outlet": False}, "ui_run", exports=[], lock=lk)["realized"]["ext_outlet"] == "False"
+    assert not lockf.exists()
+    assert project_info(str(Path(list_runs(1)[0]["run_dir"]) / "ui_run_out.cft"))["cfd_ext_outlet"] is False
+    # corrida «running» sin candado (su proceso murió) -> error «interrumpida»; con candado sigue corriendo
+    orphan = WORKDIR / "huerfana_1"
+    orphan.mkdir()
+    (orphan / "run.json").write_text(json.dumps({"id": "huerfana_1", "name": "huerfana", "status": "running",
+                                                 "started": "2026-01-01T00:00:00.000"}), encoding="utf-8")
+    assert [x for x in list_runs() if x["id"] == "huerfana_1"][0]["status"] == "error"
+    assert "interrumpida" in read_json(orphan / "run.json")["errors"][0]
+    shutil.rmtree(orphan)
     lockf.write_text(json.dumps({"pid": 2 ** 30, "name": "muerta", "t": time.time()}), encoding="utf-8")
     assert run_batch("fake", {}, "tras_muerta", exports=[])["status"] in ("ok", "warn")
     assert not lockf.exists() and run_lock_info() is None
@@ -857,6 +923,13 @@ def selftest() -> None:
     bit = (RECIPES / "bitacora.md").read_text(encoding="utf-8")
     assert "VERSIÓN GUARDADA versions/bomba_v1" in bit and "| t1 |" in bit and "| t3 |" not in bit, bit
 
+    # «★ como X» colgante: si la versión se borra, list_runs deja de anunciarla (D-N6)
+    for v, expect in (("bomba_v1", "bomba_v1"), ("borrada", None)):
+        dd = WORKDIR / f"marcada_{v}"
+        dd.mkdir()
+        (dd / "run.json").write_text(json.dumps({"id": dd.name, "name": dd.name, "status": "ok", "saved_as_version": v}), encoding="utf-8")
+        assert [x for x in list_runs(100) if x["id"] == dd.name][0]["saved_as_version"] == expect, v
+        shutil.rmtree(dd)
     recipe_save("prueba-d2", "# sube d2 para más altura\nd2 +10% => H +20%")
     assert recipe_search("altura d2")[0]["file"] == "prueba-d2.md"
     assert any(h["file"] == "bitacora.md" for h in recipe_search("bomba_v1"))

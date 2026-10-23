@@ -18,7 +18,7 @@ La lógica de CFturbo no vive aquí: `server.py` importa `../mcp_server.py` (`ru
 ```
 run_batch (UI o chat/MCP) ──escribe──> %TEMP%\cfturbo-agent\<id>\run.json  (en cada hito)
                                        + running.lock mientras corre
-app.js cada 3 s ──> GET /api/runs?fields=summary + GET /api/status
+app.js cada 3 s ──> GET /api/poll  (= runs summary + status, UNA petición, límite 8 s)
    ├─ galería, topbar, botón Ejecutar
    └─ si cambia la corrida activa ──> GET /api/runs/{id} (run.json completo)
           ├─ hitos/avisos, archivos, tabla «Corrida», comparar
@@ -26,7 +26,8 @@ app.js cada 3 s ──> GET /api/runs?fields=summary + GET /api/status
 ```
 
 Versiones: `versions/<nombre>/run.json` aparece en el mismo listado con `saved=true`.
-Si el sondeo falla: banda «Sin conexión» y reintentos a 3 → 6 → 12 → 30 s.
+Si el sondeo falla: banda «Sin conexión» con cuenta atrás y reintentos a 4 → 8 → 16 → 30 s (≤ 4 errores
+de red en consola en 40 s de caída).
 
 ## Endpoints
 
@@ -36,14 +37,15 @@ Si el sondeo falla: banda «Sin conexión» y reintentos a 3 → 6 → 12 → 30
 | `GET /api/projects` · `/api/project/{name}` | proyectos base e info (`project_info`) |
 | `GET /api/runs?limit=50&fields=summary` | listado; `summary` quita eventos/geometría/exports y añade `n_stl`, `n_files` |
 | `GET /api/runs/{id}` | `run.json` completo |
-| `POST /api/run` `{project, edits, name, exports, save}` | corre en un hilo; 409 si hay candado, 404 si no existe el proyecto |
-| `GET /api/status` | `running`, `running_name`, `running_since`, `chatting`, `workdir`, `versions`, `keep_tmp` |
+| `POST /api/run` `{project, edits, name, exports, save}` | toma el candado global ANTES de responder (409 si otro lo tiene, 404 si no existe el proyecto) y corre en un hilo |
+| `GET /api/status` | `running`, `running_name`, `running_since`, `chatting`, `workdir`, `versions`, `lock_file`, `keep_tmp` |
+| `GET /api/poll?limit=40` | `{runs (summary), status}`: lo único que sondea la página |
 | `POST /api/save` `{run_id, name, note}` | guarda versión; 404 / 409 si el nombre existe |
 | `POST /api/open` `{run_id}` | abre la carpeta en el Explorador |
 | `POST /api/runs/{id}/thumb` (cuerpo PNG) | guarda `thumb.png`; 400 si no es PNG o > 500 KB |
 | `GET /files/{id}/{archivo}` | descarga (STL, STEP…); los PNG se sirven en línea |
 | `POST /api/chat` `{message, session_id, project}` | SSE: `init`, `status`, `text`, `tool`, `tool_result`, `ping`, `result`, `error`, `stopped`, `done` |
-| `POST /api/chat/stop` | mata la CLI del chat en curso |
+| `POST /api/chat/stop` | mata la CLI del chat y sus hijos (`taskkill /T /F`); una corrida a medias queda «interrumpida» |
 
 ## Añadir un parámetro a la tabla
 
@@ -66,8 +68,8 @@ Si el sondeo falla: banda «Sin conexión» y reintentos a 3 → 6 → 12 → 30
 - `python mcp_server.py --selftest` (CFturbo falso, sin licencia).
 - Servidor de desarrollo en otro puerto:
   `.venv\Scripts\python -m uvicorn --app-dir . ui.server:app --port 8766` (desde `cfturbo`).
-- Sin tocar las corridas reales: `CFTURBO_WORKDIR=<carpeta vacía>` (sin temporales; las versiones
-  de `versions/` siguen apareciendo porque esa ruta es fija).
+- Galería aislada (0 o 20 corridas): `CFTURBO_WORKDIR=<carpeta>` y `CFTURBO_VERSIONS=<carpeta>`. El
+  candado (`%TEMP%\cfturbo-agent\running.lock`) NO cambia con ellas: sigue siendo uno por PC.
 - Chat sin la CLI real: `CFT_CLAUDE_BIN=<script que imprime stream-json>`.
 - En el navegador: 0 errores de consola, 1400×900 sin scroll de página, 800×900 apilado.
 - Depuración: `window.__cft` expone `st`, `camera`, `fit`, `selectRun`, `setB`…

@@ -12,11 +12,12 @@ Qué hace (detalle en ui/README.md):
   - POST /api/runs/{id}/thumb         -> guarda la miniatura PNG que captura el visor (thumb.png)
   - POST /api/run    -> corre CFturbo directamente (mcp_server.run_batch en un hilo); 409 si está ocupado
   - GET  /api/status -> running/running_name/running_since (candado running.lock) y chatting
+  - GET  /api/poll   -> {runs (summary), status} en UNA petición: es lo único que sondea la página
   - POST /api/save   -> guarda una corrida como versión en versions/ (409 si el nombre existe)
   - POST /api/open   -> abre la carpeta de una corrida en el Explorador
   - POST /api/chat   -> lanza `claude -p` (Claude Code CLI, suscripción, sin API key) con las tools
                         cft_* y devuelve los eventos por SSE; `--resume` mantiene la conversación
-  - POST /api/chat/stop -> mata la CLI del chat en curso
+  - POST /api/chat/stop -> mata la CLI del chat en curso y sus hijos (MCP, CFturbo)
 Una sola corrida de CFturbo a la vez (candado en disco de mcp_server, vale también para el chat y
 otras sesiones) y un solo chat a la vez.
 """
@@ -30,6 +31,7 @@ import subprocess
 import sys
 import threading
 import time
+from collections import deque
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
@@ -104,7 +106,7 @@ def project(name: str) -> dict:
 @app.get("/api/runs")
 def runs(limit: int = 50, fields: str = "") -> list[dict]:
     """fields=summary: sin eventos ni geometría (lo usa el sondeo cada 3 s; el detalle va en /api/runs/{id})."""
-    return cft.list_runs(limit, summary=fields == "summary")
+    return cft.list_runs(max(1, min(limit, 500)), summary=fields == "summary")
 
 
 def _run_dir(rid: str) -> Path:
@@ -170,20 +172,24 @@ class RunReq(BaseModel):
 
 @app.post("/api/run")
 def api_run(req: RunReq) -> dict:
-    busy = cft.run_lock_info()  # candado por archivo: cubre también las corridas del chat (MCP) y otros clientes
-    if busy or not RUN_LOCK.acquire(blocking=False):
-        raise HTTPException(409, f"CFturbo trabajando ({busy.get('name')})" if busy else "ya hay una corrida de CFturbo en marcha")
+    if not RUN_LOCK.acquire(blocking=False):
+        raise HTTPException(409, "ya hay una corrida de CFturbo en marcha")
     try:
         cft.resolve_project(req.project)
+        # el candado en disco (global, cubre chat/MCP y otros procesos) se toma AQUÍ, antes de responder:
+        # si otro lo tiene, el usuario recibe 409 y no un «started» que luego no corre
+        lock = cft.acquire_lock(req.name)
     except FileNotFoundError as e:
         RUN_LOCK.release()
         raise HTTPException(404, str(e))
+    except cft.CFturboBusy:
+        RUN_LOCK.release()
+        busy = cft.run_lock_info() or {}
+        raise HTTPException(409, f"CFturbo trabajando ({busy.get('name', 'otra corrida')})")
 
     def work() -> None:
         try:
-            cft.run_batch(req.project, req.edits, req.name, req.exports, req.save)
-        except cft.CFturboBusy:
-            pass  # otro proceso tomó el candado entre la comprobación y el arranque
+            cft.run_batch(req.project, req.edits, req.name, req.exports, req.save, lock=lock)
         finally:
             RUN_LOCK.release()
 
@@ -196,7 +202,14 @@ def status() -> dict:
     lock = cft.run_lock_info()
     return {"running": RUN_LOCK.locked() or lock is not None, "running_name": (lock or {}).get("name"),
             "running_since": (lock or {}).get("started"), "chatting": CHAT_LOCK.locked(), "claude": CLAUDE_BIN,
-            "workdir": str(cft.WORKDIR), "versions": str(cft.VERSIONS), "keep_tmp": cft.KEEP_TMP}
+            "workdir": str(cft.WORKDIR), "versions": str(cft.VERSIONS), "lock_file": str(cft.LOCK_FILE),
+            "keep_tmp": cft.KEEP_TMP}
+
+
+@app.get("/api/poll")
+def poll(limit: int = 40) -> dict:
+    """Sondeo de la página: una sola petición cada 3 s (si el servidor cae, un solo error por intento)."""
+    return {"runs": cft.list_runs(max(1, min(limit, 500)), summary=True), "status": status()}
 
 
 class OpenReq(BaseModel):
@@ -251,6 +264,10 @@ def _chat_events(req: ChatReq):
         hidden: set[str] = set()  # ids de tools internas (ToolSearch, Read…) que no se muestran al usuario
         q: queue.Queue = queue.Queue()
         threading.Thread(target=lambda: ([q.put(l) for l in p.stdout], q.put(None)), daemon=True).start()
+        # stderr en su propio hilo: si se leyera al final, una tubería llena bloquearía a la CLI
+        err_tail: deque[str] = deque(maxlen=40)
+        err_thread = threading.Thread(target=lambda: [err_tail.append(l) for l in p.stderr], daemon=True)
+        err_thread.start()
         yield _sse({"kind": "status", "text": "Claude Code arrancando…"})
         t0 = time.time()
         while True:
@@ -294,7 +311,8 @@ def _chat_events(req: ChatReq):
                             "turns": o.get("num_turns"), "seconds": round(time.time() - t0),
                             "text": o.get("result") if o.get("subtype") != "success" else None})
         rc = p.wait()
-        err = p.stderr.read().strip() if p.stderr else ""
+        err_thread.join(timeout=2)
+        err = "".join(err_tail).strip()
         if CHAT_PROC.get("stopped"):
             yield _sse({"kind": "stopped", "text": "Detenido por el usuario"})
         elif rc not in (0, None) and err:
@@ -316,6 +334,15 @@ def api_chat_stop() -> dict:
     p = CHAT_PROC["p"]
     if p and p.poll() is None:
         CHAT_PROC["stopped"] = True
-        p.kill()
+        _kill_tree(p)
         return {"stopped": True}
     return {"stopped": False}
+
+
+def _kill_tree(p: subprocess.Popen) -> None:
+    """Mata la CLI y sus hijos (mcp_server.py -> CFturbo.exe). Una corrida a medias queda «running» sin
+    candado y list_runs la marca como interrumpida."""
+    if os.name == "nt":
+        subprocess.run(["taskkill", "/PID", str(p.pid), "/T", "/F"], capture_output=True)
+    if p.poll() is None:
+        p.kill()
