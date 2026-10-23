@@ -103,6 +103,8 @@
       <h2>Hitos <span class="sp"></span><span id="runtitle" class="mono" style="text-transform:none;letter-spacing:0"></span></h2>
       <ul class="ev" id="events"><li class="mut">esperando corrida…</li></ul>
       <div id="msgs"></div>
+      <div class="row" style="margin-top:8px"><input id="savename" placeholder="nombre de la versión"><button class="pri sm" id="savebtn" disabled>★ Guardar versión</button></div>
+      <div class="mut" id="savemsg" style="font-size:11px;margin-top:4px">Las corridas son temporales (se conservan las últimas 8). Solo lo guardado queda en <span class="mono">versions/</span>.</div>
     </div>
     <div class="card">
       <h2>Archivos <span class="sp"></span><button class="sm" id="openfolder" disabled>Abrir carpeta</button></h2>
@@ -221,7 +223,7 @@ async function poll() {
 function renderRuns() {
   $('runs').querySelector('tbody').innerHTML = st.runs.map(r => {
     const d = r.info?.dims || {};
-    return `<tr class="run ${st.run && st.run.id === r.id ? 'sel' : ''}" data-id="${r.id}"><td>${r.name}</td><td class="mono">${(r.started || '').slice(11, 16)}</td><td class="num">${fmt(d.d2_mm)}</td><td class="num">${d.nBl ?? ''}</td><td><span class="tag ${r.status}">${r.status}</span></td></tr>`;
+    return `<tr class="run ${st.run && st.run.id === r.id ? 'sel' : ''}" data-id="${r.id}"><td>${r.saved ? '★ ' : ''}${r.saved ? r.id : r.name}</td><td class="mono">${(r.started || '').slice(11, 16)}</td><td class="num">${fmt(d.d2_mm)}</td><td class="num">${d.nBl ?? ''}</td><td><span class="tag ${r.status}">${r.saved ? 'guardada' : r.status}</span></td></tr>`;
   }).join('');
   for (const tr of $('runs').querySelectorAll('tr.run')) tr.onclick = () => { st.pinned = tr.dataset.id !== st.runs[0]?.id; selectRun(tr.dataset.id); };
 }
@@ -237,9 +239,18 @@ async function selectRun(id) {
   const nstl = (r.exports?.OpenFOAM || []).length;
   $('files').innerHTML = (all.map(({ itf, f }) => `<li><a href="/files/${r.id}/${encodeURIComponent(f)}" download>${f}</a> <span class="mut">${itf}</span></li>`).join('') + (nstl ? `<li class="mut">${nstl} STL para el visor</li>` : '')) || '<li class="mut">sin archivos</li>';
   $('openfolder').disabled = false;
+  $('savebtn').disabled = !!r.saved || r.status === 'running' || r.status === 'error';
+  $('savebtn').textContent = r.saved ? '★ Guardada' : '★ Guardar versión';
   if (!same) loadGeometry(r);
 }
 $('openfolder').onclick = () => st.run && fetch('/api/open', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ run_id: st.run.id }) });
+$('savebtn').onclick = async () => {
+  if (!st.run) return;
+  const name = $('savename').value.trim() || st.run.name;
+  const r = await fetch('/api/save', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ run_id: st.run.id, name }) });
+  if (!r.ok) { $('savemsg').textContent = 'error: ' + ((await r.json()).detail || r.status); return; }
+  const j = await r.json(); $('savemsg').textContent = `guardada en ${j.saved_as}`; $('savename').value = ''; st.pinned = true; await poll(); selectRun(j.id);
+};
 
 // ---------------------------------------------------------------- chat
 function addMsg(cls, html) { const d = document.createElement('div'); d.className = 'm ' + cls; d.innerHTML = html; $('chatlog').appendChild(d); $('chatlog').scrollTop = 1e9; return d; }

@@ -42,10 +42,18 @@ usuario pega aquí.
 | `cft_info(project)` | punto de diseño (Q m³/h, H m, n rpm, nq), fluido, componentes, d2/b2/dS/dH/Psi/nBl |
 | `cft_params(project, filter)` | alias con valor actual + hojas del XML que cumplan el regex (para parámetros sin alias) |
 | `cft_run(project, edits, name, exports, save)` | copia a `work/<name>_<ts>/`, edita, corre, exporta; devuelve `realized`, `corrected`, `warnings`, `errors`, archivos |
-| `cft_runs(limit)` | últimas corridas (`run.json`) |
+| `cft_runs(limit)` | últimas corridas, temporales y guardadas (`saved`) |
+| `cft_save(run_id, name, note)` | guarda una corrida como versión en `versions/` y la anota en la bitácora |
 | `cft_log(run_dir)` | cola del log |
 | `cft_nq(Q_m3h, H_m, n_rpm)` | nq y tipo de máquina orientativo |
 | `cft_recipe_search` / `cft_recipe_save` | memoria |
+
+Dónde viven las cosas: las corridas van a `%TEMP%\cfturbo-agent\<name>_<ts>\` y se podan solas
+(quedan las 8 últimas). Lo que el usuario quiere conservar se guarda con `cft_save` (o el botón
+"Guardar versión") en `versions/<nombre>/`. Cada corrida que sale bien y cada versión guardada
+dejan una línea en `recipes/bitacora.md`, que `cft_recipe_search` indexa: esa es la biblioteca
+del agente junto con las recetas. **Regla:** antes de proponer, `cft_recipe_search`; después de
+algo que funcionó, `cft_recipe_save` con el porqué.
 
 Claves de `edits`: alias SI (`Q` m³/s, `H` m, `n` 1/s, `d2` `b2` `dS` `dH` m, `Psi`, `nBl`,
 `AutoUpdate`, `volute_d_out`), con unidad (`Q_m3h`, `H_m`, `n_rpm`, `d2_mm`, `b2_mm`, `dS_mm`,

@@ -43,6 +43,9 @@ CHAT_SYSTEM = (
     "los hitos y la tabla de corridas, que se refrescan solos. Responde en español, corto, con tablas "
     "para números. Cuando pidan crear o variar una bomba usa cft_run directamente (sin pedir confirmación); "
     "cuando pidan resumen usa cft_runs y cft_info. Si CFturbo corrige un valor, dilo. "
+    "Las corridas son temporales: cuando el usuario diga que un diseño le sirve, guárdalo con cft_save "
+    "(nombre corto, note con el porqué) y registra el aprendizaje con cft_recipe_save. Antes de proponer "
+    "un diseño consulta cft_recipe_search (recetas + bitácora de lo que funcionó). "
     "Termina siempre con una línea: qué corrida quedó y qué cambió."
 )
 
@@ -79,10 +82,26 @@ def runs(limit: int = 50) -> list[dict]:
 def _run_dir(rid: str) -> Path:
     if not rid or any(c in rid for c in "/\\") or ".." in rid:
         raise HTTPException(400, "id inválido")
-    d = cft.WORKDIR / rid
-    if not (d / "run.json").exists():
-        raise HTTPException(404, "corrida no encontrada")
-    return d
+    try:
+        return cft.find_run(rid)
+    except FileNotFoundError as e:
+        raise HTTPException(404, str(e))
+
+
+class SaveReq(BaseModel):
+    run_id: str
+    name: str | None = None
+    note: str = ""
+
+
+@app.post("/api/save")
+def api_save(req: SaveReq) -> dict:
+    try:
+        return cft.save_version(req.run_id, req.name, req.note)
+    except FileNotFoundError as e:
+        raise HTTPException(404, str(e))
+    except FileExistsError as e:
+        raise HTTPException(409, str(e))
 
 
 @app.get("/api/runs/{rid}")
@@ -132,7 +151,8 @@ def api_run(req: RunReq) -> dict:
 
 @app.get("/api/status")
 def status() -> dict:
-    return {"running": RUN_LOCK.locked(), "chatting": CHAT_LOCK.locked(), "claude": CLAUDE_BIN}
+    return {"running": RUN_LOCK.locked(), "chatting": CHAT_LOCK.locked(), "claude": CLAUDE_BIN,
+            "workdir": str(cft.WORKDIR), "versions": str(cft.VERSIONS), "keep_tmp": cft.KEEP_TMP}
 
 
 class OpenReq(BaseModel):

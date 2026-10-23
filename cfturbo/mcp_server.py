@@ -28,15 +28,20 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 import xml.etree.ElementTree as ET
 from datetime import datetime
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-WORKDIR = Path(os.environ.get("CFTURBO_WORKDIR", HERE / "work"))
+# Las corridas van a una carpeta temporal y se podan solas; solo lo que el usuario guarda
+# (cft_save / botón "Guardar versión") pasa a versions/ dentro del proyecto.
+WORKDIR = Path(os.environ.get("CFTURBO_WORKDIR", Path(tempfile.gettempdir()) / "cfturbo-agent"))
+VERSIONS = HERE / "versions"
 PROJECTS = HERE / "projects"
 RECIPES = HERE / "recipes"
+KEEP_TMP = 8  # corridas temporales que se conservan (las guardadas no cuentan)
 EXPORTS_DEFAULT = ("StarCCM", "OpenFOAM")  # STEP+ccm para la MV, STL para el visor
 G = 9.80665
 
@@ -397,19 +402,90 @@ def run_batch(project: str, edits: dict | None = None, name: str = "design",
         except Exception as err:  # ponytail: info es cortesía, no debe tumbar la corrida
             res["info_error"] = str(err)
     res["status"] = "error" if res["errors"] or rc not in (0, 1) else ("warn" if res["warnings"] else "ok")
+    res["saved"] = False
     ev({"ok": "Corrida OK", "warn": "Corrida con avisos", "error": "Corrida con errores"}[res["status"]])
+    if res["status"] != "error":
+        _bitacora(res)
+    prune_tmp(exclude=run_dir.name)
     return res
+
+
+def _bitacora(r: dict, note: str = "") -> None:
+    """Biblioteca del agente: una línea por corrida que salió bien (y por versión guardada).
+    recipe_search la indexa, así Claude ve qué combinaciones funcionaron antes de proponer."""
+    RECIPES.mkdir(exist_ok=True)
+    f = RECIPES / "bitacora.md"
+    if not f.exists():
+        f.write_text("# Bitácora de corridas (automática)\n\nQué se pidió, qué quedó y cómo salió. "
+                     "Las recetas con el porqué van en archivos aparte (cft_recipe_save).\n\n", encoding="utf-8")
+    d = (r.get("info") or {}).get("dims") or {}
+    dims = ", ".join(f"{k} {v}" for k, v in (("d2", d.get("d2_mm")), ("b2", d.get("b2_mm")), ("nBl", d.get("nBl")),
+                                             ("Psi", d.get("Psi"))) if v is not None)
+    edits = ", ".join(f"{k}={v}" for k, v in (r.get("edits") or {}).items()) or "sin cambios"
+    corr = "; corrigió " + ", ".join(f"{k} {a}->{b}" for k, (a, b) in r.get("corrected", {}).items()) if r.get("corrected") else ""
+    line = (f"- {(r.get('started') or _now())[:16].replace('T', ' ')} | {r.get('name')} | base {Path(r.get('project', '')).stem} | "
+            f"pedido: {edits} | quedó: {dims} | {r.get('status')} ({len(r.get('warnings') or [])} avisos){corr}"
+            + (f" | {note}" if note else "") + "\n")
+    with f.open("a", encoding="utf-8") as fh:
+        fh.write(line)
+
+
+def _all_run_dirs() -> list[Path]:
+    dirs = []
+    for base in (WORKDIR, VERSIONS):
+        if base.exists():
+            dirs += [f.parent for f in base.glob("*/run.json")]
+    return dirs
+
+
+def find_run(run_id: str) -> Path:
+    for d in _all_run_dirs():
+        if d.name == run_id:
+            return d
+    raise FileNotFoundError(f"corrida '{run_id}' no encontrada (ni temporal ni guardada)")
+
+
+def save_version(run_id: str, name: str | None = None, note: str = "") -> dict:
+    """Copia una corrida temporal a versions/<name>/ (lo único que sobrevive a la poda)."""
+    src = find_run(run_id)
+    name = re.sub(r"[^A-Za-z0-9_.-]+", "_", name or run_id) or run_id
+    dst = VERSIONS / name
+    if dst.exists() and dst != src:
+        raise FileExistsError(f"ya existe versions/{name}")
+    if dst != src:
+        VERSIONS.mkdir(exist_ok=True)
+        shutil.copytree(src, dst)
+    r = read_json(dst / "run.json")
+    r.update(saved=True, saved_as=str(dst), id=dst.name, run_dir=str(dst), note=note or r.get("note", ""))
+    r.setdefault("events", []).append({"t": _now(), "msg": f"Guardada como versión «{name}»"})
+    (dst / "run.json").write_text(json.dumps(r, indent=1, ensure_ascii=False), encoding="utf-8")
+    _bitacora(r, note=f"VERSIÓN GUARDADA versions/{name}" + (f": {note}" if note else ""))
+    return {"saved_as": str(dst), "id": dst.name}
+
+
+def prune_tmp(keep: int = KEEP_TMP, exclude: str = "") -> list[str]:
+    """Borra las corridas temporales más viejas dejando `keep`. Las de versions/ no se tocan."""
+    if not WORKDIR.exists():
+        return []
+    dirs = sorted((d for d in WORKDIR.iterdir() if d.is_dir() and d.name != exclude), key=lambda d: d.stat().st_mtime, reverse=True)
+    gone = []
+    for d in dirs[max(keep - 1, 0):]:
+        shutil.rmtree(d, ignore_errors=True)
+        gone.append(d.name)
+    return gone
 
 
 def list_runs(limit: int = 50) -> list[dict]:
     runs = []
-    for f in WORKDIR.glob("*/run.json") if WORKDIR.exists() else []:
+    for d in _all_run_dirs():
         try:
-            r = read_json(f)
+            r = read_json(d / "run.json")
         except (OSError, ValueError):
             continue
-        runs.append({k: r.get(k) for k in ("id", "name", "started", "status", "seconds", "edits", "realized",
-                                           "corrected", "errors", "warnings", "exports", "geometry", "events", "info", "run_dir")})
+        row = {k: r.get(k) for k in ("id", "name", "started", "status", "seconds", "edits", "realized", "corrected",
+                                      "errors", "warnings", "exports", "geometry", "events", "info", "run_dir", "note")}
+        row["saved"] = d.parent == VERSIONS
+        runs.append(row)
     runs.sort(key=lambda r: (r.get("started") or "", r.get("id") or ""), reverse=True)
     return runs[:limit]
 
@@ -473,13 +549,23 @@ def serve() -> None:
 
     @mcp.tool()
     def cft_runs(limit: int = 20) -> list[dict]:
-        """Últimas corridas (run.json de work/), de la más reciente a la más antigua."""
+        """Últimas corridas (temporales y versiones guardadas, campo `saved`), de la más reciente a la
+        más antigua. Las temporales se podan solas: lo que importe, guardarlo con cft_save."""
         return list_runs(limit)
 
     @mcp.tool()
+    def cft_save(run_id: str, name: str | None = None, note: str = "") -> dict:
+        """Guarda una corrida como versión en versions/<name>/ (sobrevive a la poda) y la anota en la
+        bitácora. Úsalo cuando el usuario diga que un diseño le sirve. `note`: por qué sirve."""
+        return save_version(run_id, name, note)
+
+    @mcp.tool()
     def cft_log(run_dir: str, tail: int = 80) -> str:
-        """Últimas líneas del log de CFturbo de una corrida."""
-        f = Path(run_dir) / "cfturbo.log"
+        """Últimas líneas del log de CFturbo de una corrida (ruta run_dir o id)."""
+        d = Path(run_dir)
+        if not d.exists():
+            d = find_run(run_dir)
+        f = d / "cfturbo.log"
         return "\n".join(f.read_text(encoding="utf-8", errors="replace").splitlines()[-tail:]) if f.exists() else "(sin log)"
 
     @mcp.tool()
@@ -489,12 +575,14 @@ def serve() -> None:
 
     @mcp.tool()
     def cft_recipe_search(query: str) -> list[dict]:
-        """Busca recetas guardadas (combinaciones de parámetros, lecciones) por palabras."""
+        """Biblioteca del proyecto: busca por palabras en las recetas y en la bitácora automática de
+        corridas (recipes/bitacora.md). Consultar SIEMPRE antes de proponer un diseño."""
         return recipe_search(query)
 
     @mcp.tool()
     def cft_recipe_save(name: str, body: str) -> str:
-        """Guarda una receta en recipes/<name>.md. Primera línea: qué hace."""
+        """Guarda un aprendizaje en recipes/<name>.md (primera línea: qué logra). Llamar cada vez que
+        una combinación de parámetros funcione o se descubra algo de CFturbo: es la memoria del agente."""
         return recipe_save(name, body)
 
     mcp.run()
@@ -558,10 +646,9 @@ sys.exit(1)  # 1 = con avisos, como CFturbo
 
 
 def selftest() -> None:
-    global WORKDIR, PROJECTS, RECIPES
-    import tempfile
+    global WORKDIR, PROJECTS, RECIPES, VERSIONS
     tmp = Path(tempfile.mkdtemp())
-    WORKDIR, PROJECTS, RECIPES = tmp / "work", tmp / "projects", tmp / "recipes"
+    WORKDIR, PROJECTS, RECIPES, VERSIONS = tmp / "work", tmp / "projects", tmp / "recipes", tmp / "versions"
     (PROJECTS / "fake").mkdir(parents=True)
     (PROJECTS / "fake" / "fake.cft").write_text(FAKE_CFT, encoding="utf-8")
     fake = tmp / "fake_cfturbo.py"
@@ -599,8 +686,20 @@ def selftest() -> None:
     assert [x["name"] for x in list_runs(2)] == ["t3", "t2"]
     assert nq_calc(227, 70, 3600)["tipo"] == "radial normal"
 
+    # versiones y poda: t1 guardada sobrevive, las temporales se reducen a KEEP
+    sv = save_version(r["id"], "bomba_v1", note="sirve")
+    assert (VERSIONS / "bomba_v1" / "run.json").exists() and sv["id"] == "bomba_v1"
+    assert [x for x in list_runs() if x["saved"]][0]["id"] == "bomba_v1"
+    for i in range(KEEP_TMP + 2):
+        run_batch("fake", {}, f"p{i}", exports=[])
+    assert len([d for d in WORKDIR.iterdir() if d.is_dir()]) == KEEP_TMP, list(WORKDIR.iterdir())
+    assert (VERSIONS / "bomba_v1").exists()
+    bit = (RECIPES / "bitacora.md").read_text(encoding="utf-8")
+    assert "VERSIÓN GUARDADA versions/bomba_v1" in bit and "| t1 |" in bit and "| t3 |" not in bit, bit
+
     recipe_save("prueba-d2", "# sube d2 para más altura\nd2 +10% => H +20%")
     assert recipe_search("altura d2")[0]["file"] == "prueba-d2.md"
+    assert any(h["file"] == "bitacora.md" for h in recipe_search("bomba_v1"))
     shutil.rmtree(tmp)
     print("selftest OK")
 
