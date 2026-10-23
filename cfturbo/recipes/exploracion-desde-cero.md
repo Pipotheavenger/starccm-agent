@@ -145,12 +145,13 @@ Errores de método que costaron una corrida (ya corregidos en el prototipo):
   turbina la hace el CFD con el rotor girando al revés. No probado en CFD.
 - `mcp_server._STL_RX` no reconoce nombres con `-Flowdomain(virtual)-` ni captions sin corchetes
   (p. ej. `_Co2_Impeller-Flowdomain(virtual)-Hub.stl`): esas piezas salen sin componente en `geometry`
-  (visible en nq8, nq20, nq31, MP, AP). Arreglarlo en el MCP (no tocado aquí).
+  (visible en nq8, nq20, nq31, MP, AP). **Arreglado en la ronda 3** (`_STL_RX` acepta ambos; 6 casos en
+  el selftest).
 
 ## Recomendación
 
-1. Usar este flujo como `cft_new(Q_m3h, H_m, n_rpm, name)` en el MCP (envolver `desde_cero.nueva_bomba`) y
-   en la UI como "Nueva bomba desde punto de diseño". Después, el flujo normal de `cft_run` (d2, b2, nBl,
+1. Hecho en la ronda 3: `cft_new(Q_m3h, H_m, n_rpm, name, base, run)` en el MCP (usa `desde_cero.preparar`
+   + `run_batch`) y «＋ Nueva» en la UI. Después, el flujo normal de `cft_run` (d2, b2, nBl,
    Psi…) sobre el `_out.cft` resultante.
 2. GUI solo para cubrir huecos de nq: crear **una bomba base por banda** que falte (nq 55–90 radial
    rápida/semiaxial con voluta; nq < 8 si hace falta; una PAT si se quiere forma de turbina) y guardarla

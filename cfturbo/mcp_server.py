@@ -4,12 +4,19 @@ CFturbo no tiene API. Lo que sí tiene (verificado el 2026-10-23 con 2026.1.1):
   - `CFturbo.exe -batch X.cft-batch -log X.log` corre sin GUI.
   - El .cft es XML plano: cambiar d2, b2, nBl, Q, H, n... y volver a abrirlo en batch regenera
     la geometría (CFturbo recalcula lo que depende de eso y avisa en el log).
-  - El batch exporta (StarCCM = STEP + .cfturbo-ccm; OpenFOAM = STL por superficie) y guarda.
+  - El batch exporta (StarCCM = STEP + .cfturbo-ccm; OpenFOAM = STL por superficie; PerformanceData =
+    curvas .cft-pp, siempre; Report = <name>.html, opcional) y guarda.
   - El bloque <Updates> del batch solo se acepta si la plantilla la generó la GUI; por eso
     aquí NO se usa. Se edita el .cft copiado y se corre con <Updates/>.
 
+Tools (12): cft_projects, cft_info, cft_params, cft_run, cft_runs, cft_save, cft_delete, cft_new,
+cft_log, cft_nq, cft_recipe_search, cft_recipe_save. edits especiales (SPECIAL): ext_outlet,
+beta1_deg, beta2_deg (fijan β y apagan AutoUpdate1/2), beta_auto, s_mm. cft_new escala por semejanza
+con explora/desde_cero.py (cargado con importlib) y crea projects/<name>/<name>.cft.
+
 Uso:   python mcp_server.py            (stdio, lo lanza Claude Code desde .mcp.json)
-       python mcp_server.py --selftest (prueba con un cfturbo falso, sin licencia)
+       python mcp_server.py --selftest (prueba con un cfturbo falso, sin licencia, ~5-7 s; incluye
+                                        bordes y una prueba HTTP de ui/server.py si hay fastapi)
 
 Env:   CFTURBO_EXE      ruta a CFturbo.exe (si falta, se busca en Program Files)
        CFTURBO_WORKDIR  carpeta de corridas temporales (default: %TEMP%/cfturbo-agent)
@@ -17,13 +24,16 @@ Env:   CFTURBO_EXE      ruta a CFturbo.exe (si falta, se busca en Program Files)
                         permite una galería aislada (pruebas con 0 o 20 corridas)
 
 Cada corrida vive en WORKDIR/<name>_<timestamp>/ con: <name>.cft (copia editada), .cft-batch,
-.cft-res, <name>_out.cft (lo que CFturbo guardó), *.log, exportes, run.json (resumen que lee la
-interfaz controladora en ui/) y thumb.png (miniatura que sube la UI). Se conservan las KEEP_TMP
-últimas; lo que el usuario guarda (cft_save) se copia a versions/<nombre>/.
+.cft-res, .cft-pp, <name>_out.cft (lo que CFturbo guardó), *.log, exportes, run.json (resumen que lee
+la interfaz controladora en ui/), thumb.png (miniatura que sube la UI) y .visor/ (STL binarios). Se
+conservan las KEEP_TMP últimas (por la hora del nombre); lo que el usuario guarda (cft_save) se copia
+a versions/<nombre>/; cft_delete borra una temporal o una versión.
 Una corrida a la vez EN EL PC: %TEMP%/cfturbo-agent/running.lock (pid, nombre, hora), ruta fija
 que no cambia con CFTURBO_WORKDIR (una sola licencia de CFturbo).
-Cada corrida no fallida y cada versión guardada dejan una línea en recipes/bitacora.md.
-run.json["timing"] = segundos de cada fase de run_batch (preparar, cfturbo, leer, cerrar, total).
+Cada corrida no fallida y cada versión guardada o borrada dejan una línea en recipes/bitacora.md.
+run.json (escritura atómica): además de lo pedido/realizado, "curves" (H-Q, η-Q, P-Q del .cft-pp),
+"report" (valores clave del reporte, si se exportó) y "timing" = segundos de cada fase de run_batch
+(preparar, cfturbo, leer, cerrar, total).
 list_runs relee un run.json solo si cambió su mtime (caché en memoria); stl_binary convierte los STL ASCII
 de CFturbo a binario (5× menos bytes) para el visor y lo guarda en <corrida>/.visor/.
 """

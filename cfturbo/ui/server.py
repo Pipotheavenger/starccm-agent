@@ -12,7 +12,8 @@ Qué hace (detalle en ui/README.md):
   - GET  /api/runs/{id}               -> run.json completo de una corrida (curvas, reporte y timing incluidos)
   - DELETE /api/runs/{id}             -> borra una corrida temporal o una versión (409 si está corriendo)
   - GET  /api/new/suggest?Q&H&n[&base] -> base más cercana en nq para una bomba nueva, k y aviso (> ×1,5)
-  - POST /api/new                     -> crea projects/<name>/<name>.cft por semejanza (409 si existe)
+  - POST /api/new                     -> crea projects/<name>/<name>.cft por semejanza (409 si existe); no corre
+                                         CFturbo: la página lanza después <name>_1 con /api/run
   - GET  /files/{id}/{archivo}        -> STL, STEP… de una corrida o versión (thumb.png y reporte en línea)
   - GET  /stl/{id}/{archivo}.stl      -> el mismo STL en binario para el visor (5× menos bytes; caché en .visor/)
   - POST /api/runs/{id}/thumb         -> guarda la miniatura PNG que captura el visor (thumb.png)
@@ -21,7 +22,8 @@ Qué hace (detalle en ui/README.md):
   - POST /api/save   -> guarda una corrida como versión en versions/ (409 si el nombre existe)
   - POST /api/open   -> abre la carpeta de una corrida en el Explorador
   - POST /api/chat   -> lanza `claude -p` (Claude Code CLI, suscripción, sin API key) con las tools
-                        cft_* y devuelve los eventos por SSE; `--resume` mantiene la conversación
+                        cft_* y devuelve los eventos por SSE (kind: status, init, text, tool, tool_result,
+                        ping, raw, result, error, stopped, done); `--resume` mantiene la conversación
   - POST /api/chat/stop -> mata la CLI del chat en curso y sus hijos (MCP, CFturbo)
 Errores: siempre JSON {"detail": "texto"} (también los de validación, 422, y los inesperados, 500).
 Una sola corrida de CFturbo a la vez (candado en disco de mcp_server, vale también para el chat y
