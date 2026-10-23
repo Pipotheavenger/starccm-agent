@@ -57,11 +57,19 @@ starccm\.venv\Scripts\python -m uvicorn --app-dir starccm ui.server:app --port 8
 | `ui/server.py` | FastAPI: página, casos, estado del solver, escena en vivo, chat SSE; `--selftest` (HTTP, sin solver ni CLI, ~3 s) |
 | `ui/index.html` · `ui/app.js` · `ui/style.css` | marcado, lógica (módulo ES, sin build) y estilos (mismos tokens que cfturbo/ui) |
 
-Paneles: **Casos** (`cases/<caso>/`: RESUMEN.md renderizado, escenas PNG de `images/`, curva de
-`reports/convergencia.csv` con H y M frente a iteración, uno por gráfico, y criterio < 0,5 %),
-**Solver** (`.server.json` + cola de `agent.log`, botón «Apagar solver»), **En vivo** (escena grande:
-STAR-CCM+ en modo servidor no tiene ventana; se exporta un PNG a demanda, ~10 s, con auto cada 60 s)
-y **Chat** (Claude Code CLI con cwd en `starccm/` y el MCP `starccm` del `.mcp.json` de la raíz).
+La página gira en torno a UNA simulación (el caso elegido a la izquierda; por defecto `cursocfturbo`).
+Pestañas: **Resumen** (RESUMEN.md renderizado), **Escenas** (PNG de `images/`, zoom y «↻» que
+re-exporta esa escena desde el solver vivo), **Convergencia** (`reports/convergencia.csv`: H y M
+frente a iteración, un gráfico por magnitud, tabla y criterio < 0,5 %), **En vivo** (escena grande:
+STAR-CCM+ en modo servidor no tiene ventana; se exporta un PNG a demanda, ~10 s, con auto cada 60 s),
+**Árbol** (`inspect("tree")`: regiones, física, malla, reportes, monitores, escenas, como el panel
+izquierdo de STAR-CCM+; se lee a demanda y se cachea) y **Progreso** (la «terminal»: cola del
+`sims/<sim>.server.log`, última macro inyectada con su salida y `agent.log`, cada 3 s).
+Además: **Solver** (`.server.json`, inactividad, botón «Apagar solver»), **Abrir en STAR-CCM+** (lanza
+la GUI con `sims/<caso>.sim`, solo sin servidor batch vivo, avisando del coste PoD), **Chat** (Claude
+Code CLI con cwd en `starccm/` y el MCP `starccm` del `.mcp.json` de la raíz) y **Parámetros**
+(rpm, caudal, tamaño base de malla, iteraciones): la página los convierte en un prompt y Claude los
+cambia vía MCP; la UI nunca edita el .sim. Planos de corte, vectores y escenas nuevas se piden por el chat.
 
 | método y ruta | qué hace |
 |---|---|
@@ -72,6 +80,9 @@ y **Chat** (Claude Code CLI con cwd en `starccm/` y el MCP `starccm` del `.mcp.j
 | `GET /api/live?case=` | PNG exportados, los más nuevos primero |
 | `POST /api/scene {name, case}` | `export_scene` al `images/` del caso; 409 sin solver vivo o mientras el chat trabaja |
 | `GET /api/scenes` | nombres de escenas del .sim (`inspect("scenes")`) |
+| `GET /api/progress` | `server_log {file size mtime tail[]}`, `agent_log[]`, `macro {file started running finished body out[]}` |
+| `GET /api/tree[?refresh=1]` | árbol cacheado; con `refresh` lee del solver (`inspect("tree")`, ~10 s; 409 sin solver o con el chat trabajando) |
+| `POST /api/open_gui {case}` | lanza la GUI de STAR-CCM+ con `sims/<caso>.sim` y la licencia de `.env`; 404 sin .sim, 409 con servidor batch vivo |
 | `POST /api/chat {message, session_id, case}` | SSE: `status init text tool tool_result ping raw result error stopped done`; un chat a la vez |
 | `POST /api/chat/stop` | mata la CLI y sus hijos |
 

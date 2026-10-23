@@ -62,7 +62,7 @@ if not log.handlers:
 
 
 class _QuietPoll(logging.Filter):
-    RX = re.compile(r'"GET /(api/status|api/cases|files/)[^"]*" (200|304)')
+    RX = re.compile(r'"GET /(api/status|api/cases|api/progress|api/live|api/tree\?|files/|scenes/)[^"]*" (200|304)')
 
     def filter(self, rec: logging.LogRecord) -> bool:
         return not self.RX.search(rec.getMessage())
@@ -316,6 +316,100 @@ def api_scenes() -> dict:
             **({"exception": r["exception"]} if r.get("exception") else {})}
 
 
+# ---------------------------------------------------------------- progreso: log del servidor y macros (la «terminal»)
+def _tail_file(p: Path, nbytes: int = 24_000, nlines: int = 80) -> list[str]:
+    if not p.is_file():
+        return []
+    with open(p, "rb") as f:
+        f.seek(0, 2)
+        size = f.tell()
+        f.seek(max(0, size - nbytes))
+        lines = f.read().decode("utf-8", "replace").splitlines()
+    if size > nbytes and lines:
+        lines = lines[1:]  # la primera puede venir cortada
+    return [scc._redact(ln)[:400] for ln in lines[-nlines:]]
+
+
+def _server_log_path() -> Path | None:
+    st = scc._state()
+    p = Path(st.get("log") or "")
+    if p.is_file():
+        return p
+    logs = sorted(scc.SIMS.glob("*.server.log"), key=lambda q: q.stat().st_mtime) if scc.SIMS.is_dir() else []
+    return logs[-1] if logs else None
+
+
+@app.get("/api/progress")
+def progress() -> dict:
+    """Cola del log del servidor de STAR-CCM+, última macro inyectada (en marcha si aún no tiene .out) y su salida."""
+    lp = _server_log_path()
+    out: dict = {"server_log": {"file": str(lp) if lp else None, "size": lp.stat().st_size if lp else 0,
+                                "mtime": int(lp.stat().st_mtime) if lp else None, "tail": _tail_file(lp) if lp else []},
+                 "agent_log": _log_tail(8), "macro": None}
+    macros = sorted(scc.MACROS.glob("Agent_*.java"), key=lambda q: q.stat().st_mtime) if scc.MACROS.is_dir() else []
+    if macros:
+        m = macros[-1]
+        o = m.with_suffix(".out")
+        body = m.read_text(encoding="utf-8", errors="replace")
+        i, j = body.find("try {"), body.rfind("} catch")
+        core = body[i + 5:j].strip() if 0 <= i < j else body
+        out["macro"] = {"file": m.name, "started": int(m.stat().st_mtime), "running": not o.is_file(),
+                        "finished": int(o.stat().st_mtime) if o.is_file() else None,
+                        "body": scc._redact(core)[:1500], "out": _tail_file(o, 8000, 40) if o.is_file() else []}
+    return out
+
+
+# ---------------------------------------------------------------- árbol de la simulación (inspect tree, con caché)
+TREE: dict = {"data": None, "at": None, "sim": None}
+TREE_LOCK = threading.Lock()
+
+
+@app.get("/api/tree")
+def api_tree(refresh: int = 0) -> dict:
+    """Árbol del .sim abierto (solver, parts, regions, physics, mesh_ops, reports, monitors, scenes).
+    Sin refresh devuelve la última lectura (cada lectura es una macro, ~10 s)."""
+    if refresh:
+        _solver_busy_409()
+        if not TREE_LOCK.acquire(blocking=False):
+            raise HTTPException(409, "ya se está leyendo el árbol")
+        try:
+            r = scc.inspect("tree")
+            if not r.get("ok"):
+                raise HTTPException(500, f"inspect falló: {r.get('exception') or r}")
+            TREE.update(data={k: v for k, v in r.items() if isinstance(v, list)}, at=int(time.time()),
+                        sim=scc._state().get("sim"), seconds=r.get("seconds"))
+            log.info("árbol leído: %s en %s s", {k: len(v) for k, v in TREE['data'].items()}, r.get("seconds"))
+        finally:
+            TREE_LOCK.release()
+    return {"tree": TREE["data"], "at": TREE["at"], "sim": TREE["sim"], "seconds": TREE.get("seconds"),
+            "alive": _solver_alive()}
+
+
+# ---------------------------------------------------------------- abrir la GUI de STAR-CCM+ con el .sim del caso
+class GuiReq(BaseModel):
+    case: str = Field(min_length=1, max_length=100)
+
+
+@app.post("/api/open_gui")
+def api_open_gui(req: GuiReq) -> dict:
+    """Lanza la GUI de STAR-CCM+ con sims/<caso>.sim. Solo sin servidor batch vivo (dos procesos sobre el
+    mismo .sim se pisan) y con la licencia de .env (PoD cobra por hora: lo confirma la página)."""
+    sim = scc.SIMS / f"{_safe(req.case)}.sim"
+    if not sim.is_file():
+        raise HTTPException(404, f"no existe sims/{sim.name}")
+    if _solver_alive():
+        raise HTTPException(409, "hay un servidor batch vivo sobre este .sim: apágalo primero (Apagar solver)")
+    if scc.EXE.lower().endswith(".py"):
+        raise HTTPException(409, "STARCCM_EXE apunta al starccm+ falso de pruebas")
+    cmd = scc._starccm_cmd() + scc._lic_flags() + [str(sim)]
+    flags = subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.DETACHED_PROCESS if os.name == "nt" else 0
+    p = subprocess.Popen(cmd, cwd=str(scc.SIMS), creationflags=flags, stdin=subprocess.DEVNULL,
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    log.info("GUI de STAR-CCM+ lanzada: pid %s · %s", p.pid, scc._redact(" ".join(cmd)))
+    scc._log(f"GUI lanzada desde la UI pid={p.pid} sim={sim}")
+    return {"pid": p.pid, "sim": str(sim)}
+
+
 # ---------------------------------------------------------------- estado del solver
 def _last_activity() -> float | None:
     """Última macro inyectada (macros/Agent_*.java) o el arranque del servidor. El MCP mide la inactividad
@@ -556,6 +650,12 @@ def _selftest() -> int:
     check(c in (400, 404), "ruta con .. rechazada")
     c, lv = get("/api/live?case=cursocfturbo" if "cursocfturbo" in names else "/api/live")
     check(c == 200 and isinstance(lv.get("scenes"), list), f"GET /api/live -> {len(lv.get('scenes', []))} PNG")
+    c, pg = get("/api/progress")
+    check(c == 200 and "server_log" in pg and "macro" in pg, f"GET /api/progress ({len(pg.get('server_log', {}).get('tail', []))} líneas de log, macro={bool(pg.get('macro'))})")
+    c, tr = get("/api/tree")
+    check(c == 200 and "tree" in tr, "GET /api/tree (caché)")
+    c, r = post("/api/open_gui", {"case": "no_existe"})
+    check(c == 404, "POST /api/open_gui con caso inexistente -> 404")
     c, st = get("/api/status")
     check(c == 200 and "alive" in st and "log" in st and "idle_limit_min" in st, f"GET /api/status (alive={st.get('alive')})")
     if st.get("alive"):
@@ -565,6 +665,8 @@ def _selftest() -> int:
         check(c == 200 and r.get("stopped") is False, "POST /api/server/stop sin servidor -> stopped=false")
         c, r = post("/api/scene", {"name": "presion"})
         check(c == 409 and "solver" in r.get("detail", ""), "POST /api/scene sin servidor -> 409")
+        c, r = get("/api/tree?refresh=1")
+        check(c == 409, "GET /api/tree?refresh=1 sin servidor -> 409")
     c, r = post("/api/chat/stop", {})
     check(c == 200 and r.get("stopped") is False, "POST /api/chat/stop sin chat -> stopped=false")
     c, r = post("/api/chat", {"message": ""})

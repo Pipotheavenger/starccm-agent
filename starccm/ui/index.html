@@ -39,7 +39,10 @@
         <button role="tab" data-tab="escenas" aria-selected="false">Escenas <span class="badge" id="bimg"></span></button>
         <button role="tab" data-tab="conv" aria-selected="false">Convergencia <span class="badge" id="bconv"></span></button>
         <button role="tab" data-tab="live" aria-selected="false" title="Escena grande exportada del solver vivo (PNG a demanda, ~10 s cada una)">En vivo <span class="dot" id="livedot" hidden></span></button>
+        <button role="tab" data-tab="tree" aria-selected="false" title="Árbol del .sim abierto: regiones, física, malla, reportes, monitores, escenas (como el panel izquierdo de STAR-CCM+)">Árbol</button>
+        <button role="tab" data-tab="prog" aria-selected="false" title="Qué está pasando: log del servidor y última macro inyectada">Progreso <span class="dot" id="progdot" hidden></span></button>
       </div>
+      <button class="sm" id="opengui" title="Abre este .sim en la GUI de STAR-CCM+ (solo sin servidor batch vivo; la licencia PoD cobra por hora)">Abrir en STAR-CCM+</button>
     </div>
     <div class="stage-body">
       <section class="tabpane" id="tab-resumen" role="tabpanel"><div id="resumen" class="md"><p class="mut">Elige un caso a la izquierda.</p></div></section>
@@ -58,6 +61,16 @@
         <div id="liveview"><div class="empty mut">Sin escenas exportadas todavía. Con el solver vivo, escribe el nombre de una escena y pulsa Actualizar; o pide a Claude que exporte una.</div></div>
         <div id="livestrip" class="strip"></div>
       </section>
+      <section class="tabpane" id="tab-tree" role="tabpanel" hidden>
+        <div class="livebar"><button class="sm pri" id="treerefresh" title="Lee el árbol del solver vivo (inspect tree, ~10 s)">Leer del solver</button><span id="treestate" class="mut small" aria-live="polite"></span></div>
+        <div id="tree" class="tree"><p class="mut">Sin lectura todavía. Con el solver vivo pulsa «Leer del solver».</p></div>
+      </section>
+      <section class="tabpane prog" id="tab-prog" role="tabpanel" hidden>
+        <div class="livebar"><span id="macrostate" class="small"></span><span class="sp"></span><label class="check small"><input type="checkbox" id="progfollow" checked> seguir</label></div>
+        <details id="macrobody" class="log"><summary>Última macro</summary><pre class="mono"></pre></details>
+        <pre id="term" class="term mono" aria-live="polite"></pre>
+        <div id="termfile" class="mut small mono"></div>
+      </section>
     </div>
   </section>
 
@@ -68,6 +81,16 @@
       <button class="sm danger" id="stopchat" disabled>Detener</button>
     </div>
     <div id="chatlog"><div class="chat-empty" id="chatempty"><p title="Claude usa las tools del MCP starccm (server_start, run_java, iterate, export_scene…)">«¿está vivo el solver?» · «resume el caso cursocfturbo» · «abre sims/cursocfturbo.sim y exporta la escena de presión»</p></div></div>
+    <details class="params" id="params">
+      <summary>Parámetros de la simulación <span class="mut">(los cambia Claude vía MCP, nunca la página)</span></summary>
+      <div class="pgrid">
+        <label>rpm<input id="p_rpm" inputmode="decimal" placeholder="2980"></label>
+        <label>caudal <span class="mut">kg/s</span><input id="p_mdot" inputmode="decimal" placeholder="69,486"></label>
+        <label>base malla <span class="mut">mm</span><input id="p_base" inputmode="decimal" placeholder="5"></label>
+        <label>iteraciones<input id="p_iter" inputmode="numeric" placeholder="400"></label>
+      </div>
+      <div class="row"><button class="sm" id="pclear">Limpiar</button><span class="sp"></span><button class="sm pri" id="paskbtn" title="Genera el prompt con los cambios y lo envía al chat">Pedir a Claude</button></div>
+    </details>
     <div class="quick" id="quick">
       <button class="sm" data-q="¿Está vivo el servidor de STAR-CCM+? Dame server_status y, si está vivo, inspect('reports').">Estado</button>
       <button class="sm" data-q="Resume el caso seleccionado: geometría, malla, física, resultados (H, M, eficiencia, balance de masa) en una tabla.">Resumen</button>

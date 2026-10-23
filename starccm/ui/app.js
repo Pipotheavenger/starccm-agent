@@ -74,8 +74,13 @@ function renderScenes(d) {
   const s = $('scenes');
   if (!d.images.length) { s.innerHTML = '<p class="mut">Sin escenas en images/</p>'; return; }
   s.innerHTML = d.images.map(im => { const u = `/files/${encodeURIComponent(d.name)}/images/${encodeURIComponent(im.file)}?v=${im.mtime}`;
-    return `<figure class="scene"><img src="${u}" alt="${esc(im.label)}" loading="lazy" data-u="${u}" data-cap="${esc(im.label)}"><figcaption>${esc(im.label)} <span class="mut mono">${esc(im.file)} · ${Math.round(im.size / 1024)} KB</span></figcaption></figure>`; }).join('');
+    return `<figure class="scene"><img src="${u}" alt="${esc(im.label)}" loading="lazy" data-u="${u}" data-cap="${esc(im.label)}"><figcaption>${esc(im.label)} <span class="mut mono">${esc(im.file)} · ${Math.round(im.size / 1024)} KB</span><span class="sp"></span><button class="sm regen" data-n="${esc(im.file.replace(/\.png$/, ''))}" title="Vuelve a exportar esta escena desde el solver vivo (export_scene, ~10 s)">↻</button></figcaption></figure>`; }).join('');
   for (const img of s.querySelectorAll('img')) img.onclick = () => { $('lightbox').querySelector('img').src = img.dataset.u; $('lightbox').querySelector('.lb-cap').textContent = img.dataset.cap; $('lightbox').hidden = false; };
+  for (const b of s.querySelectorAll('.regen')) b.onclick = async () => {
+    b.disabled = true; b.textContent = '…';
+    try { const r = await api('/api/scene', { name: b.dataset.n, case: d.name }); toast(`«${b.dataset.n}» exportada en ${r.seconds} s`, 'ok'); openCase(d.name); }
+    catch (e) { toast(e.message, 'warn'); b.disabled = false; b.textContent = '↻'; }
+  };
 }
 $('lightbox').onclick = () => { $('lightbox').hidden = true; };
 
@@ -115,9 +120,77 @@ function renderConv(d) {
 function openTab(t) {
   st.tab = t; LS.set('scc_tab', t);
   for (const b of document.querySelectorAll('[role=tab]')) b.setAttribute('aria-selected', b.dataset.tab === t);
-  for (const id of ['resumen', 'escenas', 'conv', 'live']) $('tab-' + id).hidden = id !== t;
+  for (const id of ['resumen', 'escenas', 'conv', 'live', 'tree', 'prog']) $('tab-' + id).hidden = id !== t;
   if (t === 'live') loadLive();
+  if (t === 'tree') loadTree(false);
+  if (t === 'prog') loadProgress();
 }
+
+// ---------------------------------------------------------------- árbol de la simulación (inspect tree del MCP)
+const KINDS = { solver: 'Solver', part: 'Partes', region: 'Regiones', boundary: 'Fronteras', physics: 'Física', model: 'Modelos', mesh_op: 'Operaciones de malla', mesher: 'Malladores', report: 'Reportes', monitor: 'Monitores', scene: 'Escenas', continuum: 'Continuos', interface: 'Interfaces' };
+function renderTree(r) {
+  const t = $('tree');
+  if (!r.tree) { t.innerHTML = '<p class="mut">Sin lectura todavía. Con el solver vivo pulsa «Leer del solver».</p>'; return; }
+  const when = r.at ? new Date(r.at * 1000).toLocaleTimeString('es') : '';
+  $('treestate').textContent = `leído ${when}${r.seconds ? ' en ' + r.seconds + ' s' : ''}${r.sim ? ' · ' + r.sim.split(/[\\/]/).pop() : ''}${r.alive ? '' : ' · (solver apagado: lectura anterior)'}`;
+  t.innerHTML = Object.entries(r.tree).map(([k, items]) => `<details open><summary>${esc(KINDS[k] || k)} <span class="badge">${items.length}</span></summary><ul>${items.map(it => `<li><span class="n">${esc(it.name)}</span>${it.type ? `<span class="t">${esc(it.type)}</span>` : ''}${it.value != null ? `<span class="v">${esc(it.value)}</span>` : ''}</li>`).join('')}</ul></details>`).join('');
+}
+async function loadTree(refresh) {
+  if (refresh) { $('treerefresh').disabled = true; $('treestate').textContent = 'leyendo el árbol del solver…'; }
+  try { renderTree(await api('/api/tree' + (refresh ? '?refresh=1' : ''))); }
+  catch (e) { $('treestate').textContent = e.message; }
+  $('treerefresh').disabled = false;
+}
+$('treerefresh').onclick = () => loadTree(true);
+
+// ---------------------------------------------------------------- progreso: log del servidor y macros (la «terminal»)
+const prog = { key: '' };
+function hlLine(l) {
+  const c = /AGENT_ERROR|Exception|error|Error|FAIL/.test(l) ? 'err' : /AGENT_BEGIN|AGENT_END|Playing macro|SAVED|PNG |SCENE /.test(l) ? 'hl' : /complete|Server::start|converged/i.test(l) ? 'ok' : '';
+  return c ? `<span class="${c}">${esc(l)}</span>` : esc(l);
+}
+async function loadProgress() {
+  let p; try { p = await api('/api/progress'); } catch (e) { $('macrostate').textContent = e.message; return; }
+  const m = p.macro;
+  $('progdot').hidden = !(m && m.running && st.status.alive);
+  if (m) {
+    const t0 = new Date(m.started * 1000).toLocaleTimeString('es');
+    $('macrostate').innerHTML = m.running && st.status.alive ? `Macro <b>${esc(m.file)}</b> en marcha desde ${t0} <span class="tag ok">corriendo</span>`
+      : `Última macro <b>${esc(m.file)}</b> · ${t0}${m.finished ? ' → ' + new Date(m.finished * 1000).toLocaleTimeString('es') : ''} <span class="tag">${m.running ? 'sin salida' : 'terminada'}</span>`;
+    $('macrobody').querySelector('pre').textContent = m.body + (m.out.length ? '\n\n--- salida\n' + m.out.join('\n') : '');
+  } else { $('macrostate').textContent = 'Sin macros inyectadas todavía.'; $('macrobody').querySelector('pre').textContent = ''; }
+  const key = `${p.server_log.file}|${p.server_log.size}|${(p.agent_log || []).slice(-1)[0] || ''}`;
+  if (key !== prog.key) {
+    prog.key = key;
+    const lines = p.server_log.tail.length ? p.server_log.tail : ['(sin log del servidor todavía)'];
+    $('term').innerHTML = lines.map(hlLine).join('\n') + (p.agent_log.length ? '\n\n<span class="hl">--- agent.log</span>\n' + p.agent_log.map(esc).join('\n') : '');
+    if ($('progfollow').checked) $('term').scrollTop = 1e9;
+  }
+  $('termfile').textContent = p.server_log.file ? `${p.server_log.file} · ${Math.round(p.server_log.size / 1024)} KB` : '';
+}
+setInterval(() => { if (st.tab === 'prog') loadProgress(); }, 3000);
+
+// ---------------------------------------------------------------- parámetros -> prompt al chat (la página nunca edita el .sim)
+const PARAMS = [['p_rpm', v => `velocidad de giro del rotor a ${v} rpm (MRF)`], ['p_mdot', v => `caudal másico de entrada a ${v} kg/s`], ['p_base', v => `tamaño base de malla a ${v} mm (remallar las 3 operaciones)`], ['p_iter', v => `luego corre ${v} iteraciones (en bloques de 100 con iterate)`]];
+$('paskbtn').onclick = () => {
+  const parts = PARAMS.map(([id, f]) => { const v = $(id).value.trim(); return v ? f(v) : ''; }).filter(Boolean);
+  if (!parts.length) { toast('Rellena al menos un parámetro', 'warn'); return; }
+  const sim = st.case ? `sims/${st.case}.sim` : 'el .sim abierto';
+  $('chattext').value = `En la simulación ${sim} (server_start la reutiliza si está viva): cambia ${parts.join('; ')}. Precompila cada macro y usa las recetas bomba-*. Al terminar, añade las filas a cases/${st.case || '<caso>'}/reports/convergencia.csv, vuelve a exportar las escenas de presión, velocidad e y+ a images/ y dime H, M y eficiencia en una tabla frente a los valores anteriores.`;
+  sendChat();
+};
+$('pclear').onclick = () => { for (const [id] of PARAMS) $(id).value = ''; };
+
+// ---------------------------------------------------------------- abrir en la GUI de STAR-CCM+
+$('opengui').onclick = async () => {
+  if (!st.case) return;
+  if (st.status.alive) { toast('Hay un servidor batch vivo sobre este .sim: apágalo primero', 'warn'); return; }
+  if (!confirm(`Abrir sims/${st.case}.sim en la GUI de STAR-CCM+.\nLa licencia Power-on-Demand cobra por hora de sesión. ¿Continuar?`)) return;
+  $('opengui').disabled = true;
+  try { const r = await api('/api/open_gui', { case: st.case }); toast(`GUI lanzada (pid ${r.pid}); tarda unos segundos en abrir`, 'ok'); }
+  catch (e) { toast(e.message, 'error'); }
+  $('opengui').disabled = false;
+};
 
 // ---------------------------------------------------------------- en vivo: escena grande exportada del solver
 // STAR-CCM+ en modo servidor no tiene ventana: lo que se ve es un PNG exportado a demanda (~10 s por escena).
@@ -177,6 +250,7 @@ function renderStatus(s) {
   $('solver').innerHTML = `<span class="dot ${dot}"></span><span>${esc(txt)}</span>` + ((s.chatting || st.chatting) ? ' <span class="dot chat"></span><span>Claude trabajando</span>' : '');
   $('stopsolver').hidden = !s.alive; $('stopsolver').disabled = !!s.stopping;
   $('refreshscene').title = s.alive ? 'Exporta la escena a PNG desde el solver vivo (~10 s)' : 'Hace falta un solver vivo (pide a Claude server_start)';
+  $('opengui').disabled = !!s.alive; $('opengui').title = s.alive ? 'Hay un servidor batch vivo: apágalo antes de abrir la GUI' : 'Abre este .sim en la GUI de STAR-CCM+ (la licencia PoD cobra por hora)';
   $('solvertag').innerHTML = s.alive ? '<span class="tag ok">vivo</span>' : s.stale ? '<span class="tag warn">caído</span>' : '<span class="tag">apagado</span>';
   const rows = s.alive || s.stale ? [['pid', s.pid], ['puerto', s.port], ['sim', s.sim ? s.sim.split(/[\\/]/).pop() : '(nueva)'], ['procesos', s.np], ['arranque', s.started ? s.started.replace('T', ' ') : '–'], ['inactivo', s.idle_min != null ? `${fmt(s.idle_min, 0)} / ${s.idle_limit_min} min` : '–']] : [['apagado por inactividad', `${s.idle_limit_min} min`]];
   $('solverkv').querySelector('tbody').innerHTML = rows.map(([k, v]) => `<tr><td class="mut">${esc(k)}</td><td class="mono" title="${esc(v)}">${esc(v)}</td></tr>`).join('');

@@ -110,13 +110,20 @@ Reglas del servidor:
 `ui/server.py` (FastAPI) + `ui/index.html` + `ui/app.js` + `ui/style.css`, sin build. Preview
 `starccm-ui` (`.claude/launch.json` de la raíz, puerto 8767). Endpoints y paneles: `README.md`.
 Comprobación: `python ui/server.py --selftest` (HTTP contra los casos, sin solver ni CLI).
-Reglas: la UI solo **lee** (casos, `.server.json`, `agent.log`) y pide al MCP importado como módulo
-dos cosas: `server_stop` (botón) y `export_scene`/`inspect("scenes")` (pestaña «En vivo»). Nunca
-arranca el solver ni inyecta macros mientras el chat trabaja (el candado del MCP es por proceso).
+Gira en torno a UNA simulación (Sebastián, 2026-10-23: «primero a 1 simulación»): pestañas Resumen,
+Escenas (con «↻» por escena), Convergencia, En vivo (PNG grande a demanda), Árbol (`inspect("tree")`)
+y Progreso (la «terminal»: log del servidor, última macro y su salida); botones Apagar solver y
+Abrir en STAR-CCM+ (GUI con `sims/<caso>.sim`, solo sin servidor batch vivo); formulario de
+parámetros (rpm, caudal, base de malla, iteraciones) que se convierte en un prompt para el chat.
+Reglas: la UI solo **lee** (casos, `.server.json`, logs, `macros/`) y pide al MCP importado como
+módulo: `server_stop`, `export_scene`, `inspect`. Nunca arranca el solver batch, nunca edita el .sim,
+nunca inyecta macros mientras el chat trabaja (el candado del MCP es por proceso).
 El chat lanza `claude -p` con cwd `starccm/` y solo las tools `mcp__starccm__*`, Read, Glob, Grep.
-Se verificó el 2026-10-23 en el preview: galería `cursocfturbo` (resumen, 3 escenas, convergencia),
-chat con `server_status` (10 s) y 409 correcto en «Actualizar» sin solver. La exportación en vivo
-contra el solver real queda por probar (cuesta licencia PoD).
+Verificado el 2026-10-23 en el preview sin solver: galería `cursocfturbo` (resumen, 3 escenas,
+convergencia), chat con `server_status` (10 s), Progreso con la última macro real, 409 correctos.
+Por probar con el solver real (cuesta licencia PoD): `/api/scene`, `/api/scenes`, `/api/tree?refresh=1`,
+`/api/open_gui`. Siguiente hito: 3D interactivo con campo (exportar superficies desde STAR-CCM+ y
+pintarlas con three.js como en `cfturbo/ui`).
 
 ## Memoria
 

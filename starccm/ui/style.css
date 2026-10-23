@@ -62,7 +62,7 @@ button.icon{width:var(--ctl-h);padding:0}
 /* grid */
 .app{display:grid;grid-template-columns:var(--col-l) minmax(0,1fr) var(--col-r);min-height:0}
 .explorer{display:flex;flex-direction:column;min-height:0;background:var(--panel);border-right:1px solid var(--line)}
-.stage{display:grid;grid-template-rows:var(--runbar-h) minmax(0,1fr);min-width:0;min-height:0}
+.stage{display:grid;grid-template-rows:auto minmax(0,1fr);min-width:0;min-height:0}
 .chatcol{display:grid;grid-template-rows:auto minmax(0,1fr) auto auto;min-height:0;background:var(--panel);border-left:1px solid var(--line)}
 .pane-sec{padding:var(--s3);border-bottom:1px solid var(--line)}
 .pane-sec.grow{flex:1;display:flex;flex-direction:column;min-height:0}
@@ -86,7 +86,8 @@ details.log summary{cursor:pointer;color:var(--mut)}
 #agentlog{font-size:10px;line-height:1.35;max-height:160px;overflow:auto;margin:4px 0 0;white-space:pre-wrap;word-break:break-all;color:var(--mut)}
 
 /* stage */
-.runbar{display:flex;align-items:center;gap:var(--s3);padding:0 var(--s3);background:var(--panel);border-bottom:1px solid var(--line);min-width:0}
+.runbar{display:flex;align-items:center;flex-wrap:wrap;gap:4px var(--s3);padding:4px var(--s3);min-height:var(--runbar-h);background:var(--panel);border-bottom:1px solid var(--line);min-width:0}
+.tabs{min-height:30px}
 .runbar .runname{font-size:15px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .runbar #casemeta{font-size:12px;white-space:nowrap}
 .tabs{display:flex;align-self:stretch;gap:2px}
@@ -111,7 +112,8 @@ details.log summary{cursor:pointer;color:var(--mut)}
 .scenes{display:grid;grid-template-columns:repeat(auto-fill,minmax(360px,1fr));gap:var(--s3)}
 .scene{margin:0;background:var(--panel);border:1px solid var(--line);border-radius:var(--r-lg);overflow:hidden}
 .scene img{display:block;width:100%;aspect-ratio:16/10;object-fit:contain;background:#fff;cursor:zoom-in}
-.scene figcaption{padding:6px 10px;font-size:12px;display:flex;gap:8px;justify-content:space-between;flex-wrap:wrap}
+.scene figcaption{padding:6px 10px;font-size:12px;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.scene .regen{min-height:22px;padding:0 6px}
 #lightbox{position:fixed;inset:0;z-index:30;background:#000c;display:grid;place-items:center;cursor:zoom-out;padding:var(--s5)}
 #lightbox img{max-width:100%;max-height:90vh;background:#fff;border-radius:var(--r)}
 #lightbox .lb-cap{color:#fff;font-size:13px;margin-top:var(--s2)}
@@ -143,6 +145,31 @@ label.check input{accent-color:var(--acc);margin:0}
 .strip button{padding:2px;min-height:0;flex:none;flex-direction:column;gap:2px;font-size:10px;color:var(--mut)}
 .strip button img{width:120px;height:75px;object-fit:cover;background:#fff;border-radius:var(--r-sm);display:block}
 .strip button[aria-pressed="true"]{border-color:var(--acc)}
+
+/* árbol de la simulación */
+.tree details{margin:2px 0 2px 0;font-size:12px}
+.tree details details{margin-left:14px}
+.tree summary{cursor:pointer;font-weight:600;padding:2px 0}
+.tree summary .badge{margin-left:4px}
+.tree ul{list-style:none;margin:0;padding:0 0 0 18px}
+.tree li{padding:1px 0;display:flex;gap:8px;align-items:baseline;white-space:nowrap}
+.tree li .t{color:var(--mut);font-size:11px} .tree li .v{font-family:var(--mono);font-size:11px;color:var(--acc)}
+.tree li::before{content:"·";color:var(--mut)}
+
+/* progreso: la «terminal» */
+.tabpane.prog{display:grid;grid-template-rows:auto auto minmax(0,1fr) auto;gap:var(--s2);overflow:hidden}
+.term{margin:0;min-height:0;overflow:auto;background:var(--field);border:1px solid var(--line);border-radius:var(--r-lg);padding:var(--s2) var(--s3);font-size:11px;line-height:1.4;white-space:pre-wrap;word-break:break-all;color:var(--fg)}
+.term .hl{color:var(--acc)} .term .err{color:var(--err)} .term .ok{color:var(--ok)}
+#macrobody pre{font-size:11px;max-height:160px;overflow:auto;margin:4px 0 0;white-space:pre-wrap;background:var(--field);border:1px solid var(--line);border-radius:var(--r);padding:var(--s2)}
+#macrostate .tag{margin-left:6px}
+
+/* parámetros -> prompt al chat */
+.params{margin:0 var(--s3) 6px;border:1px solid var(--line);border-radius:var(--r-lg);padding:4px 8px;font-size:12px}
+.params summary{cursor:pointer;color:var(--mut)}
+.pgrid{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin:6px 0}
+.pgrid label{display:flex;flex-direction:column;gap:2px;font-size:11px;color:var(--mut)}
+.pgrid input{background:var(--field);border:1px solid var(--line);border-radius:var(--r-sm);padding:3px 6px;min-height:24px;font-family:var(--mono)}
+.params .row{display:flex;gap:6px;align-items:center}
 
 /* chat */
 .chat-head{display:flex;align-items:center;gap:var(--s2);padding:6px var(--s3);border-bottom:1px solid var(--line)}
