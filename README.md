@@ -40,8 +40,13 @@ Principios (de los dos `CLAUDE.md`):
 - Casos: `cases/cilindro/` (prueba de fontanería) y `cases/cursocfturbo/` (bomba centrífuga, 370 k
   celdas, 400 iteraciones, H 78,8 m, M 192,5 N·m, η 89,4 %). Cada caso tiene `RESUMEN.md`, `images/`,
   `reports/` y, el de la bomba, un guion reproducible `pump.py` paso a paso.
-- 21 recetas en `recipes/` (geometría, regiones, interfaces, malla por parte, MRF, fronteras,
-  reportes, escenas, residuales, autosave).
+- 22 recetas en `recipes/` (geometría, regiones, interfaces, malla por parte, MRF, fronteras,
+  reportes, escenas, residuales, autosave, exportación de superficies con campo a EnSight).
+- `ui/`: interfaz web (FastAPI + three.js, puerto 8767, tema claro) que imita el cliente de
+  STAR-CCM+ pero asistido por IA, alrededor de UNA simulación: árbol de la simulación, visor 3D con
+  los campos pintados en las superficies (presión, velocidad, y+…), escenas PNG como pestañas, dock
+  con Salida (log y macros en vivo), Gráficos de convergencia y Resumen, chat con Claude Code y
+  parámetros que se convierten en prompt. Detalle en `starccm/README.md`.
 
 ## cfturbo/ en una página
 
@@ -67,12 +72,10 @@ carpeta). Reiniciar la sesión de Claude Code para que aparezcan las tools.
 
 ## Hoja de ruta
 
-1. **Interfaz web de `starccm/`** (en construcción, `starccm/ui/`, puerto 8767): alrededor de UNA
-   simulación: chat embebido, árbol de la simulación, escenas CFD (presión, velocidad, y+, planos,
-   vectores), malla y geometría, progreso y pasos en vivo como en una terminal, parámetros de interés
-   editables desde la página (rpm, caudal, tamaño de malla, iteraciones), y salto al visualizador de
-   STAR-CCM+ cuando haga falta ver la simulación a detalle. Imita el viewer de STAR-CCM+ pero guiado
-   por IA.
+1. **Interfaz web de `starccm/`** (`starccm/ui/`, puerto 8767): construida el 2026-10-23 alrededor de
+   UNA simulación (chat, árbol, visor 3D con campos, escenas, progreso en vivo, parámetros, salto a la
+   GUI de STAR-CCM+). Falta exportar las superficies reales de la bomba al visor con el solver vivo
+   (`POST /api/surface`; cuesta licencia PoD) y pedir por el chat planos de corte y vectores.
 2. Perfeccionar esa simulación: malla y y+, comparación con la predicción 1D de CFturbo (84,4 m
    frente a 78,8 m del CFD), monitores de parada automáticos.
 3. Después, varias simulaciones: curva H-Q de 5 caudales reusando la malla (`PRIMER-PROMPT.md`,
@@ -84,3 +87,7 @@ carpeta). Reiniciar la sesión de Claude Code para que aparezcan las tools.
 - 2026-10-23: `cfturbo/` terminado y evaluado 9/10 (rondas UX → programador → docs → evaluador).
 - 2026-10-23: `starccm/` creado en carpeta propia, MCP verificado contra STAR-CCM+ 2410 real, caso
   cilindro y bomba `cursocfturbo` convergida en el mismo día.
+- 2026-10-23: `starccm/ui/` en cuatro hitos: página base (chat, casos, solver, escena en vivo);
+  progreso tipo terminal, árbol del .sim, parámetros → chat, abrir en la GUI; rediseño estilo cliente
+  de STAR-CCM+ con visor 3D three.js y tema claro; confirmaciones dentro de la página. Endpoints
+  verificados contra el solver real salvo la exportación de superficies.

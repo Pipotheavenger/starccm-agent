@@ -21,7 +21,8 @@ starccm/
 
 ## Puesta en marcha
 
-1. `python -m venv .venv` y `.venv\Scripts\pip install mcp` (ya hecho en este PC).
+1. `python -m venv .venv` y `.venv\Scripts\pip install mcp fastapi uvicorn` (ya hecho en este PC;
+   `fastapi` y `uvicorn` solo los usa la interfaz `ui/`).
 2. Copiar `.env.example` a `.env` y poner la clave Power-on-Demand en `STARCCM_PODKEY`.
 3. `.venv\Scripts\python mcp_server.py --selftest` → «todo en verde» (no necesita licencia).
 4. El MCP está registrado en el `.mcp.json` de la raíz del repo (servidor `starccm`). Reiniciar la
