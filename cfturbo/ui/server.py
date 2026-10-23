@@ -3,14 +3,22 @@
 Uso:  cfturbo\\.venv\\Scripts\\python -m uvicorn --app-dir cfturbo ui.server:app --port 8765
       (o el preview "cfturbo-ui" definido en .claude/launch.json)
 
-Qué hace:
-  - sirve la página (ui/index.html + app.js + style.css) y la geometría de work/<corrida>/
-  - POST /api/runs/{id}/thumb -> guarda la miniatura PNG que captura el visor (thumb.png en la corrida)
-  - POST /api/run   -> corre CFturbo directamente (mcp_server.run_batch) con los edits del formulario
-  - POST /api/chat  -> lanza `claude -p` (Claude Code CLI, suscripción, sin API key) con las tools
-                       cft_* y devuelve los eventos por SSE; `--resume` mantiene la conversación
-  - POST /api/open  -> abre la carpeta de una corrida en el Explorador
-Una sola corrida y un solo chat a la vez: CFturbo es una licencia y el chat ya corre CFturbo.
+Qué hace (detalle en ui/README.md):
+  - GET  /, /app.js, /style.css       -> la página (index.html + módulo ES + estilos, sin build)
+  - GET  /api/projects, /api/project/{name} -> proyectos base e info
+  - GET  /api/runs[?fields=summary]   -> corridas temporales y versiones (summary: ligero, para el sondeo de 3 s)
+  - GET  /api/runs/{id}               -> run.json completo de una corrida
+  - GET  /files/{id}/{archivo}        -> STL, STEP… de una corrida o versión (thumb.png en línea)
+  - POST /api/runs/{id}/thumb         -> guarda la miniatura PNG que captura el visor (thumb.png)
+  - POST /api/run    -> corre CFturbo directamente (mcp_server.run_batch en un hilo); 409 si está ocupado
+  - GET  /api/status -> running/running_name/running_since (candado running.lock) y chatting
+  - POST /api/save   -> guarda una corrida como versión en versions/ (409 si el nombre existe)
+  - POST /api/open   -> abre la carpeta de una corrida en el Explorador
+  - POST /api/chat   -> lanza `claude -p` (Claude Code CLI, suscripción, sin API key) con las tools
+                        cft_* y devuelve los eventos por SSE; `--resume` mantiene la conversación
+  - POST /api/chat/stop -> mata la CLI del chat en curso
+Una sola corrida de CFturbo a la vez (candado en disco de mcp_server, vale también para el chat y
+otras sesiones) y un solo chat a la vez.
 """
 from __future__ import annotations
 

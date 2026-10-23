@@ -12,11 +12,14 @@ Uso:   python mcp_server.py            (stdio, lo lanza Claude Code desde .mcp.j
        python mcp_server.py --selftest (prueba con un cfturbo falso, sin licencia)
 
 Env:   CFTURBO_EXE      ruta a CFturbo.exe (si falta, se busca en Program Files)
-       CFTURBO_WORKDIR  carpeta de corridas (default: ./work)
+       CFTURBO_WORKDIR  carpeta de corridas temporales (default: %TEMP%/cfturbo-agent)
 
-Cada corrida vive en work/<name>_<timestamp>/ con: <name>.cft (copia editada), .cft-batch,
-.cft-res, <name>_out.cft (lo que CFturbo guardó), cfturbo.log, exportes y run.json (resumen que
-lee la interfaz controladora en ui/).
+Cada corrida vive en WORKDIR/<name>_<timestamp>/ con: <name>.cft (copia editada), .cft-batch,
+.cft-res, <name>_out.cft (lo que CFturbo guardó), *.log, exportes, run.json (resumen que lee la
+interfaz controladora en ui/) y thumb.png (miniatura que sube la UI). Se conservan las KEEP_TMP
+últimas; lo que el usuario guarda (cft_save) se copia a versions/<nombre>/.
+Una corrida a la vez entre procesos: WORKDIR/running.lock (pid, nombre, hora).
+Cada corrida no fallida y cada versión guardada dejan una línea en recipes/bitacora.md.
 """
 from __future__ import annotations
 
@@ -397,7 +400,7 @@ def _acquire_lock(name: str) -> Path:
 
 def run_batch(project: str, edits: dict | None = None, name: str = "design",
               exports: list[str] | tuple[str, ...] | None = None, save: bool = True) -> dict:
-    """Copia el .cft a work/, aplica edits {alias|clave_unidad|sufijo: valor}, corre CFturbo
+    """Copia el .cft a WORKDIR/<name>_<ts>/, aplica edits {alias|clave_unidad|sufijo: valor}, corre CFturbo
     (exporta y guarda) y devuelve realizados, correcciones, avisos, errores y archivos.
     Lanza CFturboBusy si otra corrida (de cualquier proceso) tiene el candado."""
     resolve_project(project)  # 404 antes de tomar el candado
@@ -664,13 +667,17 @@ def serve() -> None:
     @mcp.tool()
     def cft_run(project: str, edits: dict | None = None, name: str = "design",
                 exports: list[str] | None = None, save: bool = True) -> dict:
-        """Copia el proyecto a work/<name>_<ts>/, aplica `edits` y corre CFturbo en batch.
-        edits: {clave: valor}. Claves: alias SI (Q m3/s, H m, n 1/s, d2 b2 dS dH m, Psi, nBl,
-        AutoUpdate, volute_d_out), claves con unidad (Q_m3h, H_m, n_rpm, d2_mm, b2_mm, dS_mm, dH_mm),
-        ext_outlet=False (quita la extensión CFD de salida del impulsor: arregla "Extension is
-        overlapping neighboring component") o un sufijo/regex de ruta del XML (ver cft_params).
-        REGLA: si la corrida devuelve warnings/errors de geometría (solapamientos, intersecciones,
-        extensiones), corrígelos en una nueva corrida antes de dar el resultado. exports: subconjunto de
+        """Copia el proyecto a la carpeta temporal (<name>_<ts>/), aplica `edits` y corre CFturbo en batch.
+        `project`: nombre en projects/ o ruta a un .cft (p.ej. el *_out.cft de una corrida, para iterar).
+        edits: {clave: valor}. Claves: alias SI (Q m3/s, H m, n 1/s, rho, d2 b2 dS dH m, Psi, b2_d2,
+        EtaH, nBl, AutoUpdate, volute_d_out), claves con unidad (Q_m3h, H_m, n_rpm, d2_mm, b2_mm,
+        dS_mm, dH_mm, volute_d_out_mm), ext_outlet=False (quita la extensión CFD de salida del
+        impulsor: arregla "Extension is overlapping neighboring component"; no usar si no hay
+        componente aguas abajo) o un sufijo/regex de ruta del XML (ver cft_params), p.ej.
+        "MeanSurface[Mean surface]/Coupled": False (arregla "Coupling partially deactivated" al cambiar nBl).
+        REGLA: si la corrida que TÚ lanzas devuelve warnings/errors de geometría (solapamientos,
+        intersecciones, extensiones), corrígelos en una nueva corrida antes de dar el resultado.
+        Una corrida a la vez: si otra está en marcha falla con "CFturbo ocupado". exports: subconjunto de
         ["StarCCM", "OpenFOAM", "General"]; por defecto StarCCM (STEP + .cfturbo-ccm) y OpenFOAM (STL).
         Devuelve requested_si, realized, corrected (lo que CFturbo cambió), warnings, errors,
         exports, geometry y run_dir. Si CFturbo corrige un valor, decirlo al usuario."""
