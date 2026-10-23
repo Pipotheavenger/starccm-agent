@@ -93,7 +93,11 @@ CLI simulada para probar el panel.
 
 ## Reglas
 
-- Nunca editar el `.cft` de `projects/`; `cft_run` siempre trabaja sobre la copia en `work/`.
+- **Avisos y errores de geometría se corrigen siempre, sin que lo pidan**: tras cada `cft_run`, si hay
+  solapamientos, intersecciones o extensiones mal puestas, buscar receta (`cft_recipe_search`), corregir
+  y volver a correr (máximo 3 intentos) antes de reportar. Receta conocida: extensión del impulsor que
+  invade la voluta → `ext_outlet=False` (`recipes/fix-extension-overlap.md`).
+- Nunca editar el `.cft` de `projects/`; `cft_run` siempre trabaja sobre la copia temporal.
 - Rutas de Windows absolutas en el batch. Unidades del `.cft`: SI (m, m³/s, 1/s).
 - Español, corto, números en tablas. Estilo mínimo: un archivo de MCP, sin clases de más.
 

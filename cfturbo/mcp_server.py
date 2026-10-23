@@ -141,6 +141,30 @@ def _to_si(key: str, value) -> str:
     return str(value)
 
 
+def _set_ext_outlet(root: ET.Element, on) -> str:
+    """Extensión CFD de salida del impulsor. Para apagarla no basta la bandera: CFturbo la vuelve a
+    activar si el objeto <CFDSetup_RotSym_Extension_Outlet> sigue ahí (verificado 2026-10-23).
+    Es la causa del aviso 'Extension is overlapping neighboring component' con voluta pegada."""
+    on = str(on).lower() in ("true", "1", "yes", "si", "sí")
+    done = []
+    for cs in root.iter("CFDSetup_RotSym"):
+        flag = cs.find("CFDSetup_RotSym_Extension_Outlet_Active")
+        if flag is None:
+            continue
+        flag.text = "True" if on else "False"
+        obj = cs.find("CFDSetup_RotSym_Extension_Outlet")
+        if not on and obj is not None:
+            cs.remove(obj)
+        done.append(flag.text)
+    if not done:
+        raise KeyError("ext_outlet: el proyecto no tiene CFDSetup_RotSym")
+    return done[0]
+
+
+# Claves especiales de `edits` que hacen algo más que cambiar una hoja
+SPECIAL = {"ext_outlet": _set_ext_outlet}
+
+
 def _components(root: ET.Element) -> list[dict]:
     pl = root.find("CFturboProject/PolyList_CFturboDesign")
     comps = []
@@ -342,6 +366,9 @@ def run_batch(project: str, edits: dict | None = None, name: str = "design",
     comps = _components(tree.getroot())
     try:
         for k, v in edits.items():
+            if k in SPECIAL:
+                res["requested_si"][k] = SPECIAL[k](tree.getroot(), v)
+                continue
             p, e = _resolve(leaves, k)
             e.text = _to_si(k, v)
             res["requested_si"][k] = e.text
@@ -384,11 +411,15 @@ def run_batch(project: str, edits: dict | None = None, name: str = "design",
     n_files = sum(len(v) for v in res["exports"].values())
     ev(f"Exportados {n_files} archivos" if n_files else "Sin archivos exportados")
     if out_cft and out_cft.exists():
-        lv = _leaves(ET.parse(out_cft).getroot())
+        out_root = ET.parse(out_cft).getroot()
+        lv = _leaves(out_root)
         for k in edits:
             try:
-                real = _resolve(lv, k)[1].text.strip()
-            except KeyError:
+                if k == "ext_outlet":
+                    real = out_root.find(".//CFDSetup_RotSym_Extension_Outlet_Active").text.strip()
+                else:
+                    real = _resolve(lv, k)[1].text.strip()
+            except (KeyError, AttributeError):
                 continue
             res["realized"][k] = real
             try:
@@ -540,8 +571,11 @@ def serve() -> None:
                 exports: list[str] | None = None, save: bool = True) -> dict:
         """Copia el proyecto a work/<name>_<ts>/, aplica `edits` y corre CFturbo en batch.
         edits: {clave: valor}. Claves: alias SI (Q m3/s, H m, n 1/s, d2 b2 dS dH m, Psi, nBl,
-        AutoUpdate, volute_d_out), claves con unidad (Q_m3h, H_m, n_rpm, d2_mm, b2_mm, dS_mm, dH_mm)
-        o un sufijo/regex de ruta del XML (ver cft_params). exports: subconjunto de
+        AutoUpdate, volute_d_out), claves con unidad (Q_m3h, H_m, n_rpm, d2_mm, b2_mm, dS_mm, dH_mm),
+        ext_outlet=False (quita la extensión CFD de salida del impulsor: arregla "Extension is
+        overlapping neighboring component") o un sufijo/regex de ruta del XML (ver cft_params).
+        REGLA: si la corrida devuelve warnings/errors de geometría (solapamientos, intersecciones,
+        extensiones), corrígelos en una nueva corrida antes de dar el resultado. exports: subconjunto de
         ["StarCCM", "OpenFOAM", "General"]; por defecto StarCCM (STEP + .cfturbo-ccm) y OpenFOAM (STL).
         Devuelve requested_si, realized, corrected (lo que CFturbo cambió), warnings, errors,
         exports, geometry y run_dir. Si CFturbo corrige un valor, decirlo al usuario."""

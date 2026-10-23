@@ -75,6 +75,7 @@
       <div class="mono mut" style="margin-top:6px">nq nuevo: <span id="nqnew">–</span> <span id="nqtipo"></span></div>
       <label><input type="checkbox" id="autoupd">Recalcular d2, b2, dS desde Q/H/n (AutoUpdate)</label>
       <label><input type="checkbox" id="fromrun">Partir de la corrida seleccionada, no del proyecto base</label>
+      <label><input type="checkbox" id="extoff" checked>Quitar extensión CFD de salida del impulsor (evita el solapamiento con la voluta)</label>
       <div class="row" style="margin-top:8px">
         <div><label>Nombre</label><input id="rname" placeholder="v2"></div>
         <div><label>Exportar</label><div style="display:flex;gap:10px;padding-top:4px"><label style="margin:0"><input type="checkbox" id="exCCM" checked>STEP</label><label style="margin:0"><input type="checkbox" id="exSTL" checked>STL</label></div></div>
@@ -156,6 +157,7 @@ function edits() {
   const e = {};
   for (const i of $('params').querySelectorAll('input')) if (i.value !== '') e[i.dataset.k] = +i.value;
   if ($('autoupd').checked) e.AutoUpdate = true;
+  if ($('extoff').checked) e.ext_outlet = false;
   return e;
 }
 function nqNew() {
@@ -171,7 +173,7 @@ $('fromrun').onchange = nqNew; $('autoupd').onchange = nqNew;
 
 function describeEdits(e) {
   const names = Object.fromEntries(PARAMS.map(p => [p.key, `${p.label} ${p.unit}`]));
-  return Object.entries(e).filter(([k]) => k !== 'AutoUpdate').map(([k, v]) => `${names[k] || k} = ${v}`).join(', ');
+  return Object.entries(e).filter(([k]) => k !== 'AutoUpdate' && k !== 'ext_outlet').map(([k, v]) => `${names[k] || k} = ${v}`).join(', ') + (e.ext_outlet === false ? ' (sin extensión CFD)' : '');
 }
 function sourceProject() {
   if ($('fromrun').checked && st.run?.run_dir) return `${st.run.run_dir}\\${st.run.name}_out.cft`;
