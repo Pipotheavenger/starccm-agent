@@ -666,6 +666,7 @@ const hlLine = l => { const c = /AGENT_ERROR|Exception|error|Error|FAIL/.test(l)
 async function loadProgress() {
   let p; try { p = await api('/api/progress'); } catch (e) { $('macrostate').textContent = e.message; return; }
   const m = p.macro; $('progdot').hidden = !(m && m.running && st.status.alive);
+  liveIngest(m);
   if (m) { const t0 = new Date(m.started * 1000).toLocaleTimeString('es');
     $('macrostate').innerHTML = m.running && st.status.alive ? `Macro <b>${esc(m.file)}</b> en marcha desde ${t0} <span class="tag ok">corriendo</span>` : `Última macro <b>${esc(m.file)}</b> · ${t0}${m.finished ? ' → ' + new Date(m.finished * 1000).toLocaleTimeString('es') : ''} <span class="tag">${m.running ? 'sin salida' : 'terminada'}</span>`; }
   else $('macrostate').textContent = 'Sin macros inyectadas todavía.';
@@ -676,7 +677,61 @@ async function loadProgress() {
     $('term').innerHTML = (m?.out?.length ? `<span class="hl">--- ${esc(m.file)}${m.running ? ' (en marcha)' : ''}</span>\n` + m.out.map(hlLine).join('\n') + '\n\n' : '') + '<span class="hl">--- servidor</span>\n' + lines.map(hlLine).join('\n') + (p.agent_log.length ? '\n\n<span class="hl">--- agent.log</span>\n' + p.agent_log.map(esc).join('\n') : '');
     if ($('progfollow').checked) $('term').scrollTop = 1e9; }
 }
-setInterval(() => { if (st.tab === 'out' && !$('stage').classList.contains('dock-collapsed')) loadProgress(); }, 3000);
+// el sondeo también corre mientras hay una macro en marcha: así las curvas en vivo se llenan aunque se mire otra pestaña
+setInterval(() => { if ((st.tab === 'out' && !$('stage').classList.contains('dock-collapsed')) || st.tab === 'plots' || LIVE.running || st.chatting) loadProgress(); }, 3000);
+
+// ---------------------------------------------------------------- convergencia EN VIVO (de la salida del solver, sin coste extra)
+// STAR-CCM+ imprime en cada iteración una fila con residuales y reportes bajo la cabecera «Iteration Continuity …».
+// Se acumulan las filas de la macro en marcha (la salida llega en vivo al .out) y se pintan: residuales en escala
+// logarítmica y las magnitudes de ingeniería (H, M, eta…) cada una en su gráfico.
+const LIVE = { file: null, cols: null, rows: new Map(), running: false, last: 0 };
+const LIVE_RES = /^(Continuity|X-momentum|Y-momentum|Z-momentum|Tke|Sdr|Energy)$/;
+function liveIngest(m) {
+  if (!m || !m.out) return;
+  if (m.file !== LIVE.file) {  // una macro nueva solo reinicia si trae iteraciones (no borra la curva por un inspect)
+    if (!m.out.some(l => /^\s*Iteration\s{2,}/.test(l))) { LIVE.running = false; renderLive(); return; }
+    LIVE.file = m.file; LIVE.cols = null; LIVE.rows = new Map();
+  }
+  for (const l of m.out) {
+    if (/^\s*Iteration\s{2,}/.test(l)) { LIVE.cols = l.trim().split(/\s{2,}/); continue; }
+    if (!LIVE.cols || !/^\s+\d+\s+[-+\d.]/.test(l)) continue;
+    const v = l.trim().split(/\s+/).map(Number); if (v.length !== LIVE.cols.length || !v.every(Number.isFinite)) continue;
+    LIVE.rows.set(v[0], v);
+  }
+  LIVE.running = !!m.running; LIVE.last = Date.now(); renderLive();
+}
+function svgLines(series, { log = false, label = '', unit = '' } = {}) {  // varias series en un eje; log10 si se pide
+  const W = 420, H = 190, L = 54, R = 10, T = 14, B = 28, PAL = ['#0b63b4', '#d1495b', '#2a9d3f', '#e09f3e', '#7b2cbf', '#3a86ff', '#6c757d'];
+  const pts = series.flatMap(s => s.xy).filter(([, y]) => Number.isFinite(y) && (!log || y > 0)); if (!pts.length) return '';
+  const tr = y => log ? Math.log10(y) : y, xs = pts.map(p => p[0]), ys = pts.map(p => tr(p[1]));
+  const x0 = Math.min(...xs), x1 = Math.max(...xs), y0 = Math.min(...ys), y1 = Math.max(...ys), pad = (y1 - y0 || 1) * 0.08;
+  const sx = x => L + (x1 === x0 ? 0.5 : (x - x0) / (x1 - x0)) * (W - L - R), sy = y => T + (1 - (tr(y) - (y0 - pad)) / ((y1 + pad) - (y0 - pad))) * (H - T - B);
+  const ticks = log ? Array.from({ length: Math.floor(y1 + pad) - Math.ceil(y0 - pad) + 1 }, (_, i) => Math.ceil(y0 - pad) + i).filter((_, i, a) => a.length < 8 || i % 2 === 0)
+    : [0, 0.25, 0.5, 0.75, 1].map(t => (y0 - pad) + ((y1 + pad) - (y0 - pad)) * t);
+  const grid = ticks.map(t => { const yy = log ? 10 ** t : t; return `<line x1="${L}" x2="${W - R}" y1="${sy(yy)}" y2="${sy(yy)}" class="grid"/><text x="${L - 5}" y="${sy(yy) + 3}" class="tick" text-anchor="end">${log ? '1e' + t : sci(yy)}</text>`; }).join('');
+  const lines = series.map((s, k) => { const d = s.xy.filter(([, y]) => Number.isFinite(y) && (!log || y > 0)).map(([x, y], i) => `${i ? 'L' : 'M'}${sx(x).toFixed(1)},${sy(y).toFixed(1)}`).join(' ');
+    return d ? `<path d="${d}" fill="none" stroke="${PAL[k % PAL.length]}" stroke-width="1.6"><title>${esc(s.name)}</title></path>` : ''; }).join('');
+  const legend = series.length > 1 ? `<div class="lg-inline">${series.map((s, k) => `<span><i style="background:${PAL[k % PAL.length]}"></i>${esc(s.name)}</span>`).join('')}</div>` : '';
+  const lastV = series.length === 1 && series[0].xy.length ? `<text x="${W - R}" y="${T - 2}" class="lbl" text-anchor="end">${sci(series[0].xy[series[0].xy.length - 1][1])} ${esc(unit)}</text>` : '';
+  return `<figure class="chart"><figcaption>${esc(label)}</figcaption><svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(label)}">${grid}<line x1="${L}" x2="${W - R}" y1="${H - B}" y2="${H - B}" class="axis"/><text x="${L}" y="${H - 8}" class="tick">${x0}</text><text x="${W - R}" y="${H - 8}" class="tick" text-anchor="end">iter ${x1}</text>${lines}${lastV}</svg>${legend}</figure>`;
+}
+function renderLive() {
+  const box = $('live'); if (!box) return;
+  const rows = [...LIVE.rows.values()].sort((a, b) => a[0] - b[0]);
+  $('livedot').hidden = !LIVE.running;
+  if (!LIVE.cols || rows.length < 2) { box.hidden = true; return; }
+  box.hidden = false;
+  const col = i => rows.map(r => [r[0], r[i]]);
+  const res = LIVE.cols.map((c, i) => [c, i]).filter(([c]) => LIVE_RES.test(c)).map(([c, i]) => ({ name: c, xy: col(i) }));
+  const eng = LIVE.cols.map((c, i) => [c, i]).filter(([c, i]) => i > 0 && !LIVE_RES.test(c) && /^(H|M|eta|Q_out|pt_out|P_eje)\b/.test(c));
+  const last = rows[rows.length - 1], cont = res.find(s => s.name === 'Continuity');
+  const contLast = cont ? cont.xy[cont.xy.length - 1][1] : null, contMin = cont ? Math.min(...cont.xy.map(p => p[1])) : null;
+  // aviso sencillo: residuo de continuidad > 1 o 1000 veces por encima de su mínimo = el cálculo se está yendo
+  const diverge = contLast != null && (contLast > 1 || contLast > 1e3 * contMin);
+  box.innerHTML = `<div class="livehead"><b>${LIVE.running ? 'Iterando en vivo' : 'Última corrida'}</b> · iteración ${last[0]} · ${rows.length} filas
+    ${diverge ? '<span class="tag warn" title="El residuo de continuidad crece: revisa entradas, salidas y paredes">⚠ posible divergencia</span>' : (contLast != null && contLast < 1e-4 ? '<span class="tag ok">residuo &lt; 1e-4</span>' : '')}</div>
+    <div class="charts">${svgLines(res, { log: true, label: 'Residuales (escala log)' })}${eng.map(([c, i]) => svgLines([{ name: c, xy: col(i) }], { label: c, unit: '' })).join('')}</div>`;
+}
 
 // ---------------------------------------------------------------- estado del solver
 function renderStatus(s) {

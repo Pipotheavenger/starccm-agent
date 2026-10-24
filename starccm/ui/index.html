@@ -103,7 +103,7 @@
       <div class="dock-resize" id="dockresize" title="Arrastra para cambiar la altura"></div>
       <div class="dock-tabs" role="tablist">
         <button role="tab" data-tab="out" aria-selected="true">Salida <span class="dot" id="progdot" hidden></span></button>
-        <button role="tab" data-tab="plots" aria-selected="false">Gráficos <span class="badge" id="bconv"></span></button>
+        <button role="tab" data-tab="plots" aria-selected="false">Gráficos <span class="badge" id="bconv"></span><span class="dot" id="livedot" hidden title="Iterando: curvas en vivo"></span></button>
         <button role="tab" data-tab="res" aria-selected="false">Resumen</button>
         <button role="tab" data-tab="chat" aria-selected="false">IA <span class="dot chat" id="chatdot" hidden></span></button>
         <span class="sp"></span>
@@ -114,7 +114,7 @@
           <div class="livebar"><span id="macrostate" class="small"></span><span class="sp"></span><label class="check small"><input type="checkbox" id="progfollow" checked> seguir</label></div>
           <pre id="term" class="term mono" aria-live="polite"></pre>
         </section>
-        <section class="tabpane" id="tab-plots" role="tabpanel" hidden><div id="conv"></div></section>
+        <section class="tabpane" id="tab-plots" role="tabpanel" hidden><div id="live" hidden></div><div id="conv"></div></section>
         <section class="tabpane" id="tab-res" role="tabpanel" hidden><div id="resumen" class="md"></div></section>
         <section class="tabpane" id="tab-chat" role="tabpanel" hidden></section>
       </div>
