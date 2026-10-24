@@ -435,14 +435,16 @@ def read_stl_solids(p: Path) -> list[tuple[str, array.array, array.array]]:
             return i
         return xyz, tris, vid
 
-    if data[:5].lower() == b"solid" and b"facet" in data[:2000]:
-        for m in re.finditer(rb"solid[ \t]*([^\r\n]*)\r?\n(.*?)endsolid", data, re.S):
+    # STAR-CCM+ (exportStlPart ASCII) escribe « solid PRO2STL version 1.0»: con espacio delante y un solo sólido por parte
+    if data.lstrip()[:5].lower() == b"solid" and b"facet" in data[:2000]:
+        for m in re.finditer(rb"(?m)^[ \t]*solid[ \t]*([^\r\n]*)\r?\n(.*?)endsolid", data, re.S):
             xyz, tris, vid = new()
             nums = re.findall(rb"vertex\s+([-+0-9.eE]+)\s+([-+0-9.eE]+)\s+([-+0-9.eE]+)", m.group(2))
             for k in range(0, len(nums) - 2, 3):
                 tris.extend(vid(*map(float, nums[k + j])) for j in range(3))
+            name = m.group(1).decode("utf-8", "replace").strip()
             if len(tris):
-                out.append((m.group(1).decode("utf-8", "replace").strip(), xyz, tris))
+                out.append(("" if name.upper().startswith("PRO2STL") else name, xyz, tris))
     else:
         xyz, tris, vid = new()
         n = struct.unpack_from("<I", data, 80)[0]

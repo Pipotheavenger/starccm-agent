@@ -111,7 +111,7 @@ CHAT_SYSTEM = (
     "ejecuta la receta exportar-geometria-stl con OUT cases/<caso>/surfaces/_raw/geometria (son segundos): el visor "
     "enseña la geometría al usuario mientras sigues. Antes de mallar NO uses exportar-superficies-ensight ni "
     "ImportManager.export (fallan con «There is no volume mesh»). "
-    "FRONTERAS: si existe cases/<caso>/fronteras.json es la asignación que hizo el usuario en el visor («región/frontera» → inlet | outlet | wall | interface | symmetry): úsala tal cual para los tipos de frontera, sin adivinar (inlet = mass flow inlet con el caudal pedido, outlet = pressure outlet 0 Pa). Si la geometría trae caras agrupadas o con nombres genéricos (Default, Faces, Surface…) y NO hay fronteras.json: separa las caras (receta separar-caras-por-angulo, ANGULO 89), exporta la geometría (receta exportar-geometria-stl, OUT cases/<caso>/surfaces/_raw/geometria; en el visor cada cara se llama «parte/cara», y así llegan las claves de fronteras.json mientras no haya regiones) y PARA: pide al usuario que marque entrada y salida en el visor con el botón «Fronteras». Si la solución diverge (continuidad > 1 o creciendo), no sigas iterando: revisa fronteras y física. "
+    "FRONTERAS: si existe cases/<caso>/fronteras.json es la asignación que hizo el usuario en el visor («región/frontera» → inlet | outlet | wall | interface | symmetry): úsala tal cual para los tipos de frontera, sin adivinar (inlet = mass flow inlet con el caudal pedido, outlet = pressure outlet 0 Pa). Si la geometría trae caras agrupadas o con nombres genéricos (Default, Faces, Surface…) y NO hay fronteras.json: separa las caras (receta separar-caras-por-angulo, ANGULO 89), exporta la geometría (receta exportar-superficies-ensight si ya hay malla; si no, exportar-geometria-stl, que da una pieza por PARTE, sin caras separadas) y PARA: pide al usuario que marque entrada y salida en el visor con el botón «Fronteras». Si la solución diverge (continuidad > 1 o creciendo), no sigas iterando: revisa fronteras y física. "
     "3D EN VIVO: antes de iterar (100 de prueba o la corrida larga) activa la exportación automática con la "
     "receta activar-autoexport (CADA 25 en la prueba de 100 iteraciones, 50 en corridas largas; FUNCS "
     "«Pressure,TotalPressure,Velocity,WallYplus»; OUT cases/<caso>/surfaces/_raw/vivo): el visor muestra el campo "
@@ -1572,14 +1572,16 @@ def _selftest() -> int:
     g.mkdir(parents=True, exist_ok=True)
     tri = "facet normal 0 0 1\n outer loop\n  vertex 0 0 0\n  vertex 1 0 0\n  vertex 0 1 0\n endloop\nendfacet\n"
     (g / "00_Impeller_2.stl").write_text(f"solid [Impeller 2]-Hub\n{tri}endsolid\nsolid [Impeller 2]-Blade\n{tri}{tri}endsolid\n", encoding="utf-8")
-    (g / "geometria.meta").write_text("STLPART\t00_Impeller_2.stl\tImpeller 2\n", encoding="utf-8")
+    # lo que escribe de verdad exportStlPart de STAR-CCM+ 2410: espacio delante y un solo sólido genérico por parte
+    (g / "01_Inlet.stl").write_text(f"  solid PRO2STL version 1.0\n {tri} endsolid PRO2STL version 1.0\n", encoding="utf-8")
+    (g / "geometria.meta").write_text("STLPART\t00_Impeller_2.stl\tImpeller 2\nSTLPART\t01_Inlet.stl\tInlet\n", encoding="utf-8")
     old = time.time() - 10
     for q in g.iterdir():
         os.utime(q, (old, old))  # «ya terminó de escribirse»
     c, r = get(f"/api/surfaces?case={nombre}")
     gm = next((x["manifest"] for x in r.get("datasets", []) if x["name"] == "geometria"), {})
-    check(c == 200 and [p["name"] for p in gm.get("parts", [])] == ["Impeller 2/Hub", "Impeller 2/Blade"] and gm.get("geometry_only"),
-          "geometría STL sin malla -> dataset «geometria» con una cara por solid («parte/cara»)")
+    check(c == 200 and [p["name"] for p in gm.get("parts", [])] == ["Impeller 2/Hub", "Impeller 2/Blade", "Inlet"] and gm.get("geometry_only"),
+          "geometría STL sin malla -> dataset «geometria» (solid con nombre = «parte/cara»; « solid PRO2STL» de STAR-CCM+ = la parte)")
     shutil.rmtree(CASES / nombre, ignore_errors=True)
     c, _ = get("/api/cases/no_existe")
     check(c == 404, "caso inexistente -> 404")

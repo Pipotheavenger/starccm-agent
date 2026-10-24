@@ -1,6 +1,7 @@
 // QUE: exportar la geometría recién importada (partes CAD, SIN malla) a STL para el visor 3D: un .stl por parte
-// VERSION: 19.06.009-R8 · FECHA: 2026-10-24 · ESTADO: compila con javac; por verificar con el solver (ver CLAUDE.md)
-// OUT: carpeta destino (cases/<caso>/surfaces/_raw/geometria). El visor la convierte sola (cada «solid» = una cara).
+// VERSION: 19.06.009-R8 · FECHA: 2026-10-24 · ESTADO: verificado con el solver (BombaP100V1: 6 partes, 155 924 triángulos)
+// OUT: carpeta destino (cases/<caso>/surfaces/_raw/geometria). El visor la convierte sola: STAR-CCM+ escribe
+// « solid PRO2STL version 1.0», UN sólido por parte y sin nombres de cara (las caras llegan con EnSight tras mallar).
 // ImportManager.export (EnSight) NO sirve antes de mallar: «There is no volume mesh». MeshPart.exportStlPart sí.
 String out = resolvePath("OUT");
 new java.io.File(out).mkdirs();
@@ -12,7 +13,7 @@ for (GeometryPart gp : sim.get(SimulationPartManager.class).getLeafParts()) {
   MeshPart mp = (MeshPart) gp;
   String safe = gp.getPresentationName().replaceAll("[^A-Za-z0-9_\\-]+", "_");
   String fn = String.format("%02d_%s.stl", i++, safe);
-  mp.exportStlPart(out + java.io.File.separator + fn, false);  // ASCII: un «solid <cara>» por superficie de la parte
+  mp.exportStlPart(out + java.io.File.separator + fn, false);  // ASCII (false = no binario)
   tris += mp.getTriangleCount();
   meta.append("STLPART\t" + fn + "\t" + gp.getPresentationName() + "\n");
   sim.println("STLPART\t" + fn + "\t" + gp.getPresentationName() + "\t" + mp.getTriangleCount() + " triángulos\t" + gp.getPartSurfaces().size() + " superficies");

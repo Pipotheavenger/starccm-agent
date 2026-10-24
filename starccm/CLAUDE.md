@@ -297,8 +297,9 @@ Agrupadas por tema; fecha 2026-10-23 salvo indicación.
   del manifest, no por mtime (con mtime se quedaba en la 600).
 - 2026-10-24 · Antes de mallar, `ImportManager.export` (EnSight) falla con «There is no volume mesh», aunque solo
   se pidan superficies de parte. La geometría recién importada sale con `MeshPart.exportStlPart(archivo, false)`
-  (ASCII, un `solid` por superficie). Receta `exportar-geometria-stl.java`; el visor la convierte en el dataset
-  «geometria» con caras «parte/cara». Compila; falta verificarla con el solver.
+  (ASCII). Receta `exportar-geometria-stl.java`, verificada con BombaP100V1: 6 partes y 155 924 triángulos en
+  segundos. Ojo: escribe « solid PRO2STL version 1.0», con un espacio delante y UN sólido por parte, sin nombres
+  de cara. El visor da una pieza por parte; las caras con nombre llegan con EnSight tras mallar.
 - 2026-10-24 · Un servidor viejo de la UI (puerto 8767, lanzado el día anterior) seguía vivo con el watchdog antiguo,
   que no detectaba las macros largas en marcha. A los 7 min de una malla (2,7 M celdas) guardó y mató el solver de
   otra sesión con una macro `saveState` + `kill`. Regla: una sola instancia de la UI. Antes de probar, mirar
