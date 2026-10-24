@@ -1,4 +1,4 @@
-// QUE: escena de plano de corte (z = 30 mm) con |velocidad| y vectores de velocidad encima, exportable a PNG en batch
+// QUE: escena de plano de corte (plano_medio, a media salida del rotor) con |velocidad| y vectores encima, exportable a PNG en batch
 // VERSION: 19.06.009-R8
 // FECHA: 2026-10-23 · VERIFICADO contra el solver real (cases/cursocfturbo/images/plano_vectores.png)
 // Reusa el plano «plano_medio» si existe (lo crea bomba-escenas.java); si no, lo crea sobre todas las regiones.
@@ -7,10 +7,7 @@
 List<Region> regs = new ArrayList<Region>(sim.getRegionManager().getRegions());
 PlaneSection plane = null;
 for (Object o : sim.getPartManager().getObjects()) if (o instanceof PlaneSection && ((PlaneSection) o).getPresentationName().equals("plano_medio")) plane = (PlaneSection) o;
-if (plane == null) {
-  plane = sim.getPartManager().createImplicitPart(new NeoObjectVector(regs.toArray()), new DoubleVector(new double[] {0.0, 0.0, 1.0}), new DoubleVector(new double[] {0.0, 0.0, 0.030}), 0, 1, new DoubleVector(new double[] {0.0}));
-  plane.setPresentationName("plano_medio");
-}
+if (plane == null) throw new RuntimeException("falta plano_medio: corre antes exportar-superficies-ensight con PLANOS auto (la cota fija de cursocfturbo corta mal otras bombas)");
 Scene sc = sim.getSceneManager().createScene("plano_vectores"); sc.initializeAndWait();   // queda como «plano_vectores 1»
 ScalarDisplayer sd = sc.getDisplayerManager().createScalarDisplayer("v"); sd.initialize();
 sd.setRepresentation(sim.getRepresentationManager().getDefaultFvRepresentation());

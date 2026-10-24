@@ -305,6 +305,11 @@ Agrupadas por tema; fecha 2026-10-23 salvo indicación.
   otra sesión con una macro `saveState` + `kill`. Regla: una sola instancia de la UI. Antes de probar, mirar
   `Get-CimInstance Win32_Process | ? CommandLine -match 'ui.server'` y parar las viejas. Además, el selftest de la
   UI usa ahora un `.server.json` temporal, y `_state()` reintenta si el archivo existe pero no se puede leer.
+- 2026-10-24 · El visor solo pinta fronteras: en una pared sin deslizamiento la velocidad es la de la pared (0 en
+  la voluta, ω·r en el rotor), no el flujo. Para ver el fluido: `PLANOS auto` en `exportar-superficies-ensight`
+  (grupo «Planos»). El plano_medio con cota fija z = 30 mm (de cursocfturbo, D2 270 mm) cortaba Bomba_NQ15
+  (D ≈ 1,4 m, rotor z 0…152 mm) por el ojo del impulsor: un anillo y una cuña de voluta. Ahora se coloca a media
+  salida del rotor con Min/Max de `dot($$Position, eje)` en sus fronteras Outflow. Las escenas de plano lo reusan.
 - 2026-10-24 · Edge `--headless=new --print-to-pdf` puede salir con código 0 antes de escribir el PDF. Pasa sobre
   todo lanzado desde el servidor de la UI. `informe.to_pdf` espera a que el archivo exista y deje de crecer. Además,
   un `·` de `json.dumps` dentro de una variable CSS sale tal cual en el pie de página: no usar JSON para CSS.

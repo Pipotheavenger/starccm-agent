@@ -1,4 +1,4 @@
-// QUE: escenas: presión en álabes, velocidad en plano z = 30 mm, y+ en paredes del rotor
+// QUE: escenas: presión en álabes, velocidad en plano_medio (a media salida del rotor), y+ en paredes del rotor
 // VERSION: 19.06.009-R8
 // FECHA: 2026-10-23
 
@@ -12,8 +12,11 @@ d1.getInputParts().setObjects(blades);
 d1.getScalarDisplayQuantity().setFieldFunction(sim.getFieldFunctionManager().getFunction("Pressure"));
 s1.resetCamera(true);
 List<Region> regs = new ArrayList<Region>(sim.getRegionManager().getRegions());
-PlaneSection plane = sim.getPartManager().createImplicitPart(new NeoObjectVector(regs.toArray()), new DoubleVector(new double[] {0.0, 0.0, 1.0}), new DoubleVector(new double[] {0.0, 0.0, 0.030}), 0, 1, new DoubleVector(new double[] {0.0}));
-plane.setPresentationName("plano_medio");
+// plano_medio: lo coloca exportar-superficies-ensight con PLANOS «auto» (a media salida del rotor). Correrla ANTES:
+// la cota fija z = 30 mm era la de cursocfturbo y en otra bomba corta por el ojo del impulsor (2026-10-24, Bomba_NQ15)
+PlaneSection plane = null;
+for (Object o : sim.getPartManager().getObjects()) if (o instanceof PlaneSection && ((PlaneSection) o).getPresentationName().equals("plano_medio")) plane = (PlaneSection) o;
+if (plane == null) throw new RuntimeException("falta plano_medio: corre antes exportar-superficies-ensight con PLANOS auto");
 Scene s2 = sim.getSceneManager().createScene("velocidad_plano"); s2.initializeAndWait();
 ScalarDisplayer d2 = s2.getDisplayerManager().createScalarDisplayer("v"); d2.initialize();
 d2.setRepresentation(sim.getRepresentationManager().getDefaultFvRepresentation());

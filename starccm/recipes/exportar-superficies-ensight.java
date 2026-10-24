@@ -31,9 +31,49 @@ for (String n : "FUNCS".split(",")) {
 // (en una pared sin deslizamiento la velocidad es la de la pared: 0 en la voluta, ω·r en el rotor). Formato
 // «nombre:nx,ny,nz,ox,oy,oz;…» (normal y origen en m), p.ej. «medio:0,0,1,0,0,0.03;meridional:1,0,0,0,0,0».
 // Se crean (o se reusan) como plano_<nombre> sobre todas las regiones y salen en el visor en el grupo «Planos».
+// «auto»: sin cotas a mano (una cota copiada de otra bomba corta por el sitio equivocado): eje y origen del marco
+// rotatorio; «medio» perpendicular al eje a media anchura de la SALIDA del rotor (sus fronteras Outflow/outlet,
+// medidas en STAR-CCM+ con Min/Max de la coordenada axial) y «meridional» que contiene el eje.
 java.util.Vector<Part> planes = new java.util.Vector<Part>();
 String planos = "PLANOS";
 if (planos.equals("PLANO" + "S")) planos = "";  // sin sustituir: ningún plano
+if (planos.trim().equalsIgnoreCase("auto")) {
+  double[] ax = {0, 0, 1}, og = {0, 0, 0}; Region rot = null;
+  for (Region r : sim.getRegionManager().getRegions()) {
+    try {
+      Object rf = r.getValues().get(MotionSpecification.class).getReferenceFrame();
+      if (rf instanceof RotatingReferenceFrame) {
+        DoubleVector a = ((RotatingReferenceFrame) rf).getAxisDirection().getSIVector(), o = ((RotatingReferenceFrame) rf).getAxisOrigin().getSIVector();
+        double n = Math.sqrt(a.get(0) * a.get(0) + a.get(1) * a.get(1) + a.get(2) * a.get(2));
+        ax = new double[] {a.get(0) / n, a.get(1) / n, a.get(2) / n}; og = new double[] {o.get(0), o.get(1), o.get(2)}; rot = r; break;
+      }
+    } catch (Exception e) { }
+  }
+  java.util.Vector<Boundary> outs = new java.util.Vector<Boundary>();
+  if (rot != null) {
+    for (Boundary b : rot.getBoundaryManager().getBoundaries()) if (b.getPresentationName().toLowerCase().matches(".*(outflow|outlet|salida).*")) outs.add(b);
+    if (outs.isEmpty()) outs.addAll(rot.getBoundaryManager().getBoundaries());
+  }
+  double mid = ax[0] * og[0] + ax[1] * og[1] + ax[2] * og[2];
+  if (!outs.isEmpty()) {
+    UserFieldFunction uf = sim.getFieldFunctionManager().createFieldFunction();
+    uf.setPresentationName("agente_coord_axial"); uf.setFunctionName("agente_coord_axial");
+    uf.setDefinition("dot($$Position, [" + ax[0] + ", " + ax[1] + ", " + ax[2] + "])");
+    MaxReport mx = sim.getReportManager().createReport(MaxReport.class); mx.setFieldFunction(uf); mx.getParts().setObjects(outs);
+    MinReport mn = sim.getReportManager().createReport(MinReport.class); mn.setFieldFunction(uf); mn.getParts().setObjects(outs);
+    double zmax = mx.getReportMonitorValue(), zmin = mn.getReportMonitorValue();
+    mid = 0.5 * (zmin + zmax);
+    sim.println("PLANO_AUTO\tsalida del rotor " + rot.getPresentationName() + ": " + outs.size() + " fronteras, eje " + zmin + " .. " + zmax + " m -> " + mid);
+    sim.getReportManager().removeObjects(mx, mn);
+    sim.getFieldFunctionManager().removeObjects(uf);
+  }
+  double[] e = Math.abs(ax[0]) < 0.9 ? new double[] {1, 0, 0} : new double[] {0, 1, 0};  // normal del meridional: eje × e
+  double[] nm = {ax[1] * e[2] - ax[2] * e[1], ax[2] * e[0] - ax[0] * e[2], ax[0] * e[1] - ax[1] * e[0]};
+  double t = mid - (ax[0] * og[0] + ax[1] * og[1] + ax[2] * og[2]);
+  planos = "medio:" + ax[0] + "," + ax[1] + "," + ax[2] + "," + (og[0] + t * ax[0]) + "," + (og[1] + t * ax[1]) + "," + (og[2] + t * ax[2])
+         + ";meridional:" + nm[0] + "," + nm[1] + "," + nm[2] + "," + og[0] + "," + og[1] + "," + og[2];
+  sim.println("PLANOS\t" + planos);
+}
 for (String spec : planos.split(";")) {
   spec = spec.trim(); if (spec.isEmpty() || !spec.contains(":")) continue;
   String pname = "plano_" + spec.substring(0, spec.indexOf(':')).trim();
@@ -42,6 +82,10 @@ for (String spec : planos.split(";")) {
   double[] x = new double[6]; for (int i = 0; i < 6; i++) x[i] = Double.parseDouble(v[i].trim());
   Part ps = null;
   try { ps = sim.getPartManager().getPart(pname); } catch (Exception e) { }
+  if (ps instanceof PlaneSection) {  // reusar, pero en la posición pedida (un plano viejo puede estar en otra cota)
+    ((PlaneSection) ps).getOriginCoordinate().setCoordinate(sim.getUnitsManager().getUnits("m"), sim.getUnitsManager().getUnits("m"), sim.getUnitsManager().getUnits("m"), new DoubleVector(new double[] {x[3], x[4], x[5]}));
+    ((PlaneSection) ps).getOrientationCoordinate().setCoordinate(sim.getUnitsManager().getUnits("m"), sim.getUnitsManager().getUnits("m"), sim.getUnitsManager().getUnits("m"), new DoubleVector(new double[] {x[0], x[1], x[2]}));
+  }
   if (ps == null) {
     PlaneSection pl = (PlaneSection) sim.getPartManager().createImplicitPart(new NeoObjectVector(sim.getRegionManager().getRegions().toArray()),
         new DoubleVector(new double[] {x[0], x[1], x[2]}), new DoubleVector(new double[] {x[3], x[4], x[5]}), 0, 1, new DoubleVector(new double[] {0.0}));
