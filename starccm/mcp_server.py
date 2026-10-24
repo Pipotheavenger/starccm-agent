@@ -306,8 +306,13 @@ def _local_inputs(body: str) -> list[Path]:
     for m in re.finditer(rx, body, flags=re.I):
         rel = re.sub(r"[/\\]+", "/", m.group(1)).lstrip("/")
         f = (HERE / rel).resolve()
-        if rel and f.is_file() and HERE.resolve() in f.parents and f.suffix.lower() not in (".sim", ".java", ".class") and f not in out:
-            out.append(f)
+        if not rel or HERE.resolve() not in f.parents:
+            continue
+        # la IA suele armar la ruta como carpeta + nombre ("…/cad/" + f): una carpeta de cases/ sube sus archivos
+        cands = [f] if f.is_file() else ([x for x in f.iterdir() if x.is_file()] if f.is_dir() and "cases" in f.relative_to(HERE.resolve()).parts else [])
+        for x in cands:
+            if x.suffix.lower() not in (".sim", ".java", ".class", ".part") and x not in out:
+                out.append(x)
     return out
 
 

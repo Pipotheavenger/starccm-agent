@@ -135,6 +135,14 @@ bombas, turbinas, ventiladores o compresores sin suponer nada. Sin ese dato, gir
 nombre de rotor (rotor, impeller, runner, rodete…) sobre el centro de su propia caja y el eje de menor
 espesor (Z si la caja es casi cúbica). El sentido sigue el signo de las rpm.
 
+Caso nuevo desde la página: botón «＋» junto al selector de caso. Crea `cases/<caso>/{cad,images,reports}`,
+sube la geometría (STEP, Parasolid, IGES, STL, `.cfturbo-ccm`; `PUT /api/cases/{caso}/cad/{archivo}`) y,
+si se marca, encarga a la IA la simulación completa con rpm, caudal másico, eje, fluido e iteraciones. La IA
+sigue el flujo estándar de `CLAUDE.md` con las recetas, escribe `reports/convergencia.csv` y `RESUMEN.md`
+(solo puede escribir dentro de `cases/`), exporta escenas y superficies; el visor convierte solo las
+superficies nuevas (`surfaces/_raw/*/*.case` + `.meta`). En modo Servidor el CAD se sube solo.
+El panel de la simulación (izquierda) también se pliega: botón « o tecla T.
+
 Salida en vivo: el MCP escribe el stdout del cliente batch en `macros/<macro>.out` mientras corre, así
 que la pestaña *Salida* muestra las iteraciones (residuales y reportes) en tiempo real y marca la macro
 «en marcha» hasta que aparece `AGENT_END`.

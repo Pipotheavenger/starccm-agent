@@ -46,7 +46,7 @@ servidor exige sudo o `uv`. No hace falta: `mcp_server.py` corre en Windows y, c
 `STARCCM_RUN_HOST=server`, lanza por SSH `starccm+ -server` en el servidor, copia cada macro con `scp`,
 la inyecta con el cliente batch **del servidor** (misma versión 2502; el cliente 2410 del PC no puede
 conectarse a un servidor 2502) y trae de vuelta `.out`, PNG y exportaciones. La UI no cambia: sigue
-leyendo `.server.json`, `macros/` y `cases/` locales. Pendiente de implementar y medir.
+leyendo `.server.json`, `macros/` y `cases/` locales. **Implementado y probado el 2026-10-24** (ver abajo).
 
 ## Verificación del servidor (2026-10-24, solver real, sin sudo)
 
@@ -81,3 +81,23 @@ Consecuencias para el MCP remoto:
   inyecta con `localhost:47827` dentro del servidor, sin abrir puertos al PC.
 - Carpetas creadas: `~/starccm-agent/{sims,macros,cases}`. Log de la prueba: `sims/prueba.server.log`.
 - Sin sudo no falta nada: no hay pasos pendientes para Sebastián.
+
+## Ejecución remota en uso (2026-10-24, bomba cursocfturbo, solver real)
+
+Se elige «Servidor» en la página (o `server_start(where="server")`). Medido con el `.sim` ya en el servidor:
+
+| paso | servidor (np 14) | PC (np 4) |
+|---|---|---|
+| `server_start` hasta `Server::start` + autosave off | 26 s | 32 s en frío |
+| `inspect("regions")` (primera macro: carga módulos) | 18 s | 50–75 s |
+| 100 iteraciones de la bomba (tras calentar) | **41,6 s** | ~82 s |
+| `export_scene` (PNG traído al PC por tar/SSH) | 25 s | ~11 s |
+| guardar 158 MB y apagar | 50 s | ~15 s |
+
+- Cada macro paga ~5 s extra (SSH + cliente batch remoto). Para iterar compensa de sobra; para tareas
+  cortas (una escena) es más lento que en local.
+- El `.sim` se sube SOLO si falta en el servidor o si el del PC es más nuevo (y se guarda una copia
+  `.antes` del remoto). Lección: la primera versión comparaba solo el tamaño y pisó un `.sim` guardado
+  en el servidor con el del PC (se perdieron 20 iteraciones de prueba).
+- La clave PoD va en `-podkey` en la línea de comandos: en el servidor la ve cualquier usuario con `ps`.
+  Es como funciona STAR-CCM+ también en Windows; si el servidor es compartido, tenerlo en cuenta.
