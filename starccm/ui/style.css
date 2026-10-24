@@ -131,7 +131,7 @@ html.resizing,html.resizing *{cursor:col-resize!important;user-select:none}
 
 table.kv{border-collapse:collapse;width:100%;font-size:11px;margin-top:4px}
 table.kv td{padding:1px 4px;max-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap} table.kv td:first-child{width:40%}
-table.kv tr.where td{white-space:normal;font-weight:600} table.kv tr.srv td{color:var(--mut)}
+table.kv tr.where td{white-space:normal;font-weight:600}
 
 /* visor */
 .vtabs{display:flex;align-items:stretch;gap:2px;padding:0 var(--s2);background:var(--panel);border-bottom:1px solid var(--line);overflow-x:auto;min-width:0;scrollbar-width:none}

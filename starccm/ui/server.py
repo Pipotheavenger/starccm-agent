@@ -49,6 +49,7 @@ from typing import Literal
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
+from starlette.requests import ClientDisconnect
 from pydantic import BaseModel, Field
 
 HERE = Path(__file__).resolve().parent          # starccm/ui
@@ -185,7 +186,7 @@ def style_css() -> FileResponse:
 # ---------------------------------------------------------------- solver local (la ejecución remota se quitó el 2026-10-24)
 @app.get("/api/settings")
 def api_settings() -> dict:
-    return {"run_where": "local", "local": {"label": "Local (este PC)", "np": scc.NP, "version": "2410"}}
+    return {"local": {"np": scc.NP, "version": "2410"}}
 
 
 def _where_text() -> str:
@@ -225,7 +226,7 @@ def _convergencia(d: Path) -> dict | None:
     f = d / "reports" / "convergencia.csv"
     if not f.is_file():
         return None
-    with open(f, encoding="utf-8", newline="") as fh:
+    with open(f, encoding="utf-8-sig", errors="replace", newline="") as fh:  # BOM de Excel o bytes sueltos no tumban /api/cases
         rows = list(csv.reader(fh))
     if not rows:
         return None
@@ -267,7 +268,13 @@ def cases() -> list[dict]:
     if not CASES.is_dir():
         return []
     ds = [d for d in CASES.iterdir() if d.is_dir() and not d.name.startswith(("_", "."))]
-    rows = [_case_row(d) for d in ds]
+    rows = []
+    for d in ds:
+        try:
+            rows.append(_case_row(d))
+        except Exception as e:  # noqa: BLE001  un caso con archivos rotos no esconde a los demás
+            log.warning("caso %s ilegible: %s", d.name, e)
+            rows.append({"name": d.name, "title": d.name, "has_resumen": False, "date": "", "n_images": 0, "last": None})
     rows.sort(key=lambda r: r["date"], reverse=True)
     return rows
 
@@ -286,32 +293,48 @@ CAD_EXT = {".stp", ".step", ".x_t", ".x_b", ".igs", ".iges", ".stl", ".jt", ".sa
 CAD_MAX = 2 * 1024 ** 3  # 2 GB por archivo
 
 
+WIN_RESERVED = {"con", "prn", "aux", "nul", *(f"com{i}" for i in range(1, 10)), *(f"lpt{i}" for i in range(1, 10))}
+
+
 class NewCaseReq(BaseModel):
-    name: str = Field(min_length=1, max_length=60, pattern=r"^[A-Za-z0-9_\-]+$")
+    # empieza por letra o número: «_x» y «.x» los esconde /api/cases; CON, NUL… no se pueden crear en Windows
+    name: str = Field(min_length=1, max_length=60, pattern=r"^[A-Za-z0-9][A-Za-z0-9_\-]*$")
 
 
 @app.post("/api/cases/new")
 def api_case_new(req: NewCaseReq) -> dict:
     """Crea cases/<nombre>/{cad,images,reports}. La IA hace el resto desde el chat."""
     d = CASES / req.name
-    if d.exists():
+    if req.name.lower() in WIN_RESERVED:
+        raise HTTPException(400, f"«{req.name}» es un nombre reservado de Windows")
+    # un intento anterior cortado (carpeta sin geometría ni resultados) se reanuda; uno con contenido no se pisa
+    vacio = d.is_dir() and not (d / "RESUMEN.md").exists() and not (d / "reports" / "convergencia.csv").exists() \
+        and not any(q.is_file() and not q.name.endswith(".part") for q in (d / "cad").glob("*"))
+    if d.exists() and not vacio:
         raise HTTPException(409, f"ya existe el caso {req.name}")
-    for sub in ("cad", "images", "reports"):
-        (d / sub).mkdir(parents=True)
-    log.info("caso nuevo: cases/%s", req.name)
-    return {"name": req.name, "dir": str(d)}
+    if (scc.SIMS / f"{req.name}.sim").exists():  # server_start(name) cargaría ese .sim viejo como si fuera el del caso nuevo
+        raise HTTPException(409, f"ya existe sims/{req.name}.sim de otro trabajo: elige otro nombre")
+    try:
+        for sub in ("cad", "images", "reports"):
+            (d / sub).mkdir(parents=True, exist_ok=True)
+    except OSError as e:
+        raise HTTPException(500, f"no pude crear cases/{req.name}: {e}")
+    log.info("caso nuevo: cases/%s%s", req.name, " (reanudado)" if vacio else "")
+    return {"name": req.name, "dir": str(d), "resumed": bool(vacio)}
 
 
 @app.put("/api/cases/{name}/cad/{fname}")
 async def api_case_cad(name: str, fname: str, request: Request) -> dict:
     """Sube un archivo de geometría al cad/ del caso (cuerpo = el archivo tal cual, en trozos: sin multipart)."""
     d = _case_dir(name) / "cad"
-    if not re.fullmatch(r"[A-Za-z0-9_\-. ]+", fname) or ".." in fname or not any(fname.lower().endswith(e) for e in CAD_EXT):
-        raise HTTPException(400, f"archivo no admitido: usa {', '.join(sorted(CAD_EXT))}")
+    if not re.fullmatch(r"[A-Za-z0-9_\-][A-Za-z0-9_\-. ]*", fname) or ".." in fname or not any(fname.lower().endswith(e) for e in CAD_EXT):
+        raise HTTPException(400, f"archivo no admitido: nombre con letras, números, espacios, _ - . (sin acentos ni símbolos) y extensión {', '.join(sorted(CAD_EXT))}")
+    if fname.split(".")[0].strip().lower() in WIN_RESERVED:
+        raise HTTPException(400, f"«{fname}»: nombre reservado de Windows (CON, NUL, COM1…); renómbralo")
     if int(request.headers.get("content-length") or 0) > CAD_MAX:
         raise HTTPException(413, "archivo de más de 2 GB")
     d.mkdir(exist_ok=True)
-    tmp = d / (fname + ".part")
+    tmp = d / f"{fname}.{time.time_ns()}.part"  # dos subidas del mismo nombre no comparten el temporal
     n = 0
     done = False
     try:
@@ -322,9 +345,19 @@ async def api_case_cad(name: str, fname: str, request: Request) -> dict:
                     raise HTTPException(413, "archivo de más de 2 GB")
                 f.write(chunk)
         done = True
+    except ClientDisconnect:  # la pestaña se cerró o la red cayó a mitad de subida
+        log.warning("subida cortada por el cliente: cases/%s/cad/%s (%d bytes recibidos); descartada", name, fname, n)
+        raise HTTPException(400, f"subida cortada ({n} bytes recibidos); vuelve a subirlo")
     finally:
         if not done:  # corte del cliente o archivo enorme: no dejar el .part a medias
             tmp.unlink(missing_ok=True)
+    want = int(request.headers.get("content-length") or 0)
+    if want and n != want:  # llegó menos (o más) de lo anunciado: no se publica un CAD cortado
+        tmp.unlink(missing_ok=True)
+        raise HTTPException(400, f"subida incompleta: {n} de {want} bytes; vuelve a subirlo")
+    if n == 0:
+        tmp.unlink(missing_ok=True)
+        raise HTTPException(400, "archivo vacío")
     tmp.replace(d / fname)
     log.info("CAD subido: cases/%s/cad/%s (%d bytes)", name, fname, n)
     return {"file": f"cases/{name}/cad/{fname}", "bytes": n}
@@ -351,7 +384,11 @@ def api_roles(name: str) -> dict:
         d = json.loads(f.read_text(encoding="utf-8")) if f.is_file() else {}
     except ValueError:
         d = {}
-    return {"roles": d.get("roles", {}), "at": d.get("at"), "file": f"cases/{name}/fronteras.json"}
+    if not isinstance(d, dict):  # fronteras.json corrupto (JSON válido pero no un objeto)
+        d = {}
+    roles = d.get("roles")
+    roles = {k: v for k, v in roles.items() if v in ROLES} if isinstance(roles, dict) else {}
+    return {"roles": roles, "at": d.get("at") if isinstance(d.get("at"), str) else None, "file": f"cases/{name}/fronteras.json"}
 
 
 @app.post("/api/cases/{name}/roles")
@@ -417,6 +454,8 @@ def _solver_busy_409() -> None:
     # un segundo cliente batch chocaría con la suya. Mientras el chat trabaja, no se toca el solver desde aquí.
     if CHAT_LOCK.locked():
         raise HTTPException(409, "La IA está usando el solver ahora; espera a que termine")
+    if scc.macro_running():  # otra sesión (Claude Code, otra pestaña) con una macro en marcha: dos clientes batch chocan
+        raise HTTPException(409, "hay una macro en marcha (de otra sesión); espera a que termine")
 
 
 class SceneReq(BaseModel):
@@ -535,9 +574,10 @@ def _tree_file(sim: str | None) -> Path | None:
 def _tree_load(case: str | None) -> dict:
     f = CASES / _safe(case) / "tree.json" if case else None
     try:
-        return json.loads(f.read_text(encoding="utf-8")) if f and f.is_file() else {}
+        t = json.loads(f.read_text(encoding="utf-8")) if f and f.is_file() else {}
     except ValueError:
         return {}
+    return t if isinstance(t, dict) else {}
 
 
 def _tree_derived(case: str | None) -> dict:
@@ -555,7 +595,7 @@ def _tree_derived(case: str | None) -> dict:
         try:
             m = json.loads(f.read_text(encoding="utf-8"))
             data["boundary"] = [{"name": p["name"], "type": f"{p['ni'] // 3:,} triáng.".replace(",", ".")} for p in m.get("parts", []) if p.get("ni")]
-        except (ValueError, KeyError, TypeError) as e:
+        except (ValueError, KeyError, TypeError, AttributeError) as e:
             log.warning("manifest ilegible %s: %s", f, e)
     conv = _convergencia(d)
     if conv:
@@ -653,6 +693,9 @@ def _meta_lines(text: str) -> tuple[list[str], list[dict]]:
     return bounds, rotation
 
 
+_RAW_FAILED: dict[str, float] = {}  # exportación cruda que no se pudo convertir -> su mtime (no reintentar cada sondeo)
+
+
 def _sync_raw(case: str) -> list[str]:
     """Convierte las exportaciones EnSight crudas (surfaces/_raw/<nombre>/*.case) que aún no tengan dataset o sean
     más nuevas que él: así lo que exporte la IA desde el chat aparece solo en el visor."""
@@ -663,7 +706,10 @@ def _sync_raw(case: str) -> list[str]:
         if not re.fullmatch(r"[A-Za-z0-9_\-]+", name):
             continue
         man = d / name / "manifest.json"
-        if man.is_file() and man.stat().st_mtime >= cf.stat().st_mtime:
+        newest = max(q.stat().st_mtime for q in cf.parent.iterdir() if q.is_file())  # el .case se escribe antes que los datos
+        if time.time() - newest < 3 or _RAW_FAILED.get(str(cf)) == newest:  # aún se está escribiendo, o ya falló con estos archivos
+            continue
+        if man.is_file() and man.stat().st_mtime >= newest:
             continue
         meta = cf.with_name(cf.name + ".meta")
         bounds, rotation = _meta_lines(meta.read_text(encoding="utf-8", errors="replace")) if meta.is_file() else ([], [])
@@ -673,6 +719,7 @@ def _sync_raw(case: str) -> list[str]:
             done.append(name)
             log.info("superficie %s/%s convertida desde _raw (%d fronteras, %d marcos)", case, name, len(bounds), len(rotation))
         except Exception as e:  # noqa: BLE001
+            _RAW_FAILED[str(cf)] = newest
             log.warning("no pude convertir %s: %s", cf, e)
     return done
 
@@ -689,6 +736,9 @@ def api_surfaces(case: str) -> dict:
             man = json.loads(m.read_text(encoding="utf-8"))
         except ValueError as e:
             log.warning("manifest ilegible %s: %s", m, e)
+            continue
+        if not (isinstance(man, dict) and isinstance(man.get("parts"), list) and isinstance(man.get("scalars"), list)):
+            log.warning("manifest sin partes/escalares %s", m)
             continue
         out.append({"name": m.parent.name, "mtime": int(m.stat().st_mtime), "manifest": man,
                     "url": f"/surfaces/{case}/{m.parent.name}"})
@@ -761,12 +811,12 @@ def status() -> dict:
     st = scc._state()
     pid = st.get("pid")
     alive = scc.alive(st)
-    last = scc.last_activity()  # última macro (.java/.out) o .server.json: la misma medida en disco que usa el watchdog del MCP
+    starting = bool(pid) and not alive and scc._pid_alive(pid)  # proceso vivo con el puerto aún cerrado: arrancando (o colgado)
     return {"alive": alive, "pid": pid, "port": st.get("port"), "host": st.get("host"), "sim": st.get("sim"),
 
             "started": st.get("started"), "np": st.get("np"), "startup_seconds": st.get("startup_seconds"),
-            "idle_min": round((time.time() - last) / 60, 1) if (alive and last) else None,
-            "idle_limit_min": scc.IDLE_MIN, "stale": bool(pid) and not alive,
+            "idle_min": round(scc.idle_disk_seconds() / 60, 1) if alive else None,  # la misma medida en disco que usa el watchdog
+            "idle_limit_min": scc.IDLE_MIN, "stale": bool(pid) and not alive and not starting, "starting": starting,
             "stopping": STOP_LOCK.locked(), "chatting": CHAT_LOCK.locked(),
             "log": _log_tail(), "claude": CLAUDE_BIN, "state_file": str(scc.STATE_FILE)}
 
@@ -832,6 +882,17 @@ def _tool_label(name: str, inp: dict) -> str:
     return f"{lab}: {extra}" if extra else lab
 
 
+def _clip(v, n: int = 3000):
+    """Recorta los textos largos de lo que se manda a la página (un run_java de 200 kB no viaja entero por SSE ni se guarda)."""
+    if isinstance(v, str):
+        return v if len(v) <= n else v[:n] + f"… [{len(v) - n} caracteres más]"
+    if isinstance(v, dict):
+        return {k: _clip(x, n) for k, x in v.items()}
+    if isinstance(v, list):
+        return [_clip(x, n) for x in v[:50]]
+    return v
+
+
 def _sse(obj: dict) -> str:
     return "data: " + json.dumps(obj, ensure_ascii=False) + "\n\n"
 
@@ -855,6 +916,7 @@ def _chat_events(req: ChatReq):
         yield _sse({"kind": "error", "text": f"la página está {busy} con el solver; espera a que termine y reenvía"})
         return
     p = None
+    CHAT_PROC["stop_req"] = False
     try:
         prompt = f"({'Caso seleccionado en el panel: cases/' + req.case + ' · ' if req.case else ''}{_where_text()})\n{req.message}"
         cmd = ([sys.executable, CLAUDE_BIN] if CLAUDE_BIN.lower().endswith(".py") else [CLAUDE_BIN]) + ["-p", prompt, "--output-format", "stream-json", "--verbose",
@@ -873,6 +935,9 @@ def _chat_events(req: ChatReq):
             return
         CHAT_PROC["p"] = p
         CHAT_PROC["stopped"] = False
+        if CHAT_PROC.pop("stop_req", False):  # «Detener» llegó mientras se lanzaba la CLI
+            CHAT_PROC["stopped"] = True
+            _kill_tree(p)
         log.info("chat: CLI lanzada (pid %s%s)", p.pid, ", continúa sesión" if req.session_id else "")
         hidden: set[str] = set()
         q: queue.Queue = queue.Queue()
@@ -881,12 +946,16 @@ def _chat_events(req: ChatReq):
         err_thread = threading.Thread(target=lambda: [err_tail.append(ln) for ln in p.stderr], daemon=True)
         err_thread.start()
         yield _sse({"kind": "status", "text": "La IA está arrancando…"})
-        t0 = time.time()
+        t0 = last_ping = time.time()
         while True:
             try:
-                line = q.get(timeout=15)
+                line = q.get(timeout=2)
             except queue.Empty:
-                yield _sse({"kind": "ping", "t": round(time.time() - t0)})
+                if p.poll() is not None:  # la CLI murió pero algún hijo suyo mantiene la tubería abierta: no esperar el EOF
+                    break
+                if time.time() - last_ping >= 15:
+                    last_ping = time.time()
+                    yield _sse({"kind": "ping", "t": round(time.time() - t0)})
                 continue
             if line is None:
                 break
@@ -905,7 +974,7 @@ def _chat_events(req: ChatReq):
             elif t == "assistant":
                 for b in o.get("message", {}).get("content", []):
                     if b.get("type") == "text" and b.get("text"):
-                        yield _sse({"kind": "text", "text": scc._redact(b["text"])})
+                        yield _sse({"kind": "text", "text": _clip(scc._redact(b["text"]), 40000)})
                     elif b.get("type") == "tool_use":
                         name = b.get("name", "")
                         if name in ("Write", "Edit"):
@@ -917,7 +986,7 @@ def _chat_events(req: ChatReq):
                             continue
                         short = name.replace("mcp__starccm__", "")
                         yield _sse({"kind": "tool", "name": short, "label": _tool_label(short, b.get("input") or {}),
-                                    "input": json.loads(scc._redact(json.dumps(b.get("input"))))})
+                                    "input": json.loads(scc._redact(json.dumps(_clip(b.get("input")))))})
             elif t == "user":
                 for b in o.get("message", {}).get("content", []):
                     if isinstance(b, dict) and b.get("type") == "tool_result" and b.get("tool_use_id") not in hidden:
@@ -927,7 +996,7 @@ def _chat_events(req: ChatReq):
             elif t == "result":
                 yield _sse({"kind": "result", "subtype": o.get("subtype"), "session_id": o.get("session_id"),
                             "turns": o.get("num_turns"), "seconds": round(time.time() - t0),
-                            "text": o.get("result") if o.get("subtype") != "success" else None})
+                            "text": _clip(scc._redact(str(o.get("result"))), 2000) if o.get("subtype") != "success" else None})
         rc = p.wait()
         err_thread.join(timeout=2)
         err = scc._redact("".join(err_tail).strip())
@@ -954,10 +1023,17 @@ CHAT_COND = threading.Condition()
 def _chat_worker(req: "ChatReq", rid: int) -> None:
     try:
         for ev in _chat_events(req):
+            if ev.startswith('data: {"kind": "ping"'):
+                continue  # los latidos no se guardan: el índice de reenganche (frm) cuenta solo eventos reales, como la página
             with CHAT_COND:
                 if CHAT_RUN["id"] == rid:
                     CHAT_RUN["events"].append(ev)
                     CHAT_COND.notify_all()
+    except Exception as e:  # noqa: BLE001  sin esto la página se quedaba sin respuesta ni «done»
+        log.exception("chat: el hilo falló")
+        with CHAT_COND:
+            if CHAT_RUN["id"] == rid:
+                CHAT_RUN["events"] += [_sse({"kind": "error", "text": f"error interno del chat: {type(e).__name__}: {e}"}), _sse({"kind": "done", "rc": -1})]
     finally:
         with CHAT_COND:
             if CHAT_RUN["id"] == rid:
@@ -988,10 +1064,10 @@ _SSE_HDR = {"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
 
 @app.post("/api/chat")
 def api_chat(req: ChatReq) -> StreamingResponse:
-    if CHAT_LOCK.locked() or not CHAT_RUN["done"]:  # la conversación en curso sigue intacta
-        return StreamingResponse(iter([_sse({"kind": "error", "text": "ya hay una conversación en curso; espera o pulsa Detener"})]),
-                                 media_type="text/event-stream", headers=_SSE_HDR)
-    with CHAT_COND:
+    with CHAT_COND:  # comprobar y reservar bajo el mismo candado: dos POST a la vez no lanzan dos CLI
+        if CHAT_LOCK.locked() or not CHAT_RUN["done"]:  # la conversación en curso sigue intacta
+            return StreamingResponse(iter([_sse({"kind": "error", "text": "ya hay una conversación en curso; espera o pulsa Detener"})]),
+                                     media_type="text/event-stream", headers=_SSE_HDR)
         rid = CHAT_RUN["id"] + 1
         CHAT_RUN.update(id=rid, events=[], done=False, message=req.message, case=req.case, started=time.strftime("%Y-%m-%d %H:%M:%S"))
     threading.Thread(target=_chat_worker, args=(req, rid), daemon=True, name=f"chat-{rid}").start()
@@ -1020,6 +1096,9 @@ def api_chat_stop() -> dict:
         _kill_tree(p)
         log.info("chat: detenido por el usuario (pid %s)", p.pid)
         return {"stopped": True}
+    if CHAT_LOCK.locked() and p is None:  # la CLI aún se está lanzando: se detiene en cuanto exista
+        CHAT_PROC["stop_req"] = True
+        return {"stopped": True}
     return {"stopped": False}
 
 
@@ -1028,6 +1107,7 @@ def _selftest() -> int:
     """Levanta uvicorn en un puerto libre y recorre los endpoints. Sin solver, sin licencia, sin CLI."""
     import socket
     import urllib.error
+    import urllib.parse
     import urllib.request
 
     import uvicorn
@@ -1087,22 +1167,64 @@ def _selftest() -> int:
     shutil.rmtree(CASES / nombre, ignore_errors=True)
     c, r = post("/api/cases/new", {"name": nombre})
     check(c == 200 and (CASES / nombre / "cad").is_dir(), "POST /api/cases/new crea cad/, images/, reports/")
-    check(post("/api/cases/new", {"name": nombre})[0] == 409, "caso repetido -> 409")
+    c, r = post("/api/cases/new", {"name": nombre})
+    check(c == 200 and r.get("resumed") is True, "caso vacío (intento cortado) se reanuda en vez de dar 409")
+    check(post("/api/cases/new", {"name": "_oculto"})[0] == 422 and post("/api/cases/new", {"name": "CON"})[0] == 400, "caso nuevo: «_x» (se escondería) y «CON» (Windows) rechazados")
     rq = urllib.request.Request(base + f"/api/cases/{nombre}/cad/pieza.stp", data=b"ISO-10303-21;\nEND-ISO-10303-21;\n", method="PUT")
     with urllib.request.urlopen(rq, timeout=10) as rr:
         up = json.loads(rr.read())
     lst = get(f"/api/cases/{nombre}/cad")[1]
     check(up.get("bytes", 0) > 0 and [f["name"] for f in lst.get("files", [])] == ["pieza.stp"], "PUT .../cad/pieza.stp sube y se lista")
+    check(post("/api/cases/new", {"name": nombre})[0] == 409, "caso con geometría repetido -> 409")
+    rq = urllib.request.Request(base + f"/api/cases/{nombre}/cad/mi%20pieza%20v2.stp", data=b"ISO-10303-21;", method="PUT")
+    with urllib.request.urlopen(rq, timeout=10) as rr:
+        check(json.loads(rr.read()).get("bytes") == 13 and (CASES / nombre / "cad" / "mi pieza v2.stp").is_file(), "CAD con espacios en el nombre se sube")
+    for malo in ("ni%C3%B1o.stp", "CON.stp", "a%3Fb.stp"):
+        rq = urllib.request.Request(base + f"/api/cases/{nombre}/cad/{malo}", data=b"x", method="PUT")
+        try:
+            urllib.request.urlopen(rq, timeout=10); bad = 200
+        except urllib.error.HTTPError as e:
+            bad = e.code
+        except (ConnectionError, urllib.error.URLError):  # rechazo antes de leer el cuerpo: el cliente puede ver el cierre
+            bad = 400
+        check(bad == 400 and not (CASES / nombre / "cad" / urllib.parse.unquote(malo)).exists(), f"CAD con nombre no admitido ({malo}) -> rechazado")
+    import http.client  # subida cortada: anuncia 100 bytes, manda 10 y cuelga
+    hc = http.client.HTTPConnection("127.0.0.1", port, timeout=10)
+    hc.putrequest("PUT", f"/api/cases/{nombre}/cad/cortada.stp")
+    hc.putheader("Content-Length", "100")
+    hc.endheaders()
+    hc.send(b"0123456789")
+    hc.close()
+    time.sleep(0.8)
+    check(not list((CASES / nombre / "cad").glob("cortada*")), "subida cortada: no queda ni el archivo ni su .part")
     rq = urllib.request.Request(base + f"/api/cases/{nombre}/cad/malo.exe", data=b"x", method="PUT")
     try:
         urllib.request.urlopen(rq, timeout=10); bad = 200
     except urllib.error.HTTPError as e:
         bad = e.code
+    except (ConnectionError, urllib.error.URLError):  # rechazo antes de leer el cuerpo
+        bad = 400
     check(bad == 400, "extensión no admitida -> 400")
     c, r = post(f"/api/cases/{nombre}/roles", {"roles": {"rotor/Inflow": "inlet", "voluta/outlet": "outlet"}})
     check(c == 200 and r["roles"].get("rotor/Inflow") == "inlet" and get(f"/api/cases/{nombre}/roles")[1]["roles"].get("voluta/outlet") == "outlet",
           "fronteras: guardar y leer fronteras.json")
     check(post(f"/api/cases/{nombre}/roles", {"roles": {"x/y": "luna"}})[0] == 422, "fronteras: papel no válido -> 422")
+    for malo in ("[1, 2]", "{", '{"roles": [1]}', '{"roles": {"a/b": "luna", "c/d": "inlet"}}'):  # fronteras.json corrupto no tumba la página
+        (CASES / nombre / "fronteras.json").write_text(malo, encoding="utf-8")
+        c, r = get(f"/api/cases/{nombre}/roles")
+        check(c == 200 and isinstance(r["roles"], dict) and "luna" not in r["roles"].values(), f"fronteras.json corrupto ({malo[:18]}) -> 200 sin papeles inválidos")
+    (CASES / nombre / "reports").mkdir(exist_ok=True)  # convergencia.csv con BOM y bytes sueltos: el listado de casos sigue vivo
+    (CASES / nombre / "reports" / "convergencia.csv").write_bytes(b"\xef\xbb\xbfiter,H\n1,70.5\n2,\xff\n")
+    c, rows = get("/api/cases")
+    check(c == 200 and any(r["name"] == nombre for r in rows), "convergencia.csv con BOM/bytes sueltos no rompe /api/cases")
+    (CASES / nombre / "surfaces" / "malo").mkdir(parents=True, exist_ok=True)  # manifests que no son un dataset: se ignoran
+    for m in ("[]", "{}", '{"parts": 1}'):
+        (CASES / nombre / "surfaces" / "malo" / "manifest.json").write_text(m, encoding="utf-8")
+        c, r = get(f"/api/surfaces?case={nombre}")
+        check(c == 200 and r["datasets"] == [], f"manifest inservible ({m}) -> se ignora")
+    (CASES / nombre / "tree.json").write_text("[]", encoding="utf-8")
+    c, r = get(f"/api/tree?case={nombre}")
+    check(c == 200, "tree.json que no es un objeto -> 200")
     shutil.rmtree(CASES / nombre, ignore_errors=True)
     c, _ = get("/api/cases/no_existe")
     check(c == 404, "caso inexistente -> 404")
@@ -1130,12 +1252,14 @@ def _selftest() -> int:
     check(c == 200 and "from_disk" in tr, f"GET /api/tree?case=cursocfturbo (de disco={tr.get('from_disk')})")
     check(c == 200 and (tr.get("tree") is None or tr.get("derived") or tr.get("from_disk")) and (tr.get("tree") or {}).get("boundary", [1]), "árbol de disco no vacío para cursocfturbo")
     c, sg = get("/api/settings")
-    check(c == 200 and sg["run_where"] == "local" and "np" in sg["local"], "GET /api/settings: solo local")
+    check(c == 200 and "run_where" not in sg and "np" in sg["local"], "GET /api/settings: solo local")
     check(_where_text().startswith("solver: este PC"), f"prefijo del chat: {_where_text()}")
     c, r = post("/api/open_gui", {"case": "no_existe"})
     check(c == 404, "POST /api/open_gui con caso inexistente -> 404")
     c, st = get("/api/status")
-    check(c == 200 and "alive" in st and "log" in st and "idle_limit_min" in st, f"GET /api/status (alive={st.get('alive')})")
+    check(c == 200 and "alive" in st and "log" in st and "idle_limit_min" in st and "starting" in st, f"GET /api/status (alive={st.get('alive')})")
+    long_ev = json.loads(_sse({"kind": "x", "v": _clip({"body": "A" * 50000, "n": 3})})[6:])
+    check(len(long_ev["v"]["body"]) < 3100 and long_ev["v"]["n"] == 3, "_clip recorta los textos enormes de los eventos")
     if st.get("alive") or st.get("pid"):  # cualquier solver registrado (aunque el chequeo falle): nunca apagarlo
         print("  skip server/stop: hay un solver registrado en .server.json; no lo toco")
     else:
@@ -1175,6 +1299,45 @@ def _selftest() -> int:
         check(lab == "importar los STEP del caso", f"chat: paso con etiqueta legible ({lab})")
     finally:
         CLAUDE_BIN = real_bin
+    # el bloque ```pregunta``` llega entero como un evento de texto (la página lo parsea; aquí solo el viaje)
+    real_bin, CLAUDE_BIN = CLAUDE_BIN, str(ROOT / "tests" / "fake_claude.py")
+    try:
+        rq = urllib.request.Request(base + "/api/chat", data=json.dumps({"message": "PREGUNTA_PRUEBA"}).encode(), headers={"content-type": "application/json"}, method="POST")
+        with urllib.request.urlopen(rq, timeout=30) as rr:
+            evs = [json.loads(x[6:]) for x in rr.read().decode("utf-8").split("\n\n") if x.startswith("data: ")]
+        txt = next((e["text"] for e in evs if e["kind"] == "text"), "")
+        check("```pregunta" in txt and json.loads(txt.split("```pregunta")[1].split("```")[0])["opciones"], "chat: la pregunta con opciones viaja íntegra")
+    finally:
+        CLAUDE_BIN = real_bin
+    # los latidos no se guardan (el índice de reenganche cuenta eventos reales) y un fallo del hilo avisa a la página
+    real_ev = _chat_events
+    globals()["_chat_events"] = lambda req: iter([_sse({"kind": "ping", "t": 15}), _sse({"kind": "text", "text": "a"}), _sse({"kind": "ping", "t": 30})])
+    try:
+        with CHAT_COND:
+            CHAT_RUN.update(id=9001, events=[], done=False)
+        _chat_worker(ChatReq(message="x"), 9001)
+        check([json.loads(e[6:])["kind"] for e in CHAT_RUN["events"]] == ["text"] and CHAT_RUN["done"], "chat: los ping no se guardan en los eventos")
+        def boom(req):
+            yield _sse({"kind": "text", "text": "b"})
+            raise ValueError("fallo de prueba")
+        globals()["_chat_events"] = boom
+        with CHAT_COND:
+            CHAT_RUN.update(id=9002, events=[], done=False)
+        _chat_worker(ChatReq(message="x"), 9002)
+        ks = [json.loads(e[6:])["kind"] for e in CHAT_RUN["events"]]
+        check(ks == ["text", "error", "done"] and CHAT_RUN["done"], "chat: si el hilo falla la página recibe error y done")
+    finally:
+        globals()["_chat_events"] = real_ev
+        with CHAT_COND:
+            CHAT_RUN.update(id=0, events=[], done=True)
+    CHAT_LOCK.acquire()  # «Detener» mientras la CLI se está lanzando: se recuerda y se aplica al existir
+    try:
+        check(api_chat_stop() == {"stopped": True} and CHAT_PROC.get("stop_req") is True, "chat: Detener durante el lanzamiento de la CLI queda pendiente")
+    finally:
+        CHAT_PROC["stop_req"] = False
+        CHAT_LOCK.release()
+    c, r = get("/api/chat/stream?id=424242")
+    check(c == 404 and "detail" in r, "reenganche a una conversación que ya no existe -> 404 JSON")
     c, r = post("/api/chat", {"message": ""})
     check(c == 422 and "detail" in r, "POST /api/chat con mensaje vacío -> 422 JSON")
     server.should_exit = True

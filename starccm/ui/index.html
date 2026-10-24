@@ -144,7 +144,7 @@
 <dialog id="ncdlg" aria-labelledby="ncdlg-h">
   <form id="ncform" method="dialog">
     <h2 class="sec-h" id="ncdlg-h">Caso nuevo desde una geometría</h2>
-    <label>Nombre del caso<input id="nc_name" pattern="[A-Za-z0-9_\-]+" required placeholder="bomba_v2" title="Letras, números, _ y -"></label>
+    <label>Nombre del caso<input id="nc_name" pattern="[A-Za-z0-9][A-Za-z0-9_\-]*" required placeholder="bomba_v2" title="Letras, números, _ y -; empieza por letra o número"></label>
     <label>Geometría <span class="mut">(STEP, Parasolid, IGES, STL; puedes elegir varias, y el .cfturbo-ccm si viene de CFturbo)</span><input id="nc_files" type="file" multiple accept=".stp,.step,.x_t,.x_b,.igs,.iges,.stl,.jt,.sat,.cfturbo-ccm"></label>
     <div id="nc_drop" class="dropzone small mut">Arrastra aquí los archivos, o elígelos arriba (se van sumando).</div>
     <ul id="nc_list" class="nclist small"></ul>

@@ -216,9 +216,57 @@ def last_activity() -> float | None:
     return max(ts) if ts else None
 
 
+STALE_MACRO_H = 24  # una macro «sin terminar» más vieja que esto se da por abandonada (cliente muerto)
+
+
+def _macro_finished(out: Path) -> bool:
+    """La salida de una macro terminada trae AGENT_END, o «--- stderr» si el cliente falló (la misma regla que la UI)."""
+    try:
+        with open(out, "rb") as f:
+            f.seek(0, 2)
+            f.seek(max(0, f.tell() - 20_000))
+            t = f.read().decode("utf-8", "replace")
+    except OSError:
+        return True
+    return "AGENT_END" in t or t.startswith("--- stderr") or "\n--- stderr" in t
+
+
+def macro_running() -> bool:
+    """¿Hay una macro en marcha (en cualquier proceso)? Su .out aún no tiene AGENT_END y su cliente (Agent_*.pid)
+    sigue vivo; sin .pid, solo si el .out es de hace menos de 15 min. Una macro callada (malla de media hora) no
+    escribe en disco: sin esto el watchdog apagaría el solver a mitad de trabajo."""
+    now = time.time()
+    outs = []
+    for o in MACROS.glob("Agent_*.out") if MACROS.is_dir() else []:
+        try:
+            outs.append((o.stat().st_mtime, o))
+        except OSError:
+            pass
+    for mt, o in sorted(outs, reverse=True)[:8]:  # una en marcha es de las más nuevas (y /api/status lo pregunta cada 5 s)
+        age = now - mt
+        if age > STALE_MACRO_H * 3600 or _macro_finished(o):
+            continue
+        pf = o.with_suffix(".pid")
+        if pf.is_file():
+            try:
+                if _pid_alive(int(pf.read_text().strip())):
+                    return True
+            except (OSError, ValueError):
+                pass
+        elif age < 900:
+            return True
+    return False
+
+
+def idle_disk_seconds() -> float:
+    """Inactividad medida SOLO en disco (0 con una macro en marcha): lo que ven todos los procesos."""
+    if macro_running():
+        return 0.0
+    return time.time() - (last_activity() or 0)
+
+
 def idle_seconds() -> float:
-    last = last_activity()
-    return time.time() - max(last or 0, _last_tool)
+    return min(idle_disk_seconds(), time.time() - _last_tool)
 
 
 def _idle_stop() -> None:
@@ -313,11 +361,14 @@ def _precompile(src: Path) -> str | None:
     return None
 
 
-def _inject(body: str, imports: str = "", timeout: float = 3600) -> dict:
+def _inject(body: str, imports: str = "", timeout: float = 3600, expect_death: bool = False) -> dict:
     """Escribe la macro, la ejecuta con el cliente batch contra el servidor y devuelve su salida."""
     st = _state()
     if not st.get("pid") or not _pid_alive(st["pid"]):
         raise RuntimeError("No hay servidor de STAR-CCM+ vivo. Usa server_start primero.")
+    if not _port_open(st.get("port", 0)):
+        raise RuntimeError(f"El proceso del servidor (pid {st['pid']}) sigue pero no responde en el puerto {st.get('port')}: "
+                           "si acaba de arrancar espera; si está colgado, server_stop() lo mata.")
     MACROS.mkdir(exist_ok=True)
     tag = datetime.now().strftime("%Y%m%d_%H%M%S_%f")[:-3]
     src = MACROS / f"Agent_{tag}.java"
@@ -332,7 +383,7 @@ def _inject(body: str, imports: str = "", timeout: float = 3600) -> dict:
         return {"ok": False, "stdout": "", "stderr": "", "exception": "javac: no compila",
                 "trace": err_c, "seconds": round(time.time() - t0, 2), "macro": str(src), "returncode": 1}
     rc, err, killed, out_file = _inject_local(st, src, timeout)
-    return _inject_result(st, src, tag, t0, rc, err, killed, out_file)
+    return _inject_result(st, src, tag, t0, rc, err, killed, out_file, expect_death)
 
 
 def _inject_local(st: dict, src: Path, timeout: float) -> tuple[int, str, bool, Path]:
@@ -344,22 +395,28 @@ def _inject_local(st: dict, src: Path, timeout: float) -> tuple[int, str, bool, 
     with open(out_file, "w", encoding="utf-8", errors="replace") as fo:
         p = subprocess.Popen(cmd, stdout=fo, stderr=subprocess.PIPE, text=True, cwd=str(MACROS),
                              encoding="utf-8", errors="replace")
+        pidf = src.with_suffix(".pid")  # lo lee macro_running() desde otros procesos (el watchdog de la UI)
+        pidf.write_text(str(p.pid))
         try:
             _, err = p.communicate(timeout=timeout)
             rc = p.returncode
         except subprocess.TimeoutExpired:
             # subprocess.run solo mataba cmd.exe y esperaba al java hijo: se mata el árbol entero
-            _kill_tree(p.pid)
+            if p.poll() is None:
+                _kill_tree(p.pid)
             try:
                 _, e2 = p.communicate(timeout=15)
             except Exception:  # noqa: BLE001
                 e2 = ""
             rc, err = -1, f"timeout {timeout}s: cliente batch (pid {p.pid}) matado; la salida puede estar incompleta. {e2 or ''}"
             killed = True
+        finally:
+            pidf.unlink(missing_ok=True)
     return rc, err, killed, out_file
 
 
-def _inject_result(st: dict, src: Path, tag: str, t0: float, rc: int, err: str, killed: bool, out_file: Path) -> dict:
+def _inject_result(st: dict, src: Path, tag: str, t0: float, rc: int, err: str, killed: bool, out_file: Path,
+                   expect_death: bool = False) -> dict:
     out = out_file.read_text(encoding="utf-8", errors="replace")
     secs = round(time.time() - t0, 2)
     # Salida de la macro: entre marcadores, del stdout del cliente; si no, del log del servidor.
@@ -367,19 +424,26 @@ def _inject_result(st: dict, src: Path, tag: str, t0: float, rc: int, err: str, 
     if text is None:
         text = _between(_tail_log(st), tag)
     err_match = re.search(r"AGENT_ERROR: (.*)", text or out)
-    out_file.write_text(_redact(out + ("\n--- stderr\n" + err if err else "")), encoding="utf-8")
+    # sin AGENT_END el .out se cierra con «--- stderr» (así la UI y macro_running() lo dan por terminado)
+    out_file.write_text(_redact(out + ("\n--- stderr\n" + err if (err or text is None) else "")), encoding="utf-8")
     _prune_macros()
     _touch()
+    died = text is None and not killed and not expect_death and not alive(st)
+    if died:
+        _log(f"servidor {st.get('pid')} murió durante la macro {src.name} (rc {rc})")
     return {
         "ok": rc == 0 and not err_match and text is not None,
         "stdout": text if text is not None else _redact(out[-4000:]),
         "stderr": _redact(err[-2000:]) if err else "",
-        "exception": err_match.group(1).strip() if err_match else None,
-        "trace": _trace(text) if err_match else None,
+        "exception": err_match.group(1).strip() if err_match else (
+            "El servidor de STAR-CCM+ murió o dejó de responder durante la macro; lo no guardado se perdió. "
+            "Relánzalo con server_start()." if died else None),
+        "trace": _trace(text) if err_match else (_redact(_tail_log(st, 3000)) if died else None),
         "seconds": secs,
         "macro": str(src),
         "returncode": rc,
         **({"client_killed": True} if killed else {}),
+        **({"server_died": True} if died else {}),
     }
 
 
@@ -442,8 +506,8 @@ def _try_save(sp: str) -> tuple[bool, str | None]:
         return False, str(e)
 
 
-def _save_failed(err, where: str) -> dict:
-    _log(f"server_stop{where}: guardado falló, servidor sigue vivo: {err}")
+def _save_failed(err) -> dict:
+    _log(f"server_stop: guardado falló, servidor sigue vivo: {err}")
     return {"stopped": False, "saved": None, "save_error": str(err)[:500],
             "reason": "no se pudo guardar; el servidor sigue vivo (save=False apaga sin guardar)"}
 
@@ -455,6 +519,8 @@ def server_start(sim_path: str = "", name: str = "") -> dict:
     Devuelve host:port, pid, sim y segundos de arranque. Un solo servidor a la vez."""
     with _lock:
         _touch()
+        # un nombre con separadores, comillas o espacios no puede ser el de un archivo ni ir a un literal Java
+        name = re.sub(r'[\\/:*?"<>|\s]+', "_", name.strip()).strip("._") if name else ""
         st = _state()
         if st.get("pid") and alive(st):
             want = (name or (Path(sim_path).stem if sim_path else "")).strip()
@@ -464,8 +530,24 @@ def server_start(sim_path: str = "", name: str = "") -> dict:
                                    f"Guarda y apágalo con server_stop() antes de abrir {want}.")
             return {"reused": True, **st}
         if st.get("pid"):
+            if _pid_alive(st["pid"]) and _pid_is_ours(st["pid"]):
+                # proceso vivo con el puerto cerrado: otro proceso (UI o chat) lo está arrancando, o está colgado
+                try:
+                    age = (datetime.now() - datetime.fromisoformat(st["started"])).total_seconds()
+                except (KeyError, ValueError, TypeError):
+                    age = 1e9
+                if age < 600:
+                    raise RuntimeError(f"Otro proceso está arrancando el servidor (pid {st['pid']}, hace {age:.0f} s): "
+                                       "espera a que abra el puerto y vuelve a llamar a server_start.")
+                _log(f"servidor {st['pid']} colgado (puerto cerrado tras {age:.0f} s); lo mato")
+                _kill_tree(st["pid"])
             _log(f"servidor {st.get('pid')} muerto; limpio .server.json")
             STATE_FILE.unlink(missing_ok=True)
+        if not EXE.lower().endswith(".py") and not (Path(EXE).is_file() or shutil.which(EXE)):
+            raise RuntimeError(f"No encuentro el lanzador de STAR-CCM+ ({EXE}); define STARCCM_HOME o STARCCM_EXE en starccm/.env")
+        if _port_open(PORT):  # antes de copiar el .sim (158 MB): no se copia para nada
+            raise RuntimeError(f"Puerto {PORT} ocupado por otro proceso (¿un solver huérfano? mira `netstat -ano | findstr :{PORT}`); "
+                               "cambia STARCCM_PORT o libéralo.")
         SIMS.mkdir(exist_ok=True)
         sim = None
         if sim_path:
@@ -478,8 +560,6 @@ def server_start(sim_path: str = "", name: str = "") -> dict:
             sim = dst
         elif name:
             sim = SIMS / f"{name}.sim"  # se creará con save()
-        if _port_open(PORT):
-            raise RuntimeError(f"Puerto {PORT} ocupado por otro proceso; cambia STARCCM_PORT o libéralo.")
         log = SIMS / f"{(sim.stem if sim else 'nuevo')}.server.log"
         cmd = _starccm_cmd() + ["-server", "-port", str(PORT), "-np", str(NP)] + _lic_flags()
         if sim and sim.is_file():
@@ -498,8 +578,9 @@ def server_start(sim_path: str = "", name: str = "") -> dict:
             if _proc.poll() is not None:
                 tail = _redact(_tail_log(st, 6000))
                 STATE_FILE.unlink(missing_ok=True)
+                hint = "\nFalta STARCCM_PODKEY en starccm/.env (sin clave pide licencia a flex y aborta)." if not os.environ.get("STARCCM_PODKEY") else ""
                 raise RuntimeError(f"El servidor terminó con código {_proc.returncode} a los "
-                                   f"{time.time()-t0:.0f}s. Cola del log:\n{tail[-3000:]}")
+                                   f"{time.time()-t0:.0f}s. Cola del log:\n{tail[-3000:]}{hint}")
             if _port_open(PORT) and "Server::start" in _tail_log(st, 20000):
                 break
             time.sleep(1)
@@ -510,6 +591,8 @@ def server_start(sim_path: str = "", name: str = "") -> dict:
         st["startup_seconds"] = round(time.time() - t0, 1)
         _write_state(st)
         _run_init(st)  # (Simulation no tiene setPresentationName: el nombre lo da save())
+        if not alive(st):
+            raise RuntimeError(f"El servidor murió justo al arrancar ({st.get('init')}). Cola del log:\n{_redact(_tail_log(st, 3000))}")
         _log(f"servidor pid={st['pid']} puerto={PORT} sim={sim} en {st['startup_seconds']}s; {st['init']}")
         return st
 
@@ -524,13 +607,14 @@ def server_stop(save: bool = True) -> dict:
             return {"stopped": False, "reason": "no había servidor"}
         result = {"stopped": True, "saved": None}
         if _pid_alive(st["pid"]) and _port_open(st["port"]):
-            if save and st.get("sim"):
-                ok, err = _try_save(_jstr(_jpath(st["sim"])))
+            if save:  # sin .sim registrado (simulación nueva sin nombre) se guarda aparte: apagar no pierde el trabajo
+                sim = st.get("sim") or str(SIMS / f"nuevo_{datetime.now():%Y%m%d_%H%M%S}.sim")
+                ok, err = _try_save(_jstr(_jpath(sim)))
                 if not ok:
-                    return _save_failed(err, "")
-                result["saved"] = st["sim"]
+                    return _save_failed(err)
+                result["saved"] = sim
             try:
-                r = _inject("sim.kill();\n", timeout=1800)
+                r = _inject("sim.kill();\n", timeout=1800, expect_death=True)
                 result["stdout"] = r["stdout"]
             except Exception as e:  # noqa: BLE001
                 result["kill_error"] = str(e)
@@ -881,7 +965,7 @@ def docs_search(query: str, max_classes: int = 5) -> dict:
 
 # ----------------------------------------------------------------------------- selftest
 def _selftest() -> int:
-    global EXE, PORT, SIMS, MACROS, STATE_FILE, AGENT_LOG
+    global EXE, PORT, SIMS, MACROS, STATE_FILE, AGENT_LOG, IDLE_MIN, _inject_local
     import tempfile
     fake = HERE / "tests" / "fake_starccm.py"
     os.environ["STARCCM_EXE"] = str(fake)
@@ -947,6 +1031,79 @@ def _selftest() -> int:
     _write_state({**_state(), "sim": real_sim})
     sstat = server_status()
     check(sstat["alive"], "server_status vivo")
+    # watchdog: nunca apaga con una macro en marcha (su .out sin AGENT_END), aunque lleve «horas» callada; sí cuando termina
+    IDLE_MIN = 0.001  # 0,06 s
+    fake_m = MACROS / "Agent_19990101_000000_000"
+    fake_m.with_suffix(".java").write_text("// macro callada", encoding="utf-8")
+    fake_m.with_suffix(".out").write_text("AGENT_BEGIN 19990101_000000_000\n", encoding="utf-8")
+    check(macro_running() and idle_seconds() == 0, "macro_running ve un .out sin AGENT_END")
+    _idle_stop()
+    check(_port_open(PORT) and STATE_FILE.exists(), "watchdog no apaga con una macro en marcha")
+    fake_m.with_suffix(".pid").write_text("999999")  # su cliente murió: macro abandonada
+    check(not macro_running(), "macro con cliente muerto no cuenta como en marcha")
+    fake_m.with_suffix(".pid").unlink()
+    fake_m.with_suffix(".out").write_text("AGENT_BEGIN x\nAGENT_END x\n", encoding="utf-8")
+    check(not macro_running(), "macro con AGENT_END ya no cuenta")
+    time.sleep(0.2)
+    _idle_stop()
+    check(not _port_open(PORT) and not STATE_FILE.exists(), "watchdog apaga el solver inactivo (y guarda) cuando no hay macro")
+    IDLE_MIN = 30
+    # .server.json viejo (pid muerto): server_start limpia y relanza
+    _write_state({"pid": 999999, "port": PORT, "sim": None})
+    st = server_start()
+    check(st.get("pid") and st["pid"] != 999999 and _port_open(PORT), "server_start con .server.json viejo relanza")
+    # el servidor muere a mitad de una macro: error claro, no un «ok» vacío
+    real_inject = _inject_local
+
+    def dying(st_, src, timeout):
+        _kill_tree(st_["pid"])
+        time.sleep(0.5)
+        out = src.with_suffix(".out")
+        out.write_text("AGENT_BEGIN medio\n", encoding="utf-8")
+        return 1, "conexión perdida", False, out
+    _inject_local = dying
+    try:
+        r = run_java('sim.println("nunca");')
+    finally:
+        _inject_local = real_inject
+    check(not r["ok"] and r.get("server_died") and "murió" in (r["exception"] or ""), "servidor muerto a mitad de macro: server_died + mensaje claro")
+    check(not macro_running(), "tras el fallo, su .out queda cerrado (no cuenta como en marcha)")
+    r = server_status()
+    check(not r["alive"], "server_status: no vivo tras morir")
+    # puerto ocupado por otro proceso: se niega sin copiar el .sim
+    srcsim = tmp / "otra.sim"
+    srcsim.write_bytes(b"x")
+    with socket.socket() as busy:
+        busy.bind(("127.0.0.1", 0))
+        busy.listen(1)
+        real_port, PORT = PORT, busy.getsockname()[1]
+        try:
+            server_start(sim_path=str(srcsim))
+            msg = ""
+        except RuntimeError as e:
+            msg = str(e)
+        PORT = real_port
+    check("ocupado" in msg and not (SIMS / "otra.sim").exists(), "puerto ocupado: error claro y sin copiar el .sim")
+    # otro proceso lo está arrancando (pid vivo, puerto cerrado, reciente): no se lanza un segundo
+    with socket.socket() as sk2:
+        sk2.bind(("127.0.0.1", 0))
+        free = sk2.getsockname()[1]
+    _write_state({"pid": os.getpid(), "port": free, "started": datetime.now().isoformat(timespec="seconds")})
+    try:
+        server_start()
+        msg = ""
+    except RuntimeError as e:
+        msg = str(e)
+    check("arrancando" in msg and STATE_FILE.exists(), "server_start no pisa un arranque en curso de otro proceso")
+    STATE_FILE.unlink(missing_ok=True)
+    # nombre raro: no sale del directorio sims/ ni rompe el Java
+    st = server_start(name='../mi caso"x')
+    check(Path(st["sim"]).parent == SIMS and Path(st["sim"]).name == "mi_caso_x.sim", f"nombre raro saneado -> {Path(st['sim']).name}")
+    _write_state({**_state(), "sim": None})  # simulación nueva sin nombre: server_stop guarda aparte
+    r = server_stop(save=True)
+    check(r["stopped"] and r.get("saved") and Path(r["saved"]).parent == SIMS and not STATE_FILE.exists(), "server_stop sin .sim guarda en sims/nuevo_*.sim y apaga")
+    st = server_start()
+    check(st.get("pid") and _port_open(PORT), "server_start tras apagar")
     r = server_stop(save=True)
     check(r["stopped"] and not STATE_FILE.exists(), "server_stop apaga y limpia .server.json")
     check(not _port_open(PORT), "puerto liberado")

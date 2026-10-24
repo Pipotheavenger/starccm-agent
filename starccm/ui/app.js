@@ -60,11 +60,11 @@ $('newcase').onclick = async () => {
 $('nccancel').onclick = () => $('ncdlg').close();
 // los archivos se SUMAN: cada selección o arrastre añade a la lista (hay selectores que solo dejan elegir uno)
 let ncFiles = [];
-const CAD_OK = /\.(stp|step|x_t|x_b|igs|iges|stl|jt|sat|cfturbo-ccm)$/i;
+const CAD_OK = /\.(stp|step|x_t|x_b|igs|iges|stl|jt|sat|cfturbo-ccm)$/i, CAD_NAME = /^[A-Za-z0-9_\-][A-Za-z0-9_\-. ]*$/;  // el servidor rechaza acentos y símbolos
 function ncAdd(list) {
   const bad = [];
-  for (const f of list) { if (!CAD_OK.test(f.name)) { bad.push(f.name); continue; } ncFiles = ncFiles.filter(x => x.name !== f.name); ncFiles.push(f); }
-  ncRender(); if (bad.length) $('nc_prog').textContent = 'No admitidos: ' + bad.join(', ');
+  for (const f of list) { if (!CAD_OK.test(f.name) || !CAD_NAME.test(f.name)) { bad.push(f.name); continue; } ncFiles = ncFiles.filter(x => x.name !== f.name); ncFiles.push(f); }
+  ncRender(); if (bad.length) $('nc_prog').textContent = 'No admitidos (extensión o nombre con acentos/símbolos; renómbralos): ' + bad.join(', ');
 }
 function ncRender() {
   $('nc_list').innerHTML = ncFiles.map((f, i) => `<li><span class="n" title="${esc(f.name)}">${esc(f.name)}</span><span class="c">${(f.size / 1048576).toFixed(2).replace('.', ',')} MB</span><button type="button" class="sm mini" data-i="${i}" aria-label="Quitar ${esc(f.name)}">✕</button></li>`).join('');
@@ -81,7 +81,7 @@ $('ncform').onsubmit = async e => {
   const name = $('nc_name').value.trim(), files = [...ncFiles];
   const rpm = NUM($('nc_rpm').value), mdot = NUM($('nc_mdot').value), iters = parseInt($('nc_iter').value, 10);
   const run = $('nc_run').checked, tipo = $('nc_type').value, eje = $('nc_axis').value, fluido = $('nc_fluid').value.trim() || 'agua', notas = $('nc_notes').value.trim();
-  if (!/^[A-Za-z0-9_-]+$/.test(name)) { $('nc_prog').textContent = 'Nombre: solo letras, números, _ y -'; return; }
+  if (!/^[A-Za-z0-9][A-Za-z0-9_-]*$/.test(name)) { $('nc_prog').textContent = 'Nombre: letras, números, _ y -, y empieza por letra o número'; return; }
   if (!files.length) { $('nc_prog').textContent = 'Elige al menos un archivo de geometría'; return; }
   if (run && (rpm == null || rpm === 0 || mdot == null || mdot <= 0)) { $('nc_prog').textContent = 'Para correr hacen falta rpm (≠ 0) y caudal másico (> 0)'; return; }
   if (st.chatting && run) { $('nc_prog').textContent = 'La IA está trabajando: espera a que termine'; return; }
@@ -308,7 +308,8 @@ async function loadDatasets() {
   dsel.innerHTML = `<select id="dsel" aria-label="Dataset">${st.datasets.map(d => `<option value="${esc(d.name)}">${esc(d.name)} · ${new Date(d.mtime * 1000).toLocaleString('es', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}</option>`).join('')}</select>`;
   // por defecto el más nuevo que no sea «demo» (el sintético de prueba), salvo preferencia guardada
   const want = LS.get('scc_ds_' + st.case);
-  const pick = (want && want !== 'demo' && st.datasets.find(d => d.name === want)) || st.datasets.find(d => d.name !== 'demo') || st.datasets[0];
+  const okDs = d => d.manifest?.n_triangles > 0;  // un dataset vacío (exportación fallida) no tapa a los buenos
+  const pick = (want && want !== 'demo' && st.datasets.find(d => d.name === want && okDs(d))) || st.datasets.find(d => d.name !== 'demo' && okDs(d)) || st.datasets.find(okDs) || st.datasets[0];
   $('dsel').value = pick.name; $('dsel').onchange = () => loadDataset(st.datasets.find(d => d.name === $('dsel').value));
   // tras un chat la página se refresca: si el dataset es el mismo (nombre y fecha) no se recarga ni se pierde el encuadre
   if (had && had.name === pick.name && had.mtime === pick.mtime) { syncOverlays(); return; }
@@ -524,9 +525,10 @@ function paintRoleBadge(p) {
   const b = p.li?.querySelector('.rb'); if (!b) return; const r = roleOf(p);
   b.textContent = r ? ROLE_TXT[r] : ''; b.className = 'rb' + (r ? ' r-' + r : '');
 }
+const liveRoles = () => { const keys = new Set((st.ds?.parts || []).map(roleKey)); return Object.fromEntries(Object.entries(st.roles).filter(([k]) => keys.has(k))); };  // papeles de caras que ya no existen en el dataset no cuentan
 async function loadRoles() {
   st.roles = {}; if (!st.case) return;
-  try { st.roles = (await api(`/api/cases/${encodeURIComponent(st.case)}/roles`)).roles || {}; } catch {}
+  try { const r = (await api(`/api/cases/${encodeURIComponent(st.case)}/roles`)).roles; st.roles = Object.fromEntries(Object.entries(r && typeof r === 'object' ? r : {}).filter(([, v]) => ROLE_TXT[v])); } catch {}
   if (st.ds) { for (const p of st.ds.parts) paintRoleBadge(p); if (V.rolesMode) applyColors(); }
   renderRolesBar();
 }
@@ -541,15 +543,15 @@ function renderRolesBar() {
   if (!bar) { bar = document.createElement('div'); bar.id = 'rolesbar'; bar.className = 'rolesbar'; $('viewer').appendChild(bar); }
   bar.hidden = !V.rolesMode;
   if (!V.rolesMode) return;
-  const n = r => Object.values(st.roles).filter(v => v === r).length;
+  const live = liveRoles(), n = r => Object.values(live).filter(v => v === r).length, gone = Object.keys(st.roles).length - Object.keys(live).length;
   const ok = n('inlet') > 0 && n('outlet') > 0;
   bar.innerHTML = `<b>Fronteras</b>${['inlet', 'outlet', 'interface', 'wall', 'symmetry'].map(r => `<span class="chip-r"><i class="r-${r}"></i>${ROLE_TXT[r]} ${n(r)}</span>`).join('')}
-    <span class="mut small">sin marcar = pared</span><span class="sp"></span>
+    <span class="mut small">sin marcar = pared${gone ? ` · ${gone} papel(es) de caras que ya no existen se ignoran` : ''}</span><span class="sp"></span>
     <button class="sm pri" id="rolesapply" ${ok ? '' : 'disabled title="Marca al menos una entrada y una salida"'}>Aplicar con la IA</button><button class="sm" id="rolesexit">Salir</button>`;
   $('rolesexit').onclick = () => setRolesMode(false);
   $('rolesapply').onclick = () => {
     if (busyChat()) return;
-    const by = r => Object.entries(st.roles).filter(([, v]) => v === r).map(([k]) => k);
+    const live = liveRoles(), by = r => Object.entries(live).filter(([, v]) => v === r).map(([k]) => k);
     const lst = r => by(r).join(', ') || '—';
     $('chattext').value = `En cases/${st.case} marqué en el visor el papel de cada frontera (cases/${st.case}/fronteras.json). ` +
       `Entrada: ${lst('inlet')}. Salida: ${lst('outlet')}. Interfaz: ${lst('interface')}. Simetría: ${lst('symmetry')}. El resto, paredes. ` +
@@ -786,14 +788,14 @@ function renderLive() {
 // ---------------------------------------------------------------- estado del solver
 function renderStatus(s) {
   st.status = s;
-  const dot = s.alive ? 'ok' : s.stale ? 'busy' : 'off';
-  const txt = s.stopping ? 'apagando solver…' : s.alive ? `solver vivo · puerto ${s.port} · ${s.idle_min ?? '?'} min sin actividad` : s.stale ? 'solver caído (.server.json viejo)' : 'solver apagado';
+  const dot = s.alive ? 'ok' : s.stale || s.starting ? 'busy' : 'off';
+  const txt = s.stopping ? 'apagando solver…' : s.starting ? 'solver arrancando… (abre el puerto en 5–60 s)' : s.alive ? `solver vivo · puerto ${s.port} · ${s.idle_min ?? '?'} min sin actividad` : s.stale ? 'solver caído (.server.json viejo)' : 'solver apagado';
   const sh = `<span class="dot ${dot}"></span><span>${esc(txt)}</span>` ;
   if (renderStatus.last !== sh) { renderStatus.last = sh; $('solver').innerHTML = sh; }
   $('stopsolver').hidden = !s.alive; $('stopsolver').disabled = !!s.stopping || !!s.chatting;
   $('opengui').disabled = !!s.alive; $('opengui').title = s.alive ? 'Hay un servidor batch vivo: apágalo antes de abrir la GUI' : 'Abre este .sim en la GUI de STAR-CCM+ (ocupa la licencia mientras esté abierta)';
-  $('solvertag').innerHTML = (s.alive ? '<span class="tag ok">vivo</span>' : s.stale ? '<span class="tag warn">caído</span>' : '<span class="tag">apagado</span>');
-  const rows = (s.alive || s.stale ? [['pid', s.pid], ['puerto', s.port], ['sim', s.sim ? s.sim.split(/[\\/]/).pop() : '(nueva)'], ['procesos', s.np], ['arranque', s.started ? s.started.replace('T', ' ') : '–'], ['inactivo', s.idle_min != null ? `${fmt(s.idle_min, 0)} / ${s.idle_limit_min} min` : '–']] : [['apagado por inactividad', `${s.idle_limit_min} min`]]).map(r => [r, '']);
+  $('solvertag').innerHTML = (s.alive ? '<span class="tag ok">vivo</span>' : s.starting ? '<span class="tag warn">arrancando</span>' : s.stale ? '<span class="tag warn">caído</span>' : '<span class="tag">apagado</span>');
+  const rows = (s.alive || s.stale || s.starting ? [['pid', s.pid], ['puerto', s.port], ['sim', s.sim ? s.sim.split(/[\\/]/).pop() : '(nueva)'], ['procesos', s.np], ['arranque', s.started ? s.started.replace('T', ' ') : '–'], ['inactivo', s.idle_min != null ? `${fmt(s.idle_min, 0)} / ${s.idle_limit_min} min` : '–']] : [['apagado por inactividad', `${s.idle_limit_min} min`]]).map(r => [r, '']);
   const kv = [...whereRows(), ...rows].map(([[k, v], cls]) => `<tr class="${cls}"><td class="mut">${esc(k)}</td><td class="mono" title="${esc(v)}">${esc(v)}</td></tr>`).join('');
   if (renderStatus.kv !== kv) { renderStatus.kv = kv; $('solverkv').querySelector('tbody').innerHTML = kv; }
 }
@@ -870,11 +872,14 @@ function parseQuestion(text) {
   if (!m) return { rest: text || '', q: null };
   let q = null; try { q = JSON.parse(m[1].trim()); } catch { return { rest: text, q: null }; }
   if (!q || typeof q.pregunta !== 'string') return { rest: text, q: null };
-  q.opciones = Array.isArray(q.opciones) ? q.opciones.map(String).slice(0, 8) : [];
+  const txt = o => typeof o === 'string' ? o : o && typeof o === 'object' ? String(o.label ?? o.texto ?? o.opcion ?? o.text ?? '') : String(o ?? '');
+  q.opciones = Array.isArray(q.opciones) ? q.opciones.map(txt).map(s => s.trim()).filter(Boolean).slice(0, 8) : [];
+  q.caras = Array.isArray(q.caras) ? q.caras.map(String) : [];
+  q.multiple = q.multiple === true;
   return { rest: text.replace(m[0], ''), q };
 }
 function showQuestion(q, ctx) {
-  const multi = !!q.multiple;
+  const multi = q.multiple === true;
   const d = addMsg('ask', `<div class="q-t">${esc(q.pregunta)}</div><div class="q-opts">${q.opciones.map((o, i) =>
     `<button class="sm q-o" data-i="${i}" aria-pressed="false">${esc(o)}</button>`).join('')}</div>
     <div class="q-row"><input class="q-other" placeholder="u otra respuesta…" aria-label="Otra respuesta">${multi ? '<button class="sm pri q-send">Responder</button>' : '<button class="sm q-send">Enviar</button>'}</div>`);
@@ -901,8 +906,8 @@ function showWhat(q) {
   if (v.startsWith('escena:')) { const f = v.slice(7).trim(); refreshCaseList().then(() => openCase(st.case)).then(() => showView(f)); return; }
   showView('3d');
   if (v === 'fronteras') {
-    const go = () => { if (!st.ds) return; setRolesMode(true);
-      const keys = new Set((q.caras || []).map(String));
+    const go = () => { if (!st.ds) { toast('El caso no tiene superficies en el visor: pide a la IA que exporte la geometría (o expórtala con «Exportar»)', 'warn'); return; } setRolesMode(true);
+      const keys = new Set(Array.isArray(q.caras) ? q.caras.map(String) : []);
       const dud = st.ds.parts.filter(p => keys.has(`${p.group?.name || ''}/${p.name}`));
       for (const p of dud) { p.li?.classList.add('doubt'); if (p.group) { const det = p.li?.closest('details'); if (det) det.open = true; } }
       if (dud.length) flyTo(dud[0]);
@@ -914,7 +919,8 @@ async function readSSE(r, ctx) {  // cuenta los eventos (ctx.n) para poder reeng
   const reader = r.body.getReader(), dec = new TextDecoder(); let buf = '';
   while (true) { const { value, done } = await reader.read(); if (done) break; buf += dec.decode(value, { stream: true });
     let idx; while ((idx = buf.indexOf('\n\n')) >= 0) { const chunk = buf.slice(0, idx); buf = buf.slice(idx + 2); if (!chunk.startsWith('data: ')) continue;
-      let ev; try { ev = JSON.parse(chunk.slice(6)); } catch { continue; } if (ev.kind !== 'ping') ctx.n = (ctx.n || 0) + 1; onChatEvent(ev, ctx); } }
+      let ev; try { ev = JSON.parse(chunk.slice(6)); } catch { continue; } if (ev.kind !== 'ping') ctx.n = (ctx.n || 0) + 1;
+      try { onChatEvent(ev, ctx); } catch (e) { console.error('evento del chat no procesable', ev, e); } } }
 }
 async function reattach(ctx) {
   try {
@@ -951,7 +957,7 @@ async function sendChat(retry = false) {
   const clock = chatClock(ctx);
   try {
     const r = await fetch('/api/chat', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ message: text, session_id: st.session, case: st.case }) });
-    if (!r.ok || !r.body) throw new Error('HTTP ' + r.status);
+    if (!r.ok || !r.body) throw new Error((await r.json().catch(() => ({}))).detail || ('HTTP ' + r.status));
     await readSSE(r, ctx);
     // la conversación vive en el servidor: si el flujo se corta, se vuelve a enganchar donde iba
     for (let k = 0; k < 20 && !ctx.done && st.chatting; k++) { if (!(await reattach(ctx))) break; }
@@ -966,7 +972,7 @@ async function sendChat(retry = false) {
 }
 $('send').onclick = () => sendChat();
 $('chattext').addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendChat(); } else if (e.key === 'ArrowUp' && !$('chattext').value && st.lastMsg) { e.preventDefault(); $('chattext').value = st.lastMsg; } });
-$('stopchat').onclick = () => { $('stopchat').disabled = true; $('chatstate').textContent = 'deteniendo…'; api('/api/chat/stop', {}).then(j => { if (!j.stopped) $('chatstate').textContent = 'no había nada que detener'; }).catch(e => { $('chatstate').textContent = 'no pude detener: ' + e.message; }); };
+$('stopchat').onclick = () => { $('stopchat').disabled = true; $('chatstate').textContent = 'deteniendo…'; api('/api/chat/stop', {}).then(j => { if (!j.stopped) { $('chatstate').textContent = 'no había nada que detener'; $('stopchat').disabled = !st.chatting; } }).catch(e => { $('chatstate').textContent = 'no pude detener: ' + e.message; $('stopchat').disabled = !st.chatting; }); };
 $('newchat').onclick = () => {
   if (busyChat()) return;
   if (!armed($('newchat'), '¿Seguro?', 4000)) return;
