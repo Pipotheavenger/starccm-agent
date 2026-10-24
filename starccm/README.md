@@ -84,7 +84,7 @@ mínimo arriba a la izquierda; por defecto `cursocfturbo`):
   H y M frente a iteración, un gráfico por magnitud, tabla y criterio < 0,5 %) y *Resumen* (RESUMEN.md).
 - **Derecha, Claude** (bajo 1100 px el chat pasa a ser la pestaña *Claude* del dock; a 800 px ya no queda
   fuera de pantalla): chips «Presión en álabes», «Velocidad», «Girar rotor» (acciones del visor en el
-  cliente, sin solver ni Claude); chat (Claude Code CLI con cwd en `starccm/` y el MCP `starccm` del `.mcp.json`
+  cliente, sin solver ni Claude; solo con superficies en una bomba); botón «Claude» de la barra (o tecla C) pliega la columna y se abre sola al enviar; chat (Claude Code CLI con cwd en `starccm/` y el MCP `starccm` del `.mcp.json`
   de la raíz) y *Parámetros* (solo en casos con `pump.py`; plegado por defecto; rpm, caudal, tamaño base de malla, iteraciones) que la página convierte
   en un prompt; la UI nunca edita el .sim. Planos, vectores y escenas nuevas se piden por el chat.
 - **Arriba**: selector **Local · este PC / Servidor · Linux** (dónde corre la simulación), estado del
@@ -99,7 +99,14 @@ del inventario de `vm/SERVIDOR.md` (16 vCPU, 62 GiB, 2502) y la etiqueta «servi
 disponible: no arranques nada allí, prepara y avisa)`. La ejecución remota en sí la monta otra sesión
 (`STARCCM_RUN_HOST` del MCP, ver `vm/SERVIDOR.md`); la UI solo elige, persiste y muestra.
 
-Otros detalles de la misma ronda: el árbol del .sim se guarda en `cases/<caso>/tree.json` y se sirve
+Ronda 3: franja de resultados (H, M, η, continuidad con semáforo, iteración) sobre el visor, leída de
+`convergencia.csv` y con el formato numérico único de la leyenda; transición de color de 400 ms al cambiar
+de campo; en modo «(geometría)» Mín/Máx/Paleta/auto se deshabilitan; Propiedades ya no se aplasta en casos
+sin superficies; sin `tree.json` el árbol del .sim se reconstruye del disco (fronteras del manifest,
+reportes, monitores, escenas; `derived: true` en `/api/tree`, sin regiones ni modelos) hasta que haya una
+lectura real con el solver vivo.
+
+Otros detalles de la ronda 2: el árbol del .sim se guarda en `cases/<caso>/tree.json` y se sirve
 con `GET /api/tree?case=` aunque la UI se reinicie o el solver esté apagado («leído a las HH:MM ·
 guardado»); tras un chat la página no recarga el dataset del visor si no cambió (nombre y fecha) y, si
 cambió, conserva cámara, corte y superficies ocultas; los parámetros del panel derecho muestran los

@@ -480,6 +480,39 @@ def _tree_load(case: str | None) -> dict:
         return {}
 
 
+def _tree_derived(case: str | None) -> dict:
+    """Árbol reconstruido SOLO con lo que hay en disco (sin solver): fronteras del manifest de superficies,
+    reportes/monitores de convergencia.csv y escenas de images/. Sin regiones ni modelos (eso exige inspect tree)."""
+    try:
+        d = _case_dir(case) if case else None
+    except HTTPException:
+        d = None
+    if not d:
+        return {}
+    data: dict = {}
+    mans = sorted((d / "surfaces").glob("*/manifest.json"), key=lambda f: f.stat().st_mtime, reverse=True) if (d / "surfaces").is_dir() else []
+    for f in mans[:1]:
+        try:
+            m = json.loads(f.read_text(encoding="utf-8"))
+            data["boundary"] = [{"name": p["name"], "type": f"{p['ni'] // 3:,} triáng.".replace(",", ".")} for p in m.get("parts", []) if p.get("ni")]
+        except (ValueError, KeyError, TypeError):
+            pass
+    conv = _convergencia(d)
+    if conv:
+        rep = [c for c in conv["columns"] if c not in ("iter", "seconds")]
+        last = dict(zip(conv["columns"], conv["rows"][-1])) if conv["rows"] else {}
+        data["report"] = [{"name": c, "type": "reporte", "value": None if last.get(c) is None else f"{last[c]:.4g}".replace(".", ",")} for c in rep]
+        data["monitor"] = [{"name": c, "type": "monitor"} for c in rep]
+        data["solver"] = [{"name": "iteraciones", "value": str(int(last["iter"])) if last.get("iter") is not None else "–"}]
+    imgs = _images(d)
+    if imgs:
+        data["scene"] = [{"name": i["label"], "type": "PNG"} for i in imgs]
+    if not data:
+        return {}
+    ref = max([f.stat().st_mtime for f in mans[:1]] + [(d / "reports" / "convergencia.csv").stat().st_mtime if conv else 0] + [i["mtime"] for i in imgs])
+    return {"data": data, "at": int(ref), "sim": None, "seconds": None, "derived": True}
+
+
 @app.get("/api/tree")
 def api_tree(refresh: int = 0, case: str | None = None) -> dict:
     """Árbol del .sim abierto (solver, parts, regions, physics, mesh_ops, reports, monitors, scenes).
@@ -502,8 +535,10 @@ def api_tree(refresh: int = 0, case: str | None = None) -> dict:
         finally:
             TREE_LOCK.release()
     t = TREE if TREE["data"] and (not case or Path(TREE["sim"] or "").stem == case) else _tree_load(case)
+    if not t.get("data"):
+        t = _tree_derived(case)
     return {"tree": t.get("data"), "at": t.get("at"), "sim": t.get("sim"), "seconds": t.get("seconds"),
-            "alive": _solver_alive(), "from_disk": t is not TREE and bool(t.get("data"))}
+            "alive": _solver_alive(), "from_disk": t is not TREE and bool(t.get("data")), "derived": bool(t.get("derived"))}
 
 
 # ---------------------------------------------------------------- abrir la GUI de STAR-CCM+ con el .sim del caso
@@ -871,6 +906,7 @@ def _selftest() -> int:
     check(c == 200 and "tree" in tr, "GET /api/tree (caché)")
     c, tr = get("/api/tree?case=cursocfturbo")
     check(c == 200 and "from_disk" in tr, f"GET /api/tree?case=cursocfturbo (de disco={tr.get('from_disk')})")
+    check(c == 200 and (tr.get("tree") is None or tr.get("derived") or tr.get("from_disk")) and (tr.get("tree") or {}).get("boundary", [1]), "árbol de disco no vacío para cursocfturbo")
     # ajustes: dónde corre la simulación (se deja como estaba)
     orig = _settings()["run_where"]
     c, sg = get("/api/settings")

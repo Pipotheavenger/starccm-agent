@@ -47,3 +47,37 @@ servidor exige sudo o `uv`. No hace falta: `mcp_server.py` corre en Windows y, c
 la inyecta con el cliente batch **del servidor** (misma versión 2502; el cliente 2410 del PC no puede
 conectarse a un servidor 2502) y trae de vuelta `.out`, PNG y exportaciones. La UI no cambia: sigue
 leyendo `.server.json`, `macros/` y `cases/` locales. Pendiente de implementar y medir.
+
+## Verificación del servidor (2026-10-24, solver real, sin sudo)
+
+Comprobable en cualquier momento y sin licencia: `bash starccm/vm/remote_check.sh` (13 comprobaciones,
+no arranca el solver; enmascara la clave).
+
+| comprobación | resultado |
+|---|---|
+| instalador | terminó (sin `install.aol` vivo); `/opt/Siemens` = 18 GB; disco libre 173 GB |
+| versión | Simcenter STAR-CCM+ 2502.0001 Build 20.02.008, doble precisión (linux-x86_64-2.28/clang17.0-r8) |
+| `javac` | `/opt/Siemens/20.02.008-R8/jdk/linux-x86_64/jdk21.0.4/bin/javac` (JDK 21.0.4) |
+| javadoc | `$STARCCM_HOME/doc/client/html/star/…` |
+| licencia PoD | `ccmppower` obtenida de `1999@flex.cd-adapco.com`; expira en 135 días |
+| MPI | Open MPI 4.1.5 propio, 14 rangos en 1 host |
+| dependencias de sistema | ninguna que instalar: `libgfortran`, `libGLEW`, `libjpeg.so.62`, `libhwloc`, `libtbb`, `libhdf5`, Boost, Poco… vienen en el árbol de la instalación; las del sistema (`libGL`, `libGLU`, `libX11`, `libxcb`, `libfontconfig`, `libnuma`) ya están. glibc 2.31 ≥ 2.28 requerido. `check_dependencies` no corre (pide `python` sin versión; irrelevante) |
+
+Tiempos medidos (`-np 14`, sim nueva vacía, comandos de `~/.starccm-agent.env`):
+
+| paso | segundos |
+|---|---|
+| `starccm+ -server …` hasta `Server::start` | 16,6 |
+| inyección de macro trivial (`-host localhost:47827 -batch Ping.java -noexit`), imprime `PING` | 5,0 |
+| apagado con macro `sim.kill();` | ~5, sin procesos starccm restantes (0) |
+| `scp` de `cursocfturbo.sim` (158 MB) PC → servidor | **694** (≈0,24 MB/s, hash idéntico) |
+
+Consecuencias para el MCP remoto:
+- El `scp` de un .sim grande es el cuello de botella (11,6 min): subir el .sim UNA vez y dejarlo en
+  `~/starccm-agent/sims/` (ya está `cursocfturbo.sim`); no copiarlo en cada `server_start`.
+  Macros (KB), PNG y CSV viajan en segundos. Traer el .sim de vuelta tardaría lo mismo o más: guardar en
+  el servidor y bajar solo bajo demanda.
+- `Server::start` anuncia el host como `server-inv-001332.uniandes.edu.co:47827`; el cliente batch se
+  inyecta con `localhost:47827` dentro del servidor, sin abrir puertos al PC.
+- Carpetas creadas: `~/starccm-agent/{sims,macros,cases}`. Log de la prueba: `sims/prueba.server.log`.
+- Sin sudo no falta nada: no hay pasos pendientes para Sebastián.

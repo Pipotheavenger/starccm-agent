@@ -23,6 +23,7 @@
   <button id="solverbtn" aria-expanded="false" aria-controls="solverpop" title="Detalle del solver (Local / Servidor)"><span id="solver" role="status" aria-live="polite"><span class="dot"></span><span>Conectando…</span></span> <span class="mut" aria-hidden="true">▾</span></button>
   <button class="sm danger" id="stopsolver" hidden title="Guarda el .sim y apaga el servidor de STAR-CCM+ (server_stop)">Apagar solver</button>
   <button class="sm" id="opengui" title="Abre este .sim en la GUI de STAR-CCM+ (solo sin servidor batch vivo; la licencia PoD cobra por hora)">Abrir en STAR-CCM+</button>
+  <button class="sm" id="chattoggle" aria-pressed="true" title="Mostrar u ocultar el chat (C)">Claude</button>
   <button class="sm icon" id="theme" title="Tema claro / oscuro" aria-label="Cambiar tema">◐</button>
 </header>
 <div id="solverpop" hidden>
@@ -56,6 +57,7 @@
       <button role="tab" data-view="3d" aria-selected="true">3D</button>
       <span id="scenetabs"></span>
       <span class="sp"></span>
+      <span id="kpis" class="kpis" aria-label="Resultados del caso" hidden></span>
       <span id="vstate" class="mut small"></span>
     </div>
     <div id="viewer" title="Arrastra para orbitar · rueda para zoom · botón derecho para desplazar">

@@ -266,3 +266,4 @@ Turbina: mismo flujo, cambia el signo del momento y el objetivo es potencia extr
 - 2026-10-23 · Bomba cursocfturbo a 580 iteraciones: H 78,77 m, M 192,50 N·m, η 0,8935, continuidad 8e-7;
   aviso «Reversed flow on 55 faces on voluta: outlet» (reflujo en la salida del difusor, balance de masa
   intacto). Escenas nuevas: `plano_vectores`, `malla`.
+- 2026-10-24 · Servidor Linux 2502 (`vm/SERVIDOR.md`): arranca en 16,6 s y la macro se inyecta en 5 s, pero el `scp` PC→servidor va a ≈0,24 MB/s (158 MB = 694 s): subir el .sim una vez y no recopiarlo por `server_start`. Git Bash no trae `bc`: medir con `$SECONDS`.
