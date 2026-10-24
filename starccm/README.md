@@ -122,6 +122,33 @@ Medido con `cursocfturbo` en este PC:
 
 Para apagarla: `sim.getSimulationIterator().getAutoExport().setEnabled(false)`.
 
+**Informe PDF** (botón de la barra superior): `POST /api/cases/<caso>/report` genera
+`cases/<caso>/reports/informe_<caso>_<fecha>.pdf`. Si el solver está vivo con ese caso, primero lee todo el detalle
+del .sim con la receta `recipes/informe-detalle.java` (≈10 s) y lo guarda en `reports/detalle.json`. Sin solver usa
+la última lectura guardada. `ui/informe.py` arma el HTML y Edge (o Chrome) sin ventana lo imprime a PDF en ≈2 s.
+El informe incluye, en orden:
+
+- portada e índice;
+- resultados clave y el valor de cada reporte;
+- el RESUMEN.md;
+- la vista 3D actual y los datasets;
+- geometría y archivos CAD;
+- regiones, fronteras con todas sus condiciones e interfaces;
+- física, materiales, valores de referencia, condiciones iniciales y marcos rotatorios;
+- malla: cada operación con sus valores y controles, más celdas, caras y vértices;
+- solvers con sus URF y criterios de parada;
+- reportes con definición y partes, monitores y funciones de campo;
+- curvas y tabla de convergencia;
+- todas las escenas y la lista de archivos del caso.
+
+`cursocfturbo` da 303 propiedades y 22 páginas (1,7 MB).
+
+**Archivo .sim** (botón de la barra superior): muestra la ruta del .sim de trabajo (`sims/<caso>.sim`), su tamaño y
+fecha. Permite abrirlo en el Explorador, copiar la ruta y elegir una copia en otra carpeta (diálogo «Guardar como» de
+Windows o ruta escrita). La ruta de la copia se guarda en `cases/<caso>/caso.json` (`sim_destino`). Desde entonces,
+el MCP copia el .sim allí tras cada `save` y cada `server_stop` con guardado (`mirror_sim`). El agente sigue
+trabajando siempre sobre `sims/`.
+
 ## Endpoints
 
 Errores siempre `{"detail": "texto"}`. Los `409` son «solver no vivo» o «la IA está usando el solver».
@@ -145,6 +172,10 @@ Errores siempre `{"detail": "texto"}`. Los `409` son «solver no vivo» o «la I
 | `GET /api/settings` | informa del solver local (versión, procesos) |
 | `POST /api/open_gui {case}` | lanza la GUI de STAR-CCM+ con `sims/<caso>.sim`; 404 sin .sim, 409 con solver batch vivo |
 | `GET /api/surfaces?case=` | datasets del visor, el más nuevo primero (convierte los EnSight nuevos de `surfaces/_raw/`) |
+| `POST /api/cases/{caso}/report {refresh, view3d}` | informe PDF (detalle del solver si está vivo con el caso); `GET /files/{caso}/reports/{pdf}` lo sirve |
+| `GET /api/cases/{caso}/sim` | ruta, tamaño y fecha del .sim de trabajo, si está cargado, y la copia elegida |
+| `POST /api/cases/{caso}/sim/destino {path, browse, copy_now}` | elige la copia del .sim (diálogo nativo con `browse`), la guarda en `caso.json` y copia ya; `path` vacío la quita |
+| `POST /api/cases/{caso}/reveal {what: sim\|destino\|pdf\|carpeta}` | abre el Explorador con ese archivo seleccionado |
 | `GET /surfaces/{caso}/{dataset}/{archivo}` | `positions.f32`, `indices.u32`, `<campo>.f32`, `manifest.json` (caché 1 h) |
 | `POST /api/surface {case, name, pattern, funcs}` | exporta fronteras (regex sobre «región/frontera») con campos desde el solver vivo y convierte |
 | `POST /api/chat {message, session_id, case}` | SSE: `status init text tool tool_result ping raw result error stopped done`; un chat a la vez; corre en un hilo del servidor |

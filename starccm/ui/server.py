@@ -670,6 +670,203 @@ def api_open_gui(req: GuiReq) -> dict:
     return {"pid": p.pid, "sim": str(sim)}
 
 
+# ---------------------------------------------------------------- archivo .sim del caso: dónde está y dónde copiarlo
+def _sim_info(name: str) -> dict:
+    sim = scc.SIMS / f"{_safe(name)}.sim"
+    st = scc._state()
+    dest = scc.sim_destino(name)
+    info = {"path": str(sim), "exists": sim.is_file(), "folder": str(scc.SIMS),
+            "loaded": scc.alive(st) and Path(st.get("sim") or "").resolve() == sim.resolve(), "destino": dest}
+    if sim.is_file():
+        info.update(size=sim.stat().st_size, mtime=time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(sim.stat().st_mtime)))
+    if dest and Path(dest).is_file():
+        info.update(destino_mtime=time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(Path(dest).stat().st_mtime)))
+    return info
+
+
+@app.get("/api/cases/{name}/sim")
+def api_sim(name: str) -> dict:
+    """Ruta del .sim de trabajo del caso (sims/<caso>.sim), tamaño, fecha, si está cargado y la copia elegida."""
+    _case_dir(name)
+    return _sim_info(name)
+
+
+_DIALOG = r"""
+import sys, tkinter as tk
+from tkinter import filedialog
+r = tk.Tk(); r.withdraw(); r.attributes("-topmost", True)
+p = filedialog.asksaveasfilename(parent=r, title="Dónde guardar la simulación (.sim)", initialdir=sys.argv[1],
+                                 initialfile=sys.argv[2], defaultextension=".sim", filetypes=[("STAR-CCM+", "*.sim")])
+sys.stdout.write(p or "")
+"""
+
+
+def _ask_path(initial_dir: str, initial_file: str) -> str:
+    """Diálogo «Guardar como» nativo de Windows (tkinter en un proceso aparte: no bloquea ni mezcla hilos con uvicorn)."""
+    r = subprocess.run([sys.executable, "-c", _DIALOG, initial_dir, initial_file], capture_output=True, text=True,
+                       encoding="utf-8", errors="replace", timeout=600)
+    return r.stdout.strip()
+
+
+class SimDestReq(BaseModel):
+    path: str | None = Field(None, max_length=500)   # vacío + browse: abre el diálogo; "" sin browse: quita la copia
+    browse: bool = False
+    copy_now: bool = True
+
+
+@app.post("/api/cases/{name}/sim/destino")
+def api_sim_destino(name: str, req: SimDestReq) -> dict:
+    """Elige dónde queda una copia del .sim (diálogo nativo o ruta escrita). Se guarda en cases/<caso>/caso.json y el
+    MCP la actualiza tras cada guardado (save, apagar). Con copy_now copia ya (guardando antes si está cargado)."""
+    d = _case_dir(name)
+    path = (req.path or "").strip().strip('"')
+    if req.browse:
+        cur = scc.sim_destino(name)
+        path = _ask_path(str(Path(cur).parent) if cur else str(Path.home() / "Documents"), f"{name}.sim")
+        if not path:
+            return {**_sim_info(name), "cancelled": True}
+    f = d / "caso.json"
+    try:
+        conf = json.loads(f.read_text(encoding="utf-8")) if f.is_file() else {}
+    except ValueError:
+        conf = {}
+    conf = conf if isinstance(conf, dict) else {}
+    if not path:
+        conf.pop("sim_destino", None)
+        f.write_text(json.dumps(conf, ensure_ascii=False, indent=1), encoding="utf-8")
+        return _sim_info(name)
+    p = Path(path)
+    if p.suffix.lower() != ".sim":
+        p = p.with_suffix(".sim")
+    if not p.is_absolute() or not p.parent.exists():
+        raise HTTPException(400, f"ruta no válida o carpeta inexistente: {p}")
+    if p.resolve() == (scc.SIMS / f"{name}.sim").resolve():
+        raise HTTPException(400, "esa es la propia copia de trabajo (sims/): elige otra ruta")
+    conf["sim_destino"] = str(p)
+    f.write_text(json.dumps(conf, ensure_ascii=False, indent=1), encoding="utf-8")
+    log.info("copia del .sim de %s -> %s", name, p)
+    out: dict = {}
+    if req.copy_now and (scc.SIMS / f"{name}.sim").is_file():
+        if _sim_info(name)["loaded"] and not CHAT_LOCK.locked() and not scc.macro_running():
+            r = scc.save()   # guardar primero: la copia lleva lo último del solver (save ya copia al destino)
+            out["saved"] = r.get("ok")
+            out["copia"] = r.get("copia")
+        else:
+            out["copia"] = scc.mirror_sim(scc.SIMS / f"{name}.sim")
+            if _sim_info(name)["loaded"]:
+                out["aviso"] = "la IA o una macro está usando el solver: se copió el último .sim guardado"
+    return {**_sim_info(name), **out}
+
+
+class RevealReq(BaseModel):
+    what: Literal["sim", "destino", "pdf", "carpeta"]
+    file: str | None = Field(None, max_length=200)
+
+
+@app.post("/api/cases/{name}/reveal")
+def api_reveal(name: str, req: RevealReq) -> dict:
+    """Abre el Explorador con el archivo seleccionado (.sim de trabajo, su copia, un PDF del caso o la carpeta)."""
+    d = _case_dir(name)
+    if req.what == "sim":
+        p = scc.SIMS / f"{name}.sim"
+    elif req.what == "destino":
+        p = Path(scc.sim_destino(name) or "")
+    elif req.what == "pdf":
+        if not req.file or not re.fullmatch(r"[A-Za-z0-9_\-.]+\.pdf", req.file):
+            raise HTTPException(400, "archivo inválido")
+        p = d / "reports" / req.file
+    else:
+        p = d
+    if not p.exists():
+        raise HTTPException(404, f"no existe {p}")
+    if os.name == "nt":
+        subprocess.Popen(["explorer", str(p)] if p.is_dir() else ["explorer", f"/select,{p}"])
+    return {"path": str(p)}
+
+
+# ---------------------------------------------------------------- informe PDF: todo lo de la simulación
+import informe  # noqa: E402  (starccm/ui/informe.py: HTML del informe -> PDF con Edge sin ventana)
+
+REPORT_LOCK = threading.Lock()
+RECIPE_DETALLE = scc.RECIPES / "informe-detalle.java"
+
+
+class ReportReq(BaseModel):
+    refresh: bool = True                                  # leer el detalle del solver si está vivo con este caso
+    view3d: str | None = Field(None, max_length=20_000_000)  # PNG del visor (data URL)
+
+
+def _detalle(name: str, refresh: bool) -> tuple[dict | None, str | None]:
+    """Detalle del .sim: del solver (si está vivo con el caso y libre) o el último guardado en reports/detalle.json."""
+    f = _case_dir(name) / "reports" / "detalle.json"
+    aviso = None
+    if refresh and _sim_info(name)["loaded"]:
+        if CHAT_LOCK.locked() or scc.macro_running():
+            aviso = "la IA o una macro está usando el solver: uso el último detalle guardado"
+        else:
+            r = scc.run_java(RECIPE_DETALLE.read_text(encoding="utf-8"), timeout_s=600)
+            rows = informe.parse_detalle(r.get("stdout") or "")
+            if r.get("ok") and rows:
+                det = {"rows": rows, "at": time.strftime("%Y-%m-%d %H:%M:%S"), "sim": scc._state().get("sim"),
+                       "origen": "solver vivo", "seconds": r.get("seconds")}
+                f.parent.mkdir(exist_ok=True)
+                f.write_text(json.dumps(det, ensure_ascii=False), encoding="utf-8")
+                return det, None
+            aviso = f"la lectura del solver falló ({r.get('exception') or 'sin datos'}): uso el último detalle guardado"
+    try:
+        det = json.loads(f.read_text(encoding="utf-8")) if f.is_file() else None
+    except ValueError:
+        det = None
+    if isinstance(det, dict) and det.get("rows"):
+        det["origen"] = "lectura guardada (reports/detalle.json)"
+        return det, aviso
+    return None, aviso or (None if _sim_info(name)["loaded"] else "sin solver vivo con este caso ni detalle guardado")
+
+
+@app.post("/api/cases/{name}/report")
+def api_report(name: str, req: ReportReq) -> dict:
+    """Informe PDF del caso en cases/<caso>/reports/informe_<caso>_<fecha>.pdf: portada, resultados, RESUMEN,
+    3D, geometría, regiones y fronteras con sus condiciones, física, materiales, marcos, malla, solver, criterios de
+    parada, reportes, convergencia (curvas y tabla), escenas y archivos. ~10 s de solver (si está vivo) + ~5 s de PDF."""
+    d = _case_dir(name)
+    if not REPORT_LOCK.acquire(blocking=False):
+        raise HTTPException(409, "ya se está generando un informe")
+    try:
+        t0 = time.time()
+        det, aviso = _detalle(name, req.refresh)
+        view = req.view3d if req.view3d and req.view3d.startswith("data:image/png;base64,") else None
+        sim = _sim_info(name)
+        ctx = {"detalle": det, "view3d": view, "roles": api_roles(name)["roles"], "cad": api_case_cad_list(name)["files"],
+               "datasets": [x for x in api_surfaces(name)["datasets"] if x["name"] != "demo"][:3], "version": "2410",
+               "sim": {"path": sim["path"] if sim["exists"] else None, "size": sim.get("size"), "mtime": sim.get("mtime")}}
+        (d / "reports").mkdir(exist_ok=True)
+        html_f = d / "reports" / "informe.html"
+        html_f.write_text(informe.build_html(d, ctx), encoding="utf-8")
+        pdf = d / "reports" / f"informe_{name}_{time.strftime('%Y%m%d_%H%M')}.pdf"
+        try:
+            pdf_s = informe.to_pdf(html_f, pdf)
+        except (RuntimeError, subprocess.TimeoutExpired) as e:
+            raise HTTPException(500, f"no pude imprimir el PDF: {e}")
+        log.info("informe %s: %s (%d kB, detalle=%s, %.0f s)", name, pdf.name, pdf.stat().st_size // 1024,
+                 det.get("origen") if det else None, time.time() - t0)
+        return {"pdf": pdf.name, "path": str(pdf), "url": f"/files/{name}/reports/{pdf.name}", "bytes": pdf.stat().st_size,
+                "seconds": round(time.time() - t0, 1), "pdf_seconds": pdf_s, "aviso": aviso,
+                "detalle": {"origen": det.get("origen"), "at": det.get("at"), "n": len(det["rows"])} if det else None}
+    finally:
+        REPORT_LOCK.release()
+
+
+@app.get("/files/{name}/reports/{fname}")
+def report_file(name: str, fname: str) -> FileResponse:
+    if not re.fullmatch(r"[A-Za-z0-9_\-.]+\.(pdf|html|csv|json)", fname) or ".." in fname:
+        raise HTTPException(400, "archivo inválido")
+    f = _case_dir(name) / "reports" / fname
+    if not f.is_file():
+        raise HTTPException(404, "no existe el archivo")
+    mt = {"pdf": "application/pdf", "html": "text/html", "csv": "text/csv", "json": "application/json"}[fname.rsplit(".", 1)[1]]
+    return FileResponse(f, media_type=mt, headers={"Content-Disposition": f'inline; filename="{fname}"', "Cache-Control": "no-cache"})
+
+
 # ---------------------------------------------------------------- superficies con campo para el visor 3D
 import surfaces as surf  # noqa: E402  (starccm/ui/surfaces.py: EnSight/STL -> dataset binario)
 
@@ -1265,6 +1462,31 @@ def _selftest() -> int:
     (CASES / nombre / "tree.json").write_text("[]", encoding="utf-8")
     c, r = get(f"/api/tree?case={nombre}")
     check(c == 200, "tree.json que no es un objeto -> 200")
+    # archivo .sim: ruta, copia en otra carpeta (caso.json) y espejo tras guardar
+    import tempfile
+    tdir = Path(tempfile.mkdtemp(prefix="starccm-ui-sim-"))
+    c, r = get(f"/api/cases/{nombre}/sim")
+    check(c == 200 and r["exists"] is False and r["path"].endswith(f"{nombre}.sim") and r["destino"] is None, "GET .../sim: ruta del .sim de trabajo")
+    check(post(f"/api/cases/{nombre}/sim/destino", {"path": "relativo.sim"})[0] == 400, "copia del .sim con ruta relativa -> 400")
+    c, r = post(f"/api/cases/{nombre}/sim/destino", {"path": str(tdir / "copia"), "copy_now": False})
+    check(c == 200 and r["destino"] == str(tdir / "copia.sim") and scc.sim_destino(nombre) == str(tdir / "copia.sim"), "copia del .sim: se guarda en caso.json (con extensión .sim)")
+    (tdir / f"{nombre}.sim").write_bytes(b"SIM" * 1000)
+    cp = scc.mirror_sim(tdir / f"{nombre}.sim")
+    check(cp and cp["ok"] and (tdir / "copia.sim").read_bytes() == b"SIM" * 1000 and not list(tdir.glob("*.copiando")), "mirror_sim copia el .sim al destino tras guardar")
+    c, r = post(f"/api/cases/{nombre}/sim/destino", {"path": "", "copy_now": False})
+    check(c == 200 and r["destino"] is None, "quitar la copia del .sim")
+    # informe PDF (sin solver: sin detalle del .sim, con convergencia y fronteras del caso de prueba)
+    check(informe._short("69.48581111111105 kg/s · 10.0") == "69.4858 kg/s · 10.0" and "<table>" in informe.md_to_html("| a | b |\n|---|---|\n| 1 | 2 |"),
+          "informe: números largos recortados y tablas de markdown")
+    if informe.browser():
+        c, r = post(f"/api/cases/{nombre}/report", {"refresh": False})
+        pdf = CASES / nombre / "reports" / (r.get("pdf") or "x")
+        check(c == 200 and pdf.is_file() and pdf.read_bytes()[:4] == b"%PDF" and r["detalle"] is None
+              and "Sin detalle del .sim" in (CASES / nombre / "reports" / "informe.html").read_text(encoding="utf-8"),
+              f"POST .../report -> PDF ({r.get('bytes', 0) // 1024} kB en {r.get('seconds')} s)")
+        c, _ = get(f"/files/{nombre}/reports/{r.get('pdf')}")
+        check(c == 200, "GET /files/<caso>/reports/<pdf>")
+    shutil.rmtree(tdir, ignore_errors=True)
     shutil.rmtree(CASES / nombre, ignore_errors=True)
     c, _ = get("/api/cases/no_existe")
     check(c == 404, "caso inexistente -> 404")

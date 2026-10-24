@@ -18,12 +18,28 @@
   <span class="sp"></span>
   <button id="solverbtn" aria-expanded="false" aria-controls="solverpop" title="Detalle del solver"><span id="solver" role="status" aria-live="polite"><span class="dot"></span><span>Conectando…</span></span> <span class="mut" aria-hidden="true">▾</span></button>
   <button class="sm danger" id="stopsolver" hidden title="Guarda el .sim y apaga el servidor de STAR-CCM+ (server_stop)">Apagar solver</button>
+  <button class="sm" id="simbtn" aria-expanded="false" aria-controls="simpop" title="Dónde está el archivo .sim de este caso y dónde guardar una copia">Archivo .sim ▾</button>
+  <button class="sm" id="pdfbtn" title="Informe PDF con todo el detalle de la simulación (condiciones, física, malla, solver, reportes, convergencia, escenas)">Informe PDF</button>
   <button class="sm" id="opengui" title="Abre este .sim en la GUI de STAR-CCM+ (solo sin servidor batch vivo; la licencia PoD cobra por hora)">Abrir en STAR-CCM+</button>
   <button class="sm icon" id="theme" title="Tema claro / oscuro" aria-label="Cambiar tema">◐</button>
 </header>
 <div id="solverpop" hidden>
   <div class="solverpane"><div class="sec-h">Solver <span class="sp"></span><span id="solvertag"></span></div>
     <table class="kv" id="solverkv"><tbody></tbody></table></div>
+</div>
+<div id="simpop" class="pop" hidden>
+  <div class="solverpane"><div class="sec-h">Archivo de la simulación <span class="sp"></span><span id="simtag"></span></div>
+    <table class="kv" id="simkv"><tbody></tbody></table>
+    <div class="row wrap"><button class="sm" id="simreveal">Mostrar en carpeta</button><button class="sm" id="simcopy">Copiar ruta</button></div>
+    <div class="sec-h sub">Copia en otra carpeta <span class="mut small">(se actualiza en cada guardado)</span></div>
+    <div class="row"><input id="simdest" class="mono" placeholder="C:\…\mi_caso.sim" aria-label="Ruta de la copia del .sim"><button class="sm" id="simbrowse" title="Elegir con el diálogo de Windows">Elegir…</button></div>
+    <div class="row wrap"><button class="sm pri" id="simsave">Guardar copia aquí</button><button class="sm" id="simdestreveal" hidden>Mostrar copia</button><span class="sp"></span><button class="sm" id="simdestclear" hidden>Quitar copia</button></div>
+    <div id="simnote" class="mut small"></div></div>
+</div>
+<div id="pdfpop" class="pop" hidden>
+  <div class="solverpane"><div class="sec-h">Informe PDF <span class="sp"></span><span id="pdftag"></span></div>
+    <div id="pdfnote" class="small"></div>
+    <div class="row wrap"><a class="btn sm pri" id="pdfopen" target="_blank" rel="noopener">Abrir PDF</a><button class="sm" id="pdfreveal">Mostrar en carpeta</button><button class="sm" id="pdfagain">Generar otra vez</button></div></div>
 </div>
 <div id="offline" class="offline-band" role="alert" hidden><span id="offlinetxt">Sin conexión con el servidor local.</span><button class="sm" id="retry">Reintentar</button></div>
 

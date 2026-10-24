@@ -148,6 +148,9 @@ Reglas:
 - Al terminar un bloque de trabajo el agente deja lo que la página muestra: `images/*.png`,
   `reports/convergencia.csv` y las superficies (receta `exportar-superficies-ensight.java` o `POST /api/surface`;
   el visor convierte solo los EnSight nuevos de `surfaces/_raw/`).
+- Informe PDF (botón): `ui/informe.py` + receta `informe-detalle.java`. La receta usa reflexión y try/catch, así que
+  un método que falte en otra versión no la tumba. El PDF lo imprime Edge sin ventana. Copia del .sim: `caso.json` →
+  `sim_destino`; `mirror_sim` del MCP la actualiza tras cada guardado. Detalle en `README.md`.
 - 3D en vivo: antes de iterar, la IA activa `recipes/activar-autoexport.java`. Usa `CADA` 25 en la prueba de
   100 iteraciones y 50 en corridas largas, con `OUT` = `cases/<caso>/surfaces/_raw/vivo`. El visor sigue el
   dataset «vivo» (≈0,15 s y ≈4 MB por exportación; solo se guarda la última). Al acabar, apagar con `setEnabled(false)`.
@@ -289,6 +292,9 @@ Agrupadas por tema; fecha 2026-10-23 salvo indicación.
   `getIterationUpdateFrequency().setIterations(N)`. Deja `vivo@00600.case` con datos `vivo@0060000000.*`.
   La exportación siguiente puede llegar mientras se convierte la anterior: el visor decide por la `iteration`
   del manifest, no por mtime (con mtime se quedaba en la 600).
+- 2026-10-24 · Edge `--headless=new --print-to-pdf` puede salir con código 0 antes de escribir el PDF. Pasa sobre
+  todo lanzado desde el servidor de la UI. `informe.to_pdf` espera a que el archivo exista y deje de crecer. Además,
+  un `·` de `json.dumps` dentro de una variable CSS sale tal cual en el pie de página: no usar JSON para CSS.
   `ui/surfaces.py` lee ASCII y C Binary, `tria3/quad4/nsided`. Verificado con el solver real a las 12:21:
   8 fronteras del impulsor, 107 189 triángulos, 4 campos en 13,5 s; conversión 0,3 s.
 - Trampas del EnSight de STAR-CCM+: el `.case` nombra las variables con asteriscos

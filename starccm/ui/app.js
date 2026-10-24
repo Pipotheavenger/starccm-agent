@@ -834,6 +834,69 @@ $('opengui').onclick = async () => {
   $('opengui').disabled = false;
 };
 
+// ---------------------------------------------------------------- archivo .sim y informe PDF (ventanas de la barra superior)
+const POPS = [['simbtn', 'simpop'], ['pdfbtn', 'pdfpop'], ['solverbtn', 'solverpop']];
+function showPop(id, on) { for (const [b, p] of POPS) { const show = p === id && on; $(p).hidden = !show; $(b).setAttribute?.('aria-expanded', show); } }
+addEventListener('click', e => { if (!e.target.closest('.pop,#simbtn,#pdfbtn')) { $('simpop').hidden = true; $('pdfpop').hidden = true; } });
+const mb = n => n == null ? '–' : `${fmt(n / 1048576, 1)} MB`;
+function renderSim(s) {
+  st.sim = s;
+  $('simtag').innerHTML = s.loaded ? '<span class="tag ok">cargado en el solver</span>' : s.exists ? '<span class="tag">en disco</span>' : '<span class="tag warn">aún no existe</span>';
+  const rows = [['archivo', s.path], ['carpeta', s.folder], ['tamaño', s.exists ? mb(s.size) : '–'], ['guardado', s.mtime || '–'],
+                ['copia', s.destino || 'ninguna'], ...(s.destino ? [['copia actualizada', s.destino_mtime || 'aún no copiada']] : [])];
+  $('simkv').querySelector('tbody').innerHTML = rows.map(([k, v]) => `<tr><td class="mut">${esc(k)}</td><td class="mono" title="${esc(v)}">${esc(v)}</td></tr>`).join('');
+  if (document.activeElement !== $('simdest')) $('simdest').value = s.destino || '';
+  $('simdestreveal').hidden = $('simdestclear').hidden = !s.destino; $('simreveal').disabled = $('simcopy').disabled = !s.exists;
+  $('simnote').textContent = s.exists ? 'La IA trabaja siempre sobre esta copia de sims/; la copia que elijas se actualiza sola cada vez que se guarda (guardar, apagar el solver).' : 'El .sim se crea cuando la IA guarda el caso por primera vez.';
+}
+async function loadSim() { if (st.case) renderSim(await api(`/api/cases/${st.case}/sim`)); }
+$('simbtn').onclick = e => { e.stopPropagation(); const open = $('simpop').hidden; showPop('simpop', open); if (open) loadSim().catch(err => toast(err.message, 'error')); };
+$('simreveal').onclick = () => api(`/api/cases/${st.case}/reveal`, { what: 'sim' }).then(() => toast('Explorador abierto con el .sim seleccionado', 'ok')).catch(e => toast(e.message, 'error'));
+$('simdestreveal').onclick = () => api(`/api/cases/${st.case}/reveal`, { what: 'destino' }).catch(e => toast(e.message, 'error'));
+$('simcopy').onclick = async () => { try { await navigator.clipboard.writeText(st.sim.path); toast('Ruta copiada', 'ok'); } catch { $('simdest').value = st.sim.path; $('simdest').select(); toast('Selecciona y copia con Ctrl+C', 'warn'); } };
+async function setDest(body, btn) {
+  btn.disabled = true; const t = btn.textContent; btn.textContent = body.browse ? 'abre el diálogo de Windows…' : 'copiando…';
+  try {
+    const r = await api(`/api/cases/${st.case}/sim/destino`, body); renderSim(r);
+    if (r.cancelled) toast('Sin cambios', '');
+    else if (r.copia?.ok) toast(`Copia guardada en ${r.copia.dest}${r.saved ? ' (guardado antes desde el solver)' : ''}`, 'ok');
+    else if (r.copia && !r.copia.ok) toast('No pude copiar: ' + r.copia.error, 'error');
+    else toast(r.destino ? `Copia configurada: ${r.destino}` : 'Copia quitada', 'ok');
+    if (r.aviso) toast(r.aviso, 'warn');
+  } catch (e) { toast(e.message, 'error'); }
+  btn.disabled = false; btn.textContent = t;
+}
+$('simbrowse').onclick = () => setDest({ browse: true }, $('simbrowse'));
+$('simsave').onclick = () => { const p = $('simdest').value.trim(); if (!p) return setDest({ browse: true }, $('simsave')); setDest({ path: p }, $('simsave')); };
+$('simdestclear').onclick = () => { if (armed($('simdestclear'), '¿Quitar? Pulsa otra vez')) setDest({ path: '', copy_now: false }, $('simdestclear')); };
+
+function snap3d() {  // la vista 3D actual para el informe (sin la tríada)
+  try {
+    if (!V.renderer || !V.meshes?.length || st.view !== '3d') return null;
+    const r = V.renderer, w = $('viewer').clientWidth, h = $('viewer').clientHeight;
+    r.setViewport(0, 0, w, h); r.render(V.scene, V.camera); const url = r.domElement.toDataURL('image/png'); V.needs = true; return url;
+  } catch { return null; }
+}
+async function makePdf() {
+  if (!st.case) return;
+  const b = $('pdfbtn'); b.disabled = true; $('pdfagain').disabled = true;
+  showPop('pdfpop', true); $('pdftag').innerHTML = '<span class="tag warn">generando…</span>'; $('pdfopen').setAttribute('aria-disabled', 'true');
+  $('pdfnote').innerHTML = `Leyendo el detalle de la simulación${st.status.alive ? ' del solver (~10 s)' : ''} e imprimiendo el PDF…`;
+  try {
+    const r = await api(`/api/cases/${st.case}/report`, { refresh: true, view3d: snap3d() });
+    st.pdf = r; $('pdfopen').href = r.url; $('pdfopen').removeAttribute('aria-disabled');
+    $('pdftag').innerHTML = '<span class="tag ok">listo</span>';
+    $('pdfnote').innerHTML = `<b>${esc(r.pdf)}</b> · ${mb(r.bytes)} · ${fmt(r.seconds, 1)} s<br><span class="mono mut">${esc(r.path)}</span><br>`
+      + (r.detalle ? `Detalle del .sim: ${r.detalle.n} propiedades (${esc(r.detalle.origen)}, ${esc(r.detalle.at)}).` : '<span class="tag warn">sin detalle del .sim</span> arranca el solver con este caso para incluir condiciones, física, malla y solver.')
+      + (r.aviso ? `<br><span class="mut">${esc(r.aviso)}</span>` : '');
+    toast('Informe PDF listo', 'ok');
+  } catch (e) { $('pdftag').innerHTML = '<span class="tag warn">error</span>'; $('pdfnote').textContent = e.message; toast('No pude generar el PDF: ' + e.message, 'error'); }
+  b.disabled = false; $('pdfagain').disabled = false;
+}
+$('pdfbtn').onclick = e => { e.stopPropagation(); makePdf(); };
+$('pdfagain').onclick = makePdf;
+$('pdfreveal').onclick = () => st.pdf && api(`/api/cases/${st.case}/reveal`, { what: 'pdf', file: st.pdf.pdf }).catch(e => toast(e.message, 'error'));
+
 // ---------------------------------------------------------------- chat con Claude Code (SSE)
 function placeQuick() { const empty = !$('chatlog').querySelector('.m'); $('chatempty').hidden = !empty; if (empty) $('chatempty').appendChild($('quick')); else $('chatin').before($('quick')); }
 function addMsg(cls, html) { const d = document.createElement('div'); d.className = 'm ' + cls; d.innerHTML = html; $('chatlog').appendChild(d); placeQuick(); $('chatlog').scrollTop = 1e9; return d; }

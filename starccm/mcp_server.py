@@ -613,6 +613,8 @@ def server_stop(save: bool = True) -> dict:
                 if not ok:
                     return _save_failed(err)
                 result["saved"] = sim
+                if (cp := mirror_sim(sim)):
+                    result["copia"] = cp
             try:
                 r = _inject("sim.kill();\n", timeout=1800, expect_death=True)
                 result["stdout"] = r["stdout"]
@@ -831,8 +833,41 @@ def save(path: str = "") -> dict:
         if r["ok"]:
             st["sim"] = str(target)
             _write_state(st)
-    return {"ok": r["ok"], "sim": str(target), "seconds": r["seconds"],
+    mirror = mirror_sim(target) if r["ok"] else None
+    return {"ok": r["ok"], "sim": str(target), "seconds": r["seconds"], **({"copia": mirror} if mirror else {}),
             **({"exception": r["exception"]} if r["exception"] else {})}
+
+
+def sim_destino(case: str) -> str | None:
+    """Ruta donde el usuario quiere tener el .sim del caso (cases/<caso>/caso.json → sim_destino), o None."""
+    f = CASES / case / "caso.json"
+    try:
+        d = json.loads(f.read_text(encoding="utf-8")) if f.is_file() else {}
+    except ValueError:
+        return None
+    p = d.get("sim_destino") if isinstance(d, dict) else None
+    return p if isinstance(p, str) and p.lower().endswith(".sim") else None
+
+
+def mirror_sim(sim: Path | str) -> dict | None:
+    """Tras cada guardado, copia el .sim de trabajo (sims/<caso>.sim) a la ruta elegida en la página. Copia a un
+    temporal y lo renombra: un corte a mitad no deja un .sim roto en el destino."""
+    sim = Path(sim)
+    dest = sim_destino(sim.stem)
+    if not dest or not sim.is_file() or Path(dest).resolve() == sim.resolve():
+        return None
+    d = Path(dest)
+    tmp = d.with_name(d.name + ".copiando")
+    try:
+        d.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(sim, tmp)
+        os.replace(tmp, d)
+    except OSError as e:
+        tmp.unlink(missing_ok=True)
+        _log(f"copia del .sim a {d} falló: {e}")
+        return {"ok": False, "dest": str(d), "error": str(e)}
+    _log(f"copia del .sim: {sim} -> {d}")
+    return {"ok": True, "dest": str(d)}
 
 
 def _safe(s: str) -> str:
