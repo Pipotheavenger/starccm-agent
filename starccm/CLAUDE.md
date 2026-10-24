@@ -190,23 +190,44 @@ iteraciones de prueba con resultados completos → preguntar antes de seguir has
    entre inlet y outlet. Diagnóstico de superficie debe dar 0 bordes libres y 0 caras perforadas.
 3. Partir en dos regiones: `rotor` (impulsor) y `stator` (voluta + tubos). Interfaz interna entre ambas.
 4. Malla: poliédrica, prism layers (5 capas, estiramiento 1.3, espesor total 10 % del tamaño base),
-   refinamiento en álabes y huelgo. Tamaño base inicial: diámetro del impulsor / 60.
+   refinamiento en álabes y huelgo. Tamaño base inicial: diámetro del impulsor / 60. ESTIMAR las celdas antes de
+   mallar y respetar el límite que dé el usuario. Alternativa de las plantillas NQ25Q159H91: trimmer en una sola
+   operación, sin prismas en las interfaces (`mallar-trimmer-una-operacion.java`). Vale para volutas y tubos grandes,
+   o si los poliedros se pasan de celdas; si falla por caras coincidentes, volver a una operación por parte.
 5. Física: 3D, estacionario, líquido agua, flujo segregado, densidad constante, turbulento,
-   k-omega SST, gravedad opcional.
+   k-omega SST. Tener SIEMPRE en cuenta los modelos de las plantillas (`fisica-modelos-turbo.java`) y decir en
+   una línea cuáles se activan y por qué:
+   - Cell Quality Remediation: casi siempre sí (barato, da robustez).
+   - Gravedad: máquinas grandes o verticales, cavitación/NPSH, superficie libre.
+   - Transición Gamma: Reynolds bajos o moderados, bombas pequeñas o cuando importe la eficiencia fina; exige
+     y+ ≈ 1 y cuesta ~10-20 % más por iteración.
 6. Rotor en Moving Reference Frame con rpm del usuario, eje según el CAD.
-7. Fronteras: inlet = mass flow inlet (o velocity inlet), outlet = pressure outlet 0 Pa relativa,
-   resto walls. En rotor, walls giran con el marco; shroud estática si aplica.
+7. Fronteras: preferir lo de las plantillas (`fronteras-presion-total-caudal-salida.java`): presión total 0 Pa en la
+   entrada y caudal en la SALIDA con el parámetro global `Flujo`. Converge mejor, fija la presión de entrada (base
+   para NPSH) y barre la curva cambiando solo `Flujo`. Alternativa: mass flow inlet + pressure outlet 0 Pa.
+   Resto walls; en el rotor las walls giran con el marco; shroud estática si aplica.
 8. Reportes: presión total masa-ponderada en inlet y outlet, caudal másico en inlet y outlet,
    momento en `blades`+`hub` respecto al eje. Expresiones: altura `H = (p_out - p_in)/(rho*g)`,
-   potencia hidráulica `rho*g*Q*H`, potencia eje `M*omega`, eficiencia.
+   potencia hidráulica `rho*g*Q*H`, potencia eje `M*omega`, eficiencia. SIEMPRE además los de las plantillas
+   (`reportes-euler-triangulos.java`):
+   - triángulos de velocidad U1, U2, Vu1, Vu2, Vr1, Vr2 en la entrada y la salida del rotor;
+   - altura de Euler H_Euler y eficiencia hidráulica eta_Euler = H/H_Euler;
+   - factor de deslizamiento si se conoce β2 (del `.cfturbo-ccm` o preguntando);
+   - campo TotalHead y gráficos «Altura» y «Eficiencia y potencia».
 9. Monitores de todo lo anterior y de residuales. Criterio de parada: residuales < 1e-4 y
    variación de H y M < 0.5 % en 100 iteraciones. Máximo 2000 iteraciones.
 10. Correr. Al terminar: balance de masa inlet vs outlet < 0.5 %, y+ en álabes entre 30 y 300
-    (o < 5 si all-y+ con malla fina), escenas: presión en álabes, velocidad en plano medio,
-    y+ en paredes.
-11. Curva: repetir con 5 caudales entre 0.6 y 1.3 del nominal, reusando la malla.
+    (o < 5 si all-y+ con malla fina), escenas: presión en álabes, y+ en paredes y las del FLUIDO como
+    en las plantillas. Primero `exportar-superficies-ensight` con PLANOS «auto», que coloca plano_medio y
+    plano_meridional; luego `escenas-fluido.java`: TotalHead con líneas de corriente y vectores de velocidad
+    RELATIVA en cada plano, y PNG de fluido_* y vectores_*. En las paredes la velocidad es la de la pared: el
+    flujo se ve en los planos.
+11. Curva: repetir con 5 caudales entre 0.6 y 1.3 del nominal, reusando la malla (con `Flujo` basta cambiar el
+    parámetro).
 
-Turbina: mismo flujo, cambia el signo del momento y el objetivo es potencia extraída.
+Turbina (o bomba como turbina, como la Rev2 de las plantillas): mismo flujo; cambia el sentido de giro o del caudal, el
+momento cambia de signo y el objetivo es la potencia extraída. Eficiencia = P_eje/P_hid. En `reportes-euler-triangulos`
+va MODO turbina: H_Euler = (U1Vu1 − U2Vu2)/g y eta_Euler = H_Euler/H.
 
 ## Criterios de «no sirve»
 
@@ -361,5 +382,23 @@ Las corridas grandes se hacen a mano: `vm/SERVIDOR.md`. Lecciones que dejó:
     factor de deslizamiento y eficiencia CFD = H/H_Euler; TI de la entrada calculada por Re.
   - Escenas en planos X/Y/Z con TotalHead, vectores y streamlines de `Cell Relative Velocity`.
   - Rev2 es Rev0 con −3000 rpm y η = P_eje/P_hid (modo turbina) y 910 k celdas en vez de 988 k.
+  Pasado a recetas y probado en una copia de cursocfturbo (80 iteraciones desde la convergida), todo de una vez:
+  modelos (remediación, gravedad, Gamma), presión total + caudal en la salida, Euler y escenas del fluido.
+
+  | magnitud | valor |
+  |---|---|
+  | H | 78,4 m |
+  | H_Euler | 87,3 m |
+  | eta_Euler | 0,899 |
+  | eta | 0,888 |
+  | U2 | 42,1 m/s (= ω·r2) |
+  | Vu2 | 20,3 m/s |
+  | Vu1 | ≈ 0 (entrada sin prerrotación) |
+  | factor de deslizamiento | 0,66 (con β2 = 25°, supuesto) |
+  | Q_out | +69,486 kg/s (el Mass Flow Inlet de salida va con −${Flujo}) |
+  | residuo de intermitencia | 2e-3 (Gamma todavía asentándose) |
+
+  Detalles: los planos auto quedaron a z = 43 mm; los campos son `TotalHead` y `Relative Velocity`. Las líneas de
+  corriente con 25×25 semillas tapaban el color: 12×12.
 - `cilindro` (r 50 mm, L 0,5 m, 11 463 celdas poliédricas + prismas, agua 1 m/s, SST): 100 iteraciones,
   residuales 1e-6, Q_in = −Q_out = 7,755 kg/s. `cases/cilindro/RESUMEN.md`.
