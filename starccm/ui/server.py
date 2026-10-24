@@ -108,6 +108,10 @@ CHAT_SYSTEM = (
     "superficies.case): el visor las convierte solo; y escribe cases/<caso>/RESUMEN.md (geometría, malla, física, "
     "resultados y tiempos en tablas, como cases/cursocfturbo/RESUMEN.md). Si algo falla dos veces, para y explica. "
     "FRONTERAS: si existe cases/<caso>/fronteras.json es la asignación que hizo el usuario en el visor («región/frontera» → inlet | outlet | wall | interface | symmetry): úsala tal cual para los tipos de frontera, sin adivinar (inlet = mass flow inlet con el caudal pedido, outlet = pressure outlet 0 Pa). Si la geometría trae caras agrupadas o con nombres genéricos (Default, Faces, Surface…) y NO hay fronteras.json: separa las caras (receta separar-caras-por-angulo, ANGULO 89), exporta la geometría sin campos (receta exportar-superficies-ensight con PATTERN «.», FUNCS vacío y OUT cases/<caso>/surfaces/_raw/geometria/geometria.case) y PARA: pide al usuario que marque entrada y salida en el visor con el botón «Fronteras». Si la solución diverge (continuidad > 1 o creciendo), no sigas iterando: revisa fronteras y física. "
+    "3D EN VIVO: antes de iterar (100 de prueba o la corrida larga) activa la exportación automática con la "
+    "receta activar-autoexport (CADA 25 en la prueba de 100 iteraciones, 50 en corridas largas; FUNCS "
+    "«Pressure,TotalPressure,Velocity,WallYplus»; OUT cases/<caso>/surfaces/_raw/vivo): el visor muestra el campo "
+    "mientras itera, sin coste apreciable (~0,15 s por exportación). "
     "PREGUNTAR: cuando dudes (qué cara es entrada o salida, qué modelo físico, fluido, condiciones, si seguir) NO "
     "adivines: termina tu respuesta con UN bloque ```pregunta``` que contenga un JSON en una sola línea: "
     "{\"pregunta\": \"texto corto\", \"opciones\": [\"A\", \"B\", \"C\"], \"multiple\": false, \"ver\": \"…\"} "
@@ -696,12 +700,37 @@ def _meta_lines(text: str) -> tuple[list[str], list[dict]]:
 _RAW_FAILED: dict[str, float] = {}  # exportación cruda que no se pudo convertir -> su mtime (no reintentar cada sondeo)
 
 
+def _raw_iter(cf: Path) -> int | None:
+    """Iteración de una exportación automática («vivo@00600.case» -> 600); None si es una exportación suelta."""
+    m = re.search(r"@(\d+)\.case$", cf.name)
+    return int(m.group(1)) if m else None
+
+
+def _prune_raw(keep: Path) -> None:
+    """Borra las exportaciones automáticas anteriores a la convertida. «vivo@00600.case» usa «vivo@0060000000.*»:
+    se conserva todo lo que empieza por «vivo@00600» y se borra el resto de «vivo@…»."""
+    prefix = keep.name[:-len(".case")]
+    for f in keep.parent.glob(prefix.split("@", 1)[0] + "@*"):
+        if not f.name.startswith(prefix):
+            try:
+                f.unlink()
+            except OSError as e:
+                log.warning("no pude borrar %s: %s", f, e)
+
+
 def _sync_raw(case: str) -> list[str]:
     """Convierte las exportaciones EnSight crudas (surfaces/_raw/<nombre>/*.case) que aún no tengan dataset o sean
     más nuevas que él: así lo que exporte la IA desde el chat aparece solo en el visor."""
     d = _surf_dir(case)
     done = []
-    for cf in sorted((d / "_raw").glob("*/*.case")) if (d / "_raw").is_dir() else []:
+    # por carpeta, solo el .case más nuevo: la exportación automática (receta activar-autoexport) deja uno por
+    # exportación («vivo@00600.case»…); el visor muestra el último y los anteriores se borran (≈4 MB cada uno)
+    newest_case: dict[Path, Path] = {}
+    for cf in (d / "_raw").glob("*/*.case") if (d / "_raw").is_dir() else []:
+        cur = newest_case.get(cf.parent)
+        if cur is None or (_raw_iter(cf), cf.stat().st_mtime) > (_raw_iter(cur), cur.stat().st_mtime):
+            newest_case[cf.parent] = cf
+    for cf in sorted(newest_case.values()):
         name = cf.parent.name
         if not re.fullmatch(r"[A-Za-z0-9_\-]+", name):
             continue
@@ -709,14 +738,23 @@ def _sync_raw(case: str) -> list[str]:
         newest = max(q.stat().st_mtime for q in cf.parent.iterdir() if q.is_file())  # el .case se escribe antes que los datos
         if time.time() - newest < 3 or _RAW_FAILED.get(str(cf)) == newest:  # aún se está escribiendo, o ya falló con estos archivos
             continue
+        it = _raw_iter(cf)
         if man.is_file() and man.stat().st_mtime >= newest:
-            continue
-        meta = cf.with_name(cf.name + ".meta")
-        bounds, rotation = _meta_lines(meta.read_text(encoding="utf-8", errors="replace")) if meta.is_file() else ([], [])
+            # en vivo la siguiente exportación puede llegar mientras se convierte la anterior: manda la iteración
+            try:
+                if it is None or json.loads(man.read_text(encoding="utf-8")).get("iteration") == it:
+                    continue
+            except ValueError:
+                pass
+        meta = next((m for m in (cf.with_name(cf.name + ".meta"), cf.parent / f"{name}.meta") if m.is_file()), None)
+        bounds, rotation = _meta_lines(meta.read_text(encoding="utf-8", errors="replace")) if meta else ([], [])
         try:
             surf.convert_case(cf, d / name, {"boundaries": bounds, "rotation": rotation, "exported": time.strftime(
-                "%Y-%m-%d %H:%M:%S", time.localtime(cf.stat().st_mtime)), "source_meta": meta.is_file()})
+                "%Y-%m-%d %H:%M:%S", time.localtime(cf.stat().st_mtime)), "source_meta": bool(meta),
+                **({"iteration": it, "live": True} if it is not None else {})})
             done.append(name)
+            if it is not None:
+                _prune_raw(cf)
             log.info("superficie %s/%s convertida desde _raw (%d fronteras, %d marcos)", case, name, len(bounds), len(rotation))
         except Exception as e:  # noqa: BLE001
             _RAW_FAILED[str(cf)] = newest
@@ -1242,6 +1280,14 @@ def _selftest() -> int:
     yp.frombytes((tmp / "out" / "WallYplus.f32").read_bytes())
     check(man["n_vertices"] == 7 and man["n_triangles"] == 3 and len(man["scalars"]) == 3, "EnSight mini -> dataset (7 vértices, 3 triángulos, 3 escalares)")
     check(list(yp) == [30.0] * 4 + [45.0] * 3, "escalar por elemento repartido a los vértices de su parte")
+    viv = tmp / "vivo"
+    viv.mkdir()
+    for n in ("vivo.meta", "vivo@00600.case", "vivo@0060000000.geo", "vivo@00610.case", "vivo@0061000000.geo", "vivo@0061000000.Pressure"):
+        (viv / n).write_text("x")
+    _prune_raw(viv / "vivo@00610.case")
+    check(_raw_iter(viv / "vivo@00610.case") == 610 and _raw_iter(viv / "superficies.case") is None
+          and sorted(p.name for p in viv.iterdir()) == ["vivo.meta", "vivo@00610.case", "vivo@0061000000.Pressure", "vivo@0061000000.geo"],
+          "3D en vivo: iteración del nombre y poda de las exportaciones anteriores")
     shutil.rmtree(tmp, ignore_errors=True)
     c, sf = get("/api/surfaces?case=cursocfturbo" if "cursocfturbo" in names else "/api/surfaces?case=" + (names[0] if names else "x"))
     check(c in (200, 404) and (c == 404 or isinstance(sf.get("datasets"), list)), f"GET /api/surfaces -> {len(sf.get('datasets', [])) if c == 200 else c}")

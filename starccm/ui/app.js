@@ -309,12 +309,14 @@ async function loadDatasets() {
   // por defecto el más nuevo que no sea «demo» (el sintético de prueba), salvo preferencia guardada
   const want = LS.get('scc_ds_' + st.case);
   const okDs = d => d.manifest?.n_triangles > 0;  // un dataset vacío (exportación fallida) no tapa a los buenos
-  const pick = (want && want !== 'demo' && st.datasets.find(d => d.name === want && okDs(d))) || st.datasets.find(d => d.name !== 'demo' && okDs(d)) || st.datasets.find(okDs) || st.datasets[0];
-  $('dsel').value = pick.name; $('dsel').onchange = () => loadDataset(st.datasets.find(d => d.name === $('dsel').value));
+  // 3D en vivo: mientras se sigue, la exportación automática más nueva gana a la preferencia guardada
+  const live = V.follow !== false && st.datasets.find(d => d.manifest?.live && okDs(d));
+  const pick = live || (want && want !== 'demo' && st.datasets.find(d => d.name === want && okDs(d))) || st.datasets.find(d => d.name !== 'demo' && okDs(d)) || st.datasets.find(okDs) || st.datasets[0];
+  $('dsel').value = pick.name; $('dsel').onchange = () => { const d = st.datasets.find(x => x.name === $('dsel').value); V.follow = !!d?.manifest?.live; loadDataset(d); };
   // tras un chat la página se refresca: si el dataset es el mismo (nombre y fecha) no se recarga ni se pierde el encuadre
   if (had && had.name === pick.name && had.mtime === pick.mtime) { syncOverlays(); return; }
   await loadDataset(pick, !!had && had.name === pick.name);
-  if (had && had.name === pick.name) toast('Superficies actualizadas', 'ok');
+  if (had && had.name === pick.name && !pick.manifest?.live) toast('Superficies actualizadas', 'ok');
 }
 function clearDataset() {
   for (const m of V.meshes) { V.group.remove(m); m.geometry.dispose(); m.material.dispose(); const e = m.userData.part?.edges; if (e) { e.geometry.dispose(); e.material.dispose(); } }
@@ -373,6 +375,7 @@ async function loadDataset(d, keep = false) {
     if (prev) { V.camera.position.copy(prev.pos); V.controls.target.copy(prev.tgt); for (const p of st.ds.parts) if (prev.hidden.has(p.name)) { p.mesh.visible = false; p.li.querySelector('input').checked = false; } for (const g of st.groups || []) syncGroup(g); }
     else { fit(0); setView('iso'); }
     $('vstate').textContent = `${man.n_triangles.toLocaleString('es')} triángulos · ${st.ds.parts.length} superficies${st.ds.parts.length < man.parts.length ? ` (+${man.parts.length - st.ds.parts.length} vacías)` : ''}${man.exported ? ' · ' + man.exported : ''}`;
+    if (man.live) $('vstate').textContent = `3D en vivo · iteración ${man.iteration} · ` + $('vstate').textContent;
     fadeIn();
   } catch (e) { if (gen !== V.gen) return; toast('No pude cargar las superficies: ' + e.message, 'error'); clearDataset(); }
   if (gen !== V.gen) return;
@@ -729,6 +732,8 @@ async function loadProgress() {
 }
 // el sondeo también corre mientras hay una macro en marcha: así las curvas en vivo se llenan aunque se mire otra pestaña
 setInterval(() => { if ((st.tab === 'out' && !$('stage').classList.contains('dock-collapsed')) || st.tab === 'plots' || LIVE.running || st.chatting) loadProgress(); }, 3000);
+
+setInterval(() => { if (st.case && st.view === '3d' && V.follow !== false && (LIVE.running || st.chatting)) loadDatasets().catch(() => {}); }, 10000);
 
 // ---------------------------------------------------------------- convergencia EN VIVO (de la salida del solver, sin coste extra)
 // STAR-CCM+ imprime en cada iteración una fila con residuales y reportes bajo la cabecera «Iteration Continuity …».

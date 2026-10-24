@@ -106,6 +106,22 @@ Superficies: `POST /api/surface` inyecta la receta, convierte con `surfaces.py` 
 `cases/<caso>/surfaces/<nombre>/` (no va a git). Medido con `cursocfturbo` (370 k celdas), patrón `.`:
 17 fronteras, 187 400 triángulos y 4 campos en 10,7 s de solver más 0,3 s de conversión.
 
+3D en vivo: la receta `recipes/activar-autoexport.java` (`CADA`, `FUNCS`, `OUT`) enciende el AutoExport del
+solver. Cada `CADA` iteraciones, el solver escribe `surfaces/_raw/vivo/vivo@<iter>.case`. El visor sondea cada 10 s
+mientras se itera o la IA trabaja. Convierte solo la exportación más nueva y borra las anteriores. Pasa solo al
+dataset «vivo» y lo rotula «3D en vivo · iteración N». Elegir otro dataset deja de seguirlo. La IA la enciende sola:
+cada 25 iteraciones en la prueba de 100 y cada 50 en corridas largas.
+
+Medido con `cursocfturbo` en este PC:
+
+| | valor |
+|---|---|
+| coste por exportación | ≈0,15 s (10 iteraciones: 18,98 s sin exportar, 19,27 s exportando cada 5) |
+| tamaño por exportación | ≈4 MB (solo queda la última en disco) |
+| prueba de punta a punta (2026-10-24) | 40 iteraciones con exportación cada 10; el visor pasó solo a «vivo» |
+
+Para apagarla: `sim.getSimulationIterator().getAutoExport().setEnabled(false)`.
+
 ## Endpoints
 
 Errores siempre `{"detail": "texto"}`. Los `409` son «solver no vivo» o «la IA está usando el solver».
