@@ -14,7 +14,7 @@ const fmt = (x, d = 1) => x == null || isNaN(+x) ? '–' : (+x).toFixed(d).repla
 // un único formato numérico (leyenda, reportes, tablas): decimales con coma y miles con punto; científico solo para muy pequeños o enormes
 const sci = x => { if (x == null || isNaN(x)) return '–'; const a = Math.abs(x); if ((a < 1e-2 && a !== 0) || a >= 1e7) return x.toExponential(2).replace('.', ','); return x.toLocaleString('es', { minimumFractionDigits: 0, maximumFractionDigits: a >= 1000 ? 0 : a >= 10 ? 2 : 3, useGrouping: a >= 10000 }); };
 const st = { cases: [], case: null, data: null, status: {}, chatting: false, session: null, lastMsg: '', tab: LS.get('scc_tab', 'out'),
-  view: '3d', datasets: [], ds: null, scalar: '', cmap: LS.get('scc_cmap', 'ccm'), range: null, settings: null, where: 'local' };
+  view: '3d', datasets: [], ds: null, scalar: '', cmap: LS.get('scc_cmap', 'ccm'), range: null, settings: null };
 const NARROW = matchMedia('(max-width:1099px)');
 
 async function api(path, body) {
@@ -55,7 +55,6 @@ $('case').onchange = () => openCase($('case').value);
 // ---------------------------------------------------------------- caso nuevo: carpeta + geometría + encargo a la IA
 $('newcase').onclick = async () => {
   $('nc_prog').textContent = ''; ncFiles = []; ncRender();
-  try { const s = await api('/api/settings'); $('nc_where').textContent = s.run_where === 'server' ? 'Correrá en el Servidor Linux (STAR-CCM+ 2502, 14 núcleos); la geometría se sube sola.' : 'Correrá en este PC (Local). Puedes cambiarlo arriba en «Ejecutar en».'; } catch { $('nc_where').textContent = ''; }
   $('ncdlg').showModal(); $('nc_name').focus();
 };
 $('nccancel').onclick = () => $('ncdlg').close();
@@ -101,7 +100,7 @@ $('ncform').onsubmit = async e => {
     const lista = files.map(f => f.name).join(', ');
     $('chattext').value = `Caso nuevo cases/${name}: ${tipo}, geometría en cases/${name}/cad/ (${lista}). ` +
       `Datos: ${rpm} rpm sobre ${eje}, caudal másico ${mdot} kg/s de ${fluido}, máximo ${Number.isFinite(iters) ? iters : 1000} iteraciones. ` +
-      `Prepara y corre la simulación completa siguiendo el flujo estándar (server_start(name="${name}") sin where; importar, nombrar fronteras, regiones e interfaces, malla por parte, física, MRF, fronteras, reportes), ` +
+      `Prepara y corre la simulación completa siguiendo el flujo estándar (server_start(name="${name}"); importar, nombrar fronteras, regiones e interfaces, malla por parte, física, MRF, fronteras, reportes), ` +
       `Por etapas: prepara el caso; si dudas de qué cara es entrada o salida, o de algún modelo, pregúntame con opciones y enséñamelo en el visor; ` +
       `luego corre 100 iteraciones de prueba y tráeme resultados (escenas, superficies con campo, tabla de reportes, convergencia y RESUMEN.md provisional), ` +
       `y pregúntame antes de seguir hasta el criterio de parada. Guarda al terminar cada etapa.` +
@@ -133,30 +132,14 @@ async function openCase(name) {
   if (gen === openGen) loadTree(false);
 }
 
-// ---------------------------------------------------------------- dónde corre la simulación: Local (este PC) o Servidor (Linux)
-// La elección vive en starccm/.ui-settings.json (GET/POST /api/settings), no en localStorage: Claude puede leerla.
+// ---------------------------------------------------------------- solver local (versión y procesos para el panel Solver)
 async function loadSettings() {
-  try { st.settings = await api('/api/settings'); st.where = st.settings.run_where; } catch (e) { st.settings = null; st.where = 'local'; }
-  renderWhere();
-}
-function renderWhere() {
-  for (const b of $('where').querySelectorAll('[role=radio]')) b.setAttribute('aria-checked', b.dataset.where === st.where);
+  try { st.settings = await api('/api/settings'); } catch { st.settings = null; }
   if (st.status.alive != null) renderStatus(st.status);
 }
-for (const b of $('where').querySelectorAll('[role=radio]')) b.onclick = async () => {
-  if (b.dataset.where === st.where) return;
-  try { st.settings = await api('/api/settings', { run_where: b.dataset.where }); st.where = st.settings.run_where; }
-  catch (e) { toast('No pude guardar la elección: ' + e.message, 'error'); }
-  renderWhere();
-  const sv = st.settings?.server || {};
-  toast(st.where === 'server' ? `La simulación correrá en ${sv.label || 'el servidor Linux'} ${sv.host || ''}` : 'La simulación corre en este PC (STAR-CCM+ 2410)', 'ok');
-};
-function whereRows() {  // filas del panel Solver
+function whereRows() {
   const s = st.settings; if (!s) return [];
-  if (st.where !== 'server') return [[['corre en', `Local (este PC) · STAR-CCM+ ${s.local.version} · np ${s.local.np}`], 'where']];
-  const sv = s.server;
-  return [[['corre en', `${sv.label}${sv.host ? ' ' + sv.host : ''} · STAR-CCM+ ${sv.version} · remoto listo`], 'where'],
-    ...sv.rows.map(r => [r, 'srv'])];
+  return [[['corre en', `este PC · STAR-CCM+ ${s.local.version} · np ${s.local.np}`], 'where']];
 }
 
 // ---------------------------------------------------------------- visor 3D (three.js)
@@ -808,9 +791,8 @@ function renderStatus(s) {
   const sh = `<span class="dot ${dot}"></span><span>${esc(txt)}</span>` ;
   if (renderStatus.last !== sh) { renderStatus.last = sh; $('solver').innerHTML = sh; }
   $('stopsolver').hidden = !s.alive; $('stopsolver').disabled = !!s.stopping || !!s.chatting;
-  const remote = st.where === 'server';
-  $('opengui').disabled = !!s.alive || remote; $('opengui').title = remote ? 'Solo en local: la GUI abre el .sim de este PC' : s.alive ? 'Hay un servidor batch vivo: apágalo antes de abrir la GUI' : 'Abre este .sim en la GUI de STAR-CCM+ (la licencia PoD cobra por hora)';
-  $('solvertag').innerHTML = (s.alive ? '<span class="tag ok">vivo</span>' : s.stale ? '<span class="tag warn">caído</span>' : '<span class="tag">apagado</span>') + (remote ? ' <span class="tag ok">servidor</span>' : '');
+  $('opengui').disabled = !!s.alive; $('opengui').title = s.alive ? 'Hay un servidor batch vivo: apágalo antes de abrir la GUI' : 'Abre este .sim en la GUI de STAR-CCM+ (ocupa la licencia mientras esté abierta)';
+  $('solvertag').innerHTML = (s.alive ? '<span class="tag ok">vivo</span>' : s.stale ? '<span class="tag warn">caído</span>' : '<span class="tag">apagado</span>');
   const rows = (s.alive || s.stale ? [['pid', s.pid], ['puerto', s.port], ['sim', s.sim ? s.sim.split(/[\\/]/).pop() : '(nueva)'], ['procesos', s.np], ['arranque', s.started ? s.started.replace('T', ' ') : '–'], ['inactivo', s.idle_min != null ? `${fmt(s.idle_min, 0)} / ${s.idle_limit_min} min` : '–']] : [['apagado por inactividad', `${s.idle_limit_min} min`]]).map(r => [r, '']);
   const kv = [...whereRows(), ...rows].map(([[k, v], cls]) => `<tr class="${cls}"><td class="mut">${esc(k)}</td><td class="mono" title="${esc(v)}">${esc(v)}</td></tr>`).join('');
   if (renderStatus.kv !== kv) { renderStatus.kv = kv; $('solverkv').querySelector('tbody').innerHTML = kv; }

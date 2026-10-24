@@ -14,14 +14,9 @@
 <header class="topbar">
   <h1 class="brand">STAR-CCM+ <span>Agente</span></h1>
   <span class="simname mono" id="simname"></span>
-  <span class="lbl-ejec">Ejecutar en</span>
-  <div class="seg" id="where" role="radiogroup" aria-label="Dónde corre la simulación">
-    <button role="radio" data-where="local" aria-checked="true" title="Local: STAR-CCM+ 2410 en este PC (Windows); la IA usa el solver de aquí">Local · este PC</button>
-    <button role="radio" data-where="server" aria-checked="false" title="Servidor Linux (vm/SERVIDOR.md): 14 procesos, STAR-CCM+ 2502; el MCP lo lanza por SSH, sube el CAD y trae resultados (unas 2× más rápido que este PC)">Servidor · Linux</button>
-  </div>
   <button class="sm" id="newcase" title="Caso nuevo desde una geometría (STEP, Parasolid, IGES, STL…)">＋ Caso nuevo</button>
   <span class="sp"></span>
-  <button id="solverbtn" aria-expanded="false" aria-controls="solverpop" title="Detalle del solver (Local / Servidor)"><span id="solver" role="status" aria-live="polite"><span class="dot"></span><span>Conectando…</span></span> <span class="mut" aria-hidden="true">▾</span></button>
+  <button id="solverbtn" aria-expanded="false" aria-controls="solverpop" title="Detalle del solver"><span id="solver" role="status" aria-live="polite"><span class="dot"></span><span>Conectando…</span></span> <span class="mut" aria-hidden="true">▾</span></button>
   <button class="sm danger" id="stopsolver" hidden title="Guarda el .sim y apaga el servidor de STAR-CCM+ (server_stop)">Apagar solver</button>
   <button class="sm" id="opengui" title="Abre este .sim en la GUI de STAR-CCM+ (solo sin servidor batch vivo; la licencia PoD cobra por hora)">Abrir en STAR-CCM+</button>
   <button class="sm icon" id="theme" title="Tema claro / oscuro" aria-label="Cambiar tema">◐</button>
@@ -163,7 +158,6 @@
     </div>
     <label>Notas para la IA <span class="mut">(opcional)</span><textarea id="nc_notes" rows="2" placeholder="p. ej. la entrada es la cara inferior; usar presión total de salida 0 Pa"></textarea></label>
     <label class="check small"><input type="checkbox" id="nc_run" checked> Que la IA prepare y corra la simulación completa al crear el caso</label>
-    <p class="mut small" id="nc_where"></p>
     <div id="nc_prog" class="small mono" aria-live="polite"></div>
     <div class="row end"><button type="button" class="sm" id="nccancel">Cancelar</button><button type="submit" class="pri" id="ncok">Crear caso</button></div>
   </form>

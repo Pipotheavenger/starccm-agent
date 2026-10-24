@@ -51,11 +51,6 @@ button[aria-pressed="true"]{background:var(--acc-bg);border-color:var(--acc);col
 
 /* topbar */
 .topbar{display:flex;align-items:center;gap:var(--s3);padding:0 var(--s4);background:var(--panel);border-bottom:1px solid var(--line);min-width:0;min-height:var(--top-h)}
-.seg{display:inline-flex;flex:none;border:1px solid var(--line);border-radius:var(--r);overflow:hidden;background:var(--panel-2)}
-.seg button{border:0;border-radius:0;min-height:24px;padding:0 10px;font-size:12px;background:transparent;color:var(--mut)}
-.seg button+button{border-left:1px solid var(--line)}
-.seg button[aria-checked="true"]{background:var(--acc-bg);color:var(--acc);font-weight:600}
-.seg button:focus-visible{outline-offset:-2px}
 .brand{font-size:16px;font-weight:600;margin:0;white-space:nowrap}
 .brand span{color:var(--mut);font-weight:400}
 .simname{font-size:12px;color:var(--mut);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -133,7 +128,6 @@ html.resizing,html.resizing *{cursor:col-resize!important;user-select:none}
   html.tree-off .tree-head .sec-h{writing-mode:vertical-rl;letter-spacing:.12em}
 }
 @media (max-width:1099px){#treetoggle{display:none}}
-.lbl-ejec{font-size:11px;color:var(--mut)}
 
 table.kv{border-collapse:collapse;width:100%;font-size:11px;margin-top:4px}
 table.kv td{padding:1px 4px;max-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap} table.kv td:first-child{width:40%}

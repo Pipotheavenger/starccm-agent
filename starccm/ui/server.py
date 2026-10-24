@@ -17,8 +17,7 @@ Qué hace:
                                            .mcp.json de la raíz; eventos por SSE (status, init, text, tool,
                                            tool_result, ping, raw, result, error, stopped, done)
   - POST /api/chat/stop                 -> mata la CLI del chat y sus hijos
-  - GET/POST /api/settings              -> dónde corre la simulación (run_where: local | server), persistido en
-                                           starccm/.ui-settings.json (ignorado por git); el chat lo lleva en el prompt
+  - GET  /api/settings                  -> datos del solver local (versión, procesos) para la página
   - GET  /api/tree[?refresh=1&case=]    -> árbol del .sim; cada lectura se guarda en cases/<caso>/tree.json
   - GET  /api/surfaces, POST /api/surface -> datasets 3D del visor (GET convierte los _raw nuevos; POST exporta del solver)
   - POST /api/scene, GET /api/scenes    -> exportar una escena a PNG / listar las del .sim
@@ -91,10 +90,7 @@ CHAT_SYSTEM = (
     "tablas para números. Antes de escribir Java: recipe_search primero, docs_search segundo; precompila (run_java "
     "ya lo hace). Un solo servidor a la vez (server_start reutiliza el vivo); guarda con save tras cada bloque largo. "
     "Si te piden resumen, comparación o explicación, solo lees y respondes (no lances iterate ni server_start). "
-    "DÓNDE CORRE: cada mensaje empieza con el caso y la ejecución elegida. Llama siempre a server_start sin where "
-    "(toma la elección de la página): Local = este PC (STAR-CCM+ 2410); Servidor = Linux de vm/SERVIDOR.md "
-    "(2502, 14 núcleos); en Servidor las rutas de starccm/ en tu Java se traducen solas, el CAD se sube solo y lo "
-    "que escribas en cases/ vuelve solo al PC. "
+    "El solver corre en este PC (STAR-CCM+ 2410). "
     "CASO NUEVO (geometría en cases/<caso>/cad/): sigue el «Flujo estándar» de CLAUDE.md con las recetas bomba-* "
     "adaptando nombres de partes y fronteras (inspect para verlos), server_start(name=<caso>) para trabajar en "
     "sims/<caso>.sim, una operación de malla por parte, MRF con el eje y las rpm pedidas, reportes H, M, eta; itera "
@@ -186,67 +182,15 @@ def style_css() -> FileResponse:
     return FileResponse(HERE / "style.css", media_type="text/css", headers={"Cache-Control": "no-cache"})
 
 
-# ---------------------------------------------------------------- dónde corre la simulación: Local (este PC) o Servidor (Linux)
-SETTINGS_FILE = ROOT / ".ui-settings.json"   # ignorado por git; Claude puede leerlo con Read
-SERVIDOR_MD = ROOT / "vm" / "SERVIDOR.md"
-
-
-def _server_info() -> dict:
-    """Resumen de vm/SERVIDOR.md: host del ssh y las primeras filas del inventario. Allí no hay claves."""
-    info = {"host": None, "user": None, "rows": [], "label": "Servidor Linux", "version": "2502",
-            "installed": True, "install": "/opt/Siemens/20.02.008-R8",  # vm/SERVIDOR.md
-            "ready": True, "ssh": scc.SSH_HOST, "remote_dir": scc.REMOTE_DIR}  # mcp_server: server_start(where="server")
-    if not SERVIDOR_MD.is_file():
-        return info
-    txt = SERVIDOR_MD.read_text(encoding="utf-8", errors="replace")
-    m = re.search(r"ssh\s+([\w.-]+)@([\d.]+)", txt)
-    if m:
-        info["user"], info["host"] = m.group(1), m.group(2)
-    for ln in txt.splitlines():
-        cells = [c.strip() for c in ln.strip().strip("|").split("|")]
-        if ln.strip().startswith("|") and len(cells) == 2 and cells[0] != "dato" and cells[0].strip("-: "):
-            info["rows"].append(cells)
-        if len(info["rows"]) >= 6:
-            break
-    n = re.match(r"(\d+)\s*vCPU", dict(info["rows"]).get("CPU", ""))
-    info["label"] = f"Servidor Linux ({n.group(1)} vCPU)" if n else "Servidor Linux"
-    return info
-
-
-def _settings() -> dict:
-    try:
-        d = json.loads(SETTINGS_FILE.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        d = {}
-    where = d.get("run_where") if d.get("run_where") in ("local", "server") else "local"
-    return {"run_where": where, "at": d.get("at"), "file": str(SETTINGS_FILE),
-            "local": {"label": "Local (este PC)", "np": scc.NP, "version": "2410"}, "server": _server_info()}
-
-
-class SettingsReq(BaseModel):
-    run_where: Literal["local", "server"]
-
-
+# ---------------------------------------------------------------- solver local (la ejecución remota se quitó el 2026-10-24)
 @app.get("/api/settings")
 def api_settings() -> dict:
-    return _settings()
-
-
-@app.post("/api/settings")
-def api_settings_set(req: SettingsReq) -> dict:
-    SETTINGS_FILE.write_text(json.dumps({"run_where": req.run_where, "at": time.strftime("%Y-%m-%d %H:%M:%S")}, indent=1),
-                             encoding="utf-8")
-    log.info("ejecución elegida: %s", req.run_where)
-    return _settings()
+    return {"run_where": "local", "local": {"label": "Local (este PC)", "np": scc.NP, "version": "2410"}}
 
 
 def _where_text() -> str:
-    """Lo que el chat antepone a cada mensaje para que Claude sepa dónde debe correr."""
-    s = _settings()
-    if s["run_where"] == "server":
-        sv = s["server"]
-        return f"ejecución elegida: {sv['label']} {sv['host'] or ''} · STAR-CCM+ {sv['version']} · remoto disponible: server_start lo lanza allí por SSH".replace("  ", " ")
-    return f"ejecución: Local (este PC, STAR-CCM+ {s['local']['version']}, np {s['local']['np']})"
+    """Lo que el chat antepone a cada mensaje."""
+    return f"solver: este PC, STAR-CCM+ 2410, np {scc.NP}"
 
 
 # ---------------------------------------------------------------- casos
@@ -463,7 +407,7 @@ def scene_png(fname: str) -> FileResponse:
 
 
 def _solver_alive() -> bool:
-    return scc.alive()  # local o remoto (por SSH, cacheado 8 s)
+    return scc.alive()
 
 
 def _solver_busy_409() -> None:
@@ -819,8 +763,7 @@ def status() -> dict:
     alive = scc.alive(st)
     last = scc.last_activity()  # última macro (.java/.out) o .server.json: la misma medida en disco que usa el watchdog del MCP
     return {"alive": alive, "pid": pid, "port": st.get("port"), "host": st.get("host"), "sim": st.get("sim"),
-            "where": st.get("where", "local") if pid else None, "rsim": st.get("rsim"),
-            **({"remote_error": scc._alive_cache.get("error")} if st.get("where") == "server" and not alive else {}),
+
             "started": st.get("started"), "np": st.get("np"), "startup_seconds": st.get("startup_seconds"),
             "idle_min": round((time.time() - last) / 60, 1) if (alive and last) else None,
             "idle_limit_min": scc.IDLE_MIN, "stale": bool(pid) and not alive,
@@ -1186,18 +1129,9 @@ def _selftest() -> int:
     c, tr = get("/api/tree?case=cursocfturbo")
     check(c == 200 and "from_disk" in tr, f"GET /api/tree?case=cursocfturbo (de disco={tr.get('from_disk')})")
     check(c == 200 and (tr.get("tree") is None or tr.get("derived") or tr.get("from_disk")) and (tr.get("tree") or {}).get("boundary", [1]), "árbol de disco no vacío para cursocfturbo")
-    # ajustes: dónde corre la simulación (se deja como estaba)
-    orig = _settings()["run_where"]
     c, sg = get("/api/settings")
-    check(c == 200 and sg["run_where"] in ("local", "server") and "host" in sg["server"] and "np" in sg["local"],
-          f"GET /api/settings (run_where={sg['run_where']}, servidor {sg['server'].get('host')}, {len(sg['server']['rows'])} filas de SERVIDOR.md)")
-    other = "server" if orig == "local" else "local"
-    c, r = post("/api/settings", {"run_where": other})
-    check(c == 200 and r["run_where"] == other and get("/api/settings")[1]["run_where"] == other, f"POST /api/settings {other} y relectura")
-    c, r = post("/api/settings", {"run_where": "luna"})
-    check(c == 422, "POST /api/settings con valor inválido -> 422")
-    check(_where_text().startswith("ejecución elegida: Servidor" if other == "server" else "ejecución: Local"), f"prefijo del chat: {_where_text()[:60]}")
-    post("/api/settings", {"run_where": orig})
+    check(c == 200 and sg["run_where"] == "local" and "np" in sg["local"], "GET /api/settings: solo local")
+    check(_where_text().startswith("solver: este PC"), f"prefijo del chat: {_where_text()}")
     c, r = post("/api/open_gui", {"case": "no_existe"})
     check(c == 404, "POST /api/open_gui con caso inexistente -> 404")
     c, st = get("/api/status")
