@@ -276,3 +276,10 @@ ul.parts li.grp>details>summary:hover{background:var(--panel-2)}
 ul.parts.sub{padding:0 0 2px 22px}
 #tab-chat .chat-head .sec-h{display:none}
 dialog label.check{flex-direction:row;align-items:center;gap:6px;color:var(--fg)}
+
+.dropzone{border:1px dashed var(--line);border-radius:var(--r);padding:8px;text-align:center;margin:4px 0}
+.dropzone.over{border-color:var(--acc);background:var(--acc-bg);color:var(--acc)}
+.nclist{list-style:none;margin:2px 0 6px;padding:0;max-height:120px;overflow:auto}
+.nclist li{display:flex;align-items:center;gap:6px;padding:1px 0}
+.nclist li .n{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.nclist li .c{font-family:var(--mono);color:var(--mut)}

@@ -148,7 +148,9 @@
   <form id="ncform" method="dialog">
     <h2 class="sec-h" id="ncdlg-h">Caso nuevo desde una geometría</h2>
     <label>Nombre del caso<input id="nc_name" pattern="[A-Za-z0-9_\-]+" required placeholder="bomba_v2" title="Letras, números, _ y -"></label>
-    <label>Geometría <span class="mut">(STEP, Parasolid, IGES, STL; puedes elegir varias, y el .cfturbo-ccm si viene de CFturbo)</span><input id="nc_files" type="file" multiple required accept=".stp,.step,.x_t,.x_b,.igs,.iges,.stl,.jt,.sat,.cfturbo-ccm"></label>
+    <label>Geometría <span class="mut">(STEP, Parasolid, IGES, STL; puedes elegir varias, y el .cfturbo-ccm si viene de CFturbo)</span><input id="nc_files" type="file" multiple accept=".stp,.step,.x_t,.x_b,.igs,.iges,.stl,.jt,.sat,.cfturbo-ccm"></label>
+    <div id="nc_drop" class="dropzone small mut">Arrastra aquí los archivos, o elígelos arriba (se van sumando).</div>
+    <ul id="nc_list" class="nclist small"></ul>
     <div class="pgrid">
       <label>Máquina<select id="nc_type"><option value="bomba centrífuga">Bomba centrífuga</option><option value="turbina hidráulica">Turbina hidráulica</option><option value="ventilador">Ventilador</option><option value="compresor">Compresor</option><option value="otra turbomáquina">Otra</option></select></label>
       <label>Fluido<input id="nc_fluid" value="agua"></label>

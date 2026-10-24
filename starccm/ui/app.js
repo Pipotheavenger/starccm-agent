@@ -54,15 +54,32 @@ async function loadCases() {
 $('case').onchange = () => openCase($('case').value);
 // ---------------------------------------------------------------- caso nuevo: carpeta + geometría + encargo a la IA
 $('newcase').onclick = async () => {
-  $('nc_prog').textContent = '';
+  $('nc_prog').textContent = ''; ncFiles = []; ncRender();
   try { const s = await api('/api/settings'); $('nc_where').textContent = s.run_where === 'server' ? 'Correrá en el Servidor Linux (STAR-CCM+ 2502, 14 núcleos); la geometría se sube sola.' : 'Correrá en este PC (Local). Puedes cambiarlo arriba en «Ejecutar en».'; } catch { $('nc_where').textContent = ''; }
   $('ncdlg').showModal(); $('nc_name').focus();
 };
 $('nccancel').onclick = () => $('ncdlg').close();
+// los archivos se SUMAN: cada selección o arrastre añade a la lista (hay selectores que solo dejan elegir uno)
+let ncFiles = [];
+const CAD_OK = /\.(stp|step|x_t|x_b|igs|iges|stl|jt|sat|cfturbo-ccm)$/i;
+function ncAdd(list) {
+  const bad = [];
+  for (const f of list) { if (!CAD_OK.test(f.name)) { bad.push(f.name); continue; } ncFiles = ncFiles.filter(x => x.name !== f.name); ncFiles.push(f); }
+  ncRender(); if (bad.length) $('nc_prog').textContent = 'No admitidos: ' + bad.join(', ');
+}
+function ncRender() {
+  $('nc_list').innerHTML = ncFiles.map((f, i) => `<li><span class="n" title="${esc(f.name)}">${esc(f.name)}</span><span class="c">${(f.size / 1048576).toFixed(2).replace('.', ',')} MB</span><button type="button" class="sm mini" data-i="${i}" aria-label="Quitar ${esc(f.name)}">✕</button></li>`).join('');
+  for (const b of $('nc_list').querySelectorAll('button')) b.onclick = () => { ncFiles.splice(+b.dataset.i, 1); ncRender(); };
+  $('nc_drop').textContent = ncFiles.length ? `${ncFiles.length} archivo(s). Arrastra o elige más para sumarlos.` : 'Arrastra aquí los archivos, o elígelos arriba (se van sumando).';
+}
+$('nc_files').onchange = () => { ncAdd([...$('nc_files').files]); $('nc_files').value = ''; };
+for (const ev of ['dragenter', 'dragover']) $('ncdlg').addEventListener(ev, e => { e.preventDefault(); $('nc_drop').classList.add('over'); });
+for (const ev of ['dragleave', 'drop']) $('ncdlg').addEventListener(ev, e => { e.preventDefault(); $('nc_drop').classList.remove('over'); });
+$('ncdlg').addEventListener('drop', e => ncAdd([...(e.dataTransfer?.files || [])]));
 const NUM = v => { const x = parseFloat(String(v).replace(',', '.')); return Number.isFinite(x) ? x : null; };
 $('ncform').onsubmit = async e => {
   e.preventDefault();
-  const name = $('nc_name').value.trim(), files = [...$('nc_files').files];
+  const name = $('nc_name').value.trim(), files = [...ncFiles];
   const rpm = NUM($('nc_rpm').value), mdot = NUM($('nc_mdot').value), iters = parseInt($('nc_iter').value, 10);
   const run = $('nc_run').checked, tipo = $('nc_type').value, eje = $('nc_axis').value, fluido = $('nc_fluid').value.trim() || 'agua', notas = $('nc_notes').value.trim();
   if (!/^[A-Za-z0-9_-]+$/.test(name)) { $('nc_prog').textContent = 'Nombre: solo letras, números, _ y -'; return; }
@@ -77,7 +94,7 @@ $('ncform').onsubmit = async e => {
       const r = await fetch(`/api/cases/${encodeURIComponent(name)}/cad/${encodeURIComponent(f.name)}`, { method: 'PUT', body: f });
       if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || ('HTTP ' + r.status));
     }
-    $('ncdlg').close(); $('ncform').reset();
+    $('ncdlg').close(); $('ncform').reset(); ncFiles = []; ncRender();
     await refreshCaseList(); $('case').value = name; await openCase(name);
     toast(`Caso ${name} creado con ${files.length} archivo(s) de geometría`, 'ok');
     if (!run) { $('ncok').disabled = false; return; }
