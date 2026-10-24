@@ -11,7 +11,8 @@ const LS = {
 };
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const fmt = (x, d = 1) => x == null || isNaN(+x) ? '–' : (+x).toFixed(d).replace('.', ',');
-const sci = x => x == null || isNaN(x) ? '–' : (Math.abs(x) >= 1e5 || (Math.abs(x) < 1e-2 && x !== 0)) ? x.toExponential(2).replace('.', ',') : fmt(x, Math.abs(x) < 10 ? 3 : 1);
+// un único formato numérico (leyenda, reportes, tablas): decimales con coma y miles con punto; científico solo para muy pequeños o enormes
+const sci = x => { if (x == null || isNaN(x)) return '–'; const a = Math.abs(x); if ((a < 1e-2 && a !== 0) || a >= 1e7) return x.toExponential(2).replace('.', ','); return x.toLocaleString('es', { minimumFractionDigits: 0, maximumFractionDigits: a >= 1000 ? 0 : a >= 10 ? 2 : 3, useGrouping: a >= 10000 }); };
 const st = { cases: [], case: null, data: null, status: {}, chatting: false, session: null, lastMsg: '', tab: LS.get('scc_tab', 'out'),
   view: '3d', datasets: [], ds: null, scalar: '', cmap: LS.get('scc_cmap', 'ccm'), range: null, settings: null, where: 'local' };
 const NARROW = matchMedia('(max-width:1099px)');
@@ -110,21 +111,21 @@ function initViewer() {
   V.renderer.localClippingEnabled = true;
   V.scene = new THREE.Scene();
   V.camera = new THREE.PerspectiveCamera(40, 1, 0.001, 100);
-  V.camera.position.set(0.5, -0.5, 0.4); V.camera.up.set(0, 0, 1);
+  V.camera.position.set(0.5, 0.4, 0.6); V.camera.up.set(0, 1, 0);  // como el cliente de STAR-CCM+: Y arriba, se mira hacia −Z
   V.controls = new OrbitControls(V.camera, canvas);
   V.controls.enableDamping = true; V.controls.dampingFactor = 0.08; V.controls.screenSpacePanning = true;
   V.controls.addEventListener('change', () => { V.needs = true; });
-  const hemi = new THREE.HemisphereLight(0xffffff, 0x8899aa, 0.9);
-  const key = new THREE.DirectionalLight(0xffffff, 1.1); key.position.set(1, -1, 1.2);
-  const fill = new THREE.DirectionalLight(0xffffff, 0.45); fill.position.set(-1, 0.6, -0.4);
-  V.lights = new THREE.Group(); V.lights.add(hemi, key, fill); V.scene.add(V.lights);
+  const hemi = new THREE.HemisphereLight(0xffffff, 0x6f7f90, 0.55);
+  V.key = new THREE.DirectionalLight(0xffffff, 1.6);   // «faro»: va con la cámara (se recoloca en cada fotograma)
+  V.rim = new THREE.DirectionalLight(0xffffff, 0.35);  // contraluz desde detrás para recortar la silueta
+  V.scene.add(hemi, V.key, V.key.target, V.rim, V.rim.target);
   V.group = new THREE.Group(); V.scene.add(V.group);
   V.clip = new THREE.Plane(new THREE.Vector3(0, 0, -1), 0);
   // tríada de ejes en la esquina (escena aparte, misma orientación que la cámara)
   V.axes = new THREE.Scene();
   const mk = (dir, col) => { const a = new THREE.ArrowHelper(new THREE.Vector3(...dir), new THREE.Vector3(), 0.8, col, 0.25, 0.12); V.axes.add(a); };
   mk([1, 0, 0], 0xd62828); mk([0, 1, 0], 0x2a9d3f); mk([0, 0, 1], 0x1d6fd1);
-  V.axesCam = new THREE.PerspectiveCamera(40, 1, 0.1, 10); V.axesCam.up.set(0, 0, 1);
+  V.axesCam = new THREE.PerspectiveCamera(40, 1, 0.1, 10);
   new ResizeObserver(resize).observe($('viewer'));
   resize();
   canvas.addEventListener('webglcontextlost', e => e.preventDefault());
@@ -150,17 +151,20 @@ function loop(t) {
   V.controls.update();
   if (!V.needs) return;
   V.needs = false;
+  const view = V.camera.position.clone().sub(V.controls.target), right = new THREE.Vector3().crossVectors(view, V.camera.up).normalize();
+  V.key.position.copy(V.camera.position).addScaledVector(V.camera.up, view.length() * 0.35).addScaledVector(right, -view.length() * 0.25); V.key.target.position.copy(V.controls.target);
+  V.rim.position.copy(V.controls.target).sub(view); V.rim.target.position.copy(V.controls.target);
   const r = V.renderer; const w = $('viewer').clientWidth, h = $('viewer').clientHeight;
   r.setViewport(0, 0, w, h); r.setScissorTest(false); r.render(V.scene, V.camera);
   // tríada
-  const s = 76; V.axesCam.position.copy(V.camera.position).sub(V.controls.target).normalize().multiplyScalar(3); V.axesCam.lookAt(0, 0, 0);
+  const s = 76; V.axesCam.position.copy(V.camera.position).sub(V.controls.target).normalize().multiplyScalar(3); V.axesCam.up.copy(V.camera.up); V.axesCam.lookAt(0, 0, 0);
   r.setViewport(8, 8, s, s); r.setScissor(8, 8, s, s); r.setScissorTest(true); r.autoClear = false; r.render(V.axes, V.axesCam); r.autoClear = true; r.setScissorTest(false);
 }
 function fit(ms = 600) {
   if (!V.bbox || V.bbox.isEmpty()) return;
   const c = V.bbox.getCenter(new THREE.Vector3()), size = V.bbox.getSize(new THREE.Vector3()).length();
   const dir = V.camera.position.clone().sub(V.controls.target).normalize();
-  if (!dir.length()) dir.set(0.6, -0.7, 0.5);
+  if (!dir.length()) dir.set(0.55, 0.45, 0.7);
   const dist = size / (2 * Math.tan(V.camera.fov * Math.PI / 360)) * 1.15;
   tween(c.clone().add(dir.multiplyScalar(dist)), c, ms);
   V.camera.near = size / 500; V.camera.far = size * 20; V.camera.updateProjectionMatrix();
@@ -172,13 +176,14 @@ function setView(name) {
   if (!V.bbox) return;
   const c = V.bbox.getCenter(new THREE.Vector3()), size = V.bbox.getSize(new THREE.Vector3()).length();
   const dist = size / (2 * Math.tan(V.camera.fov * Math.PI / 360)) * 1.15;
-  const dir = { iso: [0.6, -0.7, 0.5], axial: [0, 0, 1], lateral: [0, -1, 0.0001] }[name];
+  const dir = { iso: [0.55, 0.45, 0.7], axial: [0, 0, 1], lateral: [1, 0, 0] }[name];
+  V.camera.up.set(0, 1, 0);  // las vistas fijas reponen el «arriba» (el orbitado libre no lo cambia)
   tween(c.clone().add(new THREE.Vector3(...dir).normalize().multiplyScalar(dist)), c);
 }
 function flyTo(part) {
   if (!part) return;
   // una superficie oculta tras la carcasa opaca: se activa la carcasa translúcida y se avisa
-  if (!part.mesh.visible) { part.mesh.visible = true; const cb = part.li?.querySelector('input'); if (cb) cb.checked = true; }
+  if (!part.mesh.visible) { part.mesh.visible = true; const cb = part.li?.querySelector('input'); if (cb) cb.checked = true; if (part.group) syncGroup(part.group); }
   if (!V.ghost && !OUTER.test(part.name) && st.ds.parts.some(q => OUTER.test(q.name) && q.mesh.visible)) {
     V.ghost = true; LS.set('scc_ghost', '1'); applyGhost(); toast(`Carcasa translúcida para ver ${part.name}`, 'ok');
   }
@@ -260,7 +265,7 @@ async function loadDatasets() {
   if (had && had.name === pick.name) toast('Superficies actualizadas', 'ok');
 }
 function clearDataset() {
-  for (const m of V.meshes) { V.group.remove(m); m.geometry.dispose(); m.material.dispose(); }
+  for (const m of V.meshes) { V.group.remove(m); m.geometry.dispose(); m.material.dispose(); const e = m.userData.part?.edges; if (e) { e.geometry.dispose(); e.material.dispose(); } }
   setHot(null); V.meshes = []; st.ds = null; V.bbox = null; $('parts').innerHTML = ''; $('vstate').textContent = ''; $('vtip').hidden = true;
   $('rmin').value = ''; $('rmax').value = ''; st.scalar = ''; st.range = null; V.rotor = false; $('rotor').setAttribute('aria-pressed', false);
   $('scalar').innerHTML = '<option value="">(geometría)</option>'; V.needs = true; syncOverlays();
@@ -271,7 +276,9 @@ function syncOverlays() {
   $('vtools').hidden = !is3d; $('vactions').hidden = !is3d;
   // sin superficies (caso vacío) la barra del visor se apaga: nada de valores del caso anterior
   for (const id of ['vtools', 'vactions']) { $(id).classList.toggle('off', !st.ds); for (const c of $(id).querySelectorAll('button,select,input')) c.disabled = !st.ds; }
+  if (st.ds && !st.scalar) for (const id of ['rmin', 'rmax', 'cmap', 'rauto']) $(id).disabled = true;
   $('legend').hidden = !is3d || !st.ds || !st.scalar;
+  $('chips').hidden = !st.ds || !st.data?.pump;  // sugerencias del visor: sin superficies no aplican
   $('vempty').hidden = !is3d || !!st.ds || !$('vbusy').hidden;
   if (!is3d) { $('vtip').hidden = true; setHot(null); }
   $('vhint').hidden = !(is3d && st.ds && NARROW.matches && !V.controls.enableZoom);
@@ -300,8 +307,10 @@ async function loadDataset(d, keep = false) {
       g.setIndex(new THREE.BufferAttribute(li, 1));
       g.setAttribute('color', new THREE.BufferAttribute(new Float32Array(p.nv * 3), 3));
       g.computeVertexNormals(); g.computeBoundingBox(); V.bbox.union(g.boundingBox);
-      const mat = new THREE.MeshStandardMaterial({ vertexColors: true, side: THREE.DoubleSide, roughness: 0.7, metalness: 0.05, clippingPlanes: $('clipon').checked ? [V.clip] : [], transparent: true, opacity: 0 });
+      const mat = new THREE.MeshStandardMaterial({ vertexColors: true, side: THREE.DoubleSide, roughness: 0.45, metalness: 0.1, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1, clippingPlanes: $('clipon').checked ? [V.clip] : [], transparent: true, opacity: 0 });
       const mesh = new THREE.Mesh(g, mat); const part = { ...p, mesh, color: PART_COLORS[k % PART_COLORS.length], k };
+      const edges = new THREE.LineSegments(new THREE.EdgesGeometry(g, 30), new THREE.LineBasicMaterial({ color: 0x1b2430, transparent: true, opacity: 0.55, clippingPlanes: mat.clippingPlanes }));
+      mesh.add(edges); part.edges = edges;
       mesh.userData.part = part; V.group.add(mesh); V.meshes.push(mesh); st.ds.parts.push(part);
     });
     if (!V.meshes.length) throw new Error('el dataset no tiene triángulos');
@@ -309,7 +318,7 @@ async function loadDataset(d, keep = false) {
     const ws = LS.get('scc_scalar'); st.scalar = man.scalars.some(s => s.name === ws) ? ws : (man.scalars[0]?.name || '');
     $('scalar').value = st.scalar; st.range = null;
     renderParts(); applyColors(); applyGhost(); updateClip();
-    if (prev) { V.camera.position.copy(prev.pos); V.controls.target.copy(prev.tgt); for (const p of st.ds.parts) if (prev.hidden.has(p.name)) { p.mesh.visible = false; p.li.querySelector('input').checked = false; } }
+    if (prev) { V.camera.position.copy(prev.pos); V.controls.target.copy(prev.tgt); for (const p of st.ds.parts) if (prev.hidden.has(p.name)) { p.mesh.visible = false; p.li.querySelector('input').checked = false; } for (const g of st.groups || []) syncGroup(g); }
     else { fit(0); setView('iso'); }
     $('vstate').textContent = `${man.n_triangles.toLocaleString('es')} triángulos · ${st.ds.parts.length} superficies${st.ds.parts.length < man.parts.length ? ` (+${man.parts.length - st.ds.parts.length} vacías)` : ''}${man.exported ? ' · ' + man.exported : ''}`;
     fadeIn();
@@ -326,28 +335,68 @@ function fadeIn() {  // las superficies aparecen suaves
 const targetOpacity = p => (V.ghost && OUTER.test(p.name) && st.ds?.parts.some(q => !OUTER.test(q.name))) ? 0.25 : 1;
 function applyGhost() {
   if (!st.ds) return;
-  for (const p of st.ds.parts) { const o = targetOpacity(p); p.mesh.material.transparent = o < 1; p.mesh.material.opacity = o; p.mesh.material.depthWrite = o >= 1; p.mesh.renderOrder = o < 1 ? 1 : 0; p.mesh.material.needsUpdate = true; }
+  for (const p of st.ds.parts) { const o = targetOpacity(p); p.mesh.material.transparent = o < 1; p.mesh.material.opacity = o; p.mesh.material.depthWrite = o >= 1; p.mesh.renderOrder = o < 1 ? 1 : 0; p.mesh.material.needsUpdate = true; if (p.edges) p.edges.material.opacity = 0.55 * o; }
   $('ghost').setAttribute('aria-pressed', V.ghost); V.needs = true;
+}
+// Región de cada superficie: manifest.boundaries trae «región/frontera» en el mismo orden que las partes del EnSight
+// (se usa por índice si cuadra; si no, por nombre; lo que no casa va a «Otras»)
+function regionOf(parts, bounds) {
+  const out = new Map();
+  if (bounds && bounds.length === st.ds.manifest.parts.length) {
+    const byName = new Map(st.ds.manifest.parts.map((mp, i) => [mp.name, bounds[i]]));
+    for (const p of parts) { const b = byName.get(p.name); out.set(p, b && b.includes('/') ? b.split('/')[0] : 'Otras'); }
+    return out;
+  }
+  for (const p of parts) { const b = (bounds || []).find(x => x.split('/').slice(1).join('/') === p.name); out.set(p, b ? b.split('/')[0] : 'Otras'); }
+  return out;
+}
+function syncGroup(g) {  // la casilla de la región refleja a sus hijas: marcada, vacía o indeterminada
+  const n = g.parts.filter(p => p.mesh.visible).length;
+  g.cb.checked = n === g.parts.length; g.cb.indeterminate = n > 0 && n < g.parts.length;
+  g.count.textContent = `${n}/${g.parts.length}`;
 }
 function renderParts() {
   const ul = $('parts'); ul.innerHTML = '';
-  for (const p of st.ds.parts) {
+  const reg = regionOf(st.ds.parts, st.ds.manifest.boundaries);
+  const groups = new Map();
+  for (const p of st.ds.parts) { const r = reg.get(p); if (!groups.has(r)) groups.set(r, []); groups.get(r).push(p); }
+  const open = new Set(JSON.parse(LS.get('scc_open_regions', '[]')));
+  st.groups = [];
+  for (const [name, parts] of groups) {
+    const li = document.createElement('li'); li.className = 'grp';
+    const det = document.createElement('details'); det.open = open.has(name);
+    det.innerHTML = `<summary title="${esc(name)} · clic en la flecha: ver sus superficies · casilla: ocultar o mostrar toda la región"><input type="checkbox" checked aria-label="ver región ${esc(name)}"><span class="n">${esc(name)}</span><span class="c"></span></summary><ul class="parts sub"></ul>`;
+    const g = { name, parts, cb: det.querySelector('input'), count: det.querySelector('.c') };
+    g.cb.onclick = e => e.stopPropagation();  // la casilla no pliega ni despliega
+    g.cb.onchange = () => { for (const p of parts) { p.mesh.visible = g.cb.checked; p.li.querySelector('input').checked = g.cb.checked; } syncGroup(g); V.needs = true; };
+    det.ontoggle = () => { const s2 = new Set(JSON.parse(LS.get('scc_open_regions', '[]'))); det.open ? s2.add(name) : s2.delete(name); LS.set('scc_open_regions', JSON.stringify([...s2])); };
+    det.querySelector('summary').onmouseenter = () => { for (const p of parts) p.mesh.material.emissive.setHex(0x335577); V.needs = true; };
+    det.querySelector('summary').onmouseleave = () => { for (const p of parts) if (p !== V.hot) p.mesh.material.emissive.setHex(0); V.needs = true; };
+    li.appendChild(det); ul.appendChild(li);
+    for (const p of parts) { p.group = g; renderPart(p, det.querySelector('ul')); }
+    syncGroup(g); st.groups.push(g);
+  }
+}
+function renderPart(p, ul) {
+  {
     const li = document.createElement('li'); p.li = li; li.tabIndex = 0; li.setAttribute('role', 'option'); li.title = `${p.name} · clic o Enter: volar a la superficie`;
     li.innerHTML = `<input type="checkbox" checked aria-label="ver ${esc(p.name)}"><span class="sw" style="background:#${p.color.toString(16).padStart(6, '0')}"></span><span class="n">${esc(p.name)}</span><span class="c">${(p.ni / 3).toLocaleString('es')}</span>`;
-    li.querySelector('input').onchange = e => { p.mesh.visible = e.target.checked; V.needs = true; };
+    li.querySelector('input').onchange = e => { p.mesh.visible = e.target.checked; if (p.group) syncGroup(p.group); V.needs = true; };
     li.onclick = e => { if (e.target.tagName !== 'INPUT') flyTo(p); };
     li.onkeydown = e => { if (e.key === 'Enter') flyTo(p); else if (e.key === ' ') { e.preventDefault(); const c = li.querySelector('input'); c.checked = !c.checked; c.onchange({ target: c }); } };
     li.onmouseenter = () => setHot(p); li.onmouseleave = () => setHot(null);
     ul.appendChild(li);
   }
 }
-function applyColors() {
+function applyColors(anim = false) {
   if (!st.ds) return;
+  const from = anim && !matchMedia('(prefers-reduced-motion: reduce)').matches ? st.ds.parts.map(p => Float32Array.from(p.mesh.geometry.getAttribute('color').array)) : null;
   const a = st.scalar ? st.ds.scal[st.scalar] : null;
   const meta = st.ds.manifest.scalars.find(s => s.name === st.scalar);
   let lo = meta?.min ?? 0, hi = meta?.max ?? 1;
   if (st.range) { lo = st.range[0]; hi = st.range[1]; }
   $('rmin').value = a ? +lo.toPrecision(5) : ''; $('rmax').value = a ? +hi.toPrecision(5) : '';
+  for (const id of ['rmin', 'rmax', 'cmap', 'rauto']) $(id).disabled = !a;  // en modo (geometría) no hay campo que escalar
   const c = [0, 0, 0];
   for (const p of st.ds.parts) {
     const col = p.mesh.geometry.getAttribute('color'); const arr = col.array;
@@ -356,6 +405,14 @@ function applyColors() {
     col.needsUpdate = true;
   }
   drawLegend(a ? st.scalar : null, lo, hi); V.needs = true;
+  if (from) {  // transición de 400 ms entre el color anterior y el nuevo
+    const gen = V.gen, tgt = st.ds.parts.map(p => Float32Array.from(p.mesh.geometry.getAttribute('color').array)), t0 = performance.now();
+    st.ds.parts.forEach((p, i) => p.mesh.geometry.getAttribute('color').array.set(from[i]));
+    const step = t => { if (gen !== V.gen || !st.ds) return; const k = Math.min(1, (t - t0) / 400), e = k * (2 - k);
+      st.ds.parts.forEach((p, i) => { const col = p.mesh.geometry.getAttribute('color'), arr = col.array; for (let j = 0; j < arr.length; j++) arr[j] = from[i][j] + (tgt[i][j] - from[i][j]) * e; col.needsUpdate = true; });
+      V.needs = true; if (k < 1) requestAnimationFrame(step); };
+    requestAnimationFrame(step);
+  }
 }
 function drawLegend(name, lo, hi) {
   syncOverlays(); if (!name) return;
@@ -366,7 +423,7 @@ function drawLegend(name, lo, hi) {
   const m = Math.max(Math.abs(lo), Math.abs(hi)), sc = m >= 1e5 || (m > 0 && m < 1e-2), dec = hi - lo >= 100 ? 0 : hi - lo >= 10 ? 1 : hi - lo >= 1 ? 2 : 3;
   $('lgticks').innerHTML = [1, 0.75, 0.5, 0.25, 0].map(t => { const v = lo + (hi - lo) * t; return `<span>${(sc ? v.toExponential(2) : v.toFixed(dec)).replace('.', ',')}</span>`; }).join('');
 }
-$('scalar').onchange = () => { st.scalar = $('scalar').value; LS.set('scc_scalar', st.scalar); st.range = null; applyColors(); };
+$('scalar').onchange = () => { st.scalar = $('scalar').value; LS.set('scc_scalar', st.scalar); st.range = null; applyColors(true); };
 $('cmap').value = st.cmap; $('cmap').onchange = () => { st.cmap = $('cmap').value; LS.set('scc_cmap', st.cmap); applyColors(); };
 const setRange = () => { const a = parseFloat($('rmin').value), b = parseFloat($('rmax').value); if (Number.isFinite(a) && Number.isFinite(b) && b > a) { st.range = [a, b]; applyColors(); } else { toast('Máx debe ser mayor que Mín', 'warn'); applyColors(); } };
 $('rmin').onchange = setRange; $('rmax').onchange = setRange;
@@ -388,7 +445,7 @@ function updateClip() {
   if (V.bbox) { const n = { X: [-1, 0, 0], Y: [0, -1, 0], Z: [0, 0, -1] }[ax]; const i = 'XYZ'.indexOf(ax);
     const v = V.bbox.min.getComponent(i) + (V.bbox.max.getComponent(i) - V.bbox.min.getComponent(i)) * t;
     V.clip.normal.set(...n); V.clip.constant = v; }
-  for (const m of V.meshes) { m.material.clippingPlanes = on ? [V.clip] : []; m.material.needsUpdate = true; }
+  for (const m of V.meshes) { m.material.clippingPlanes = on ? [V.clip] : []; m.material.needsUpdate = true; const e = m.userData.part?.edges; if (e) { e.material.clippingPlanes = m.material.clippingPlanes; e.material.needsUpdate = true; } }
   V.needs = true;
 }
 $('clipon').onchange = updateClip; $('clipax').onchange = updateClip; $('clipv').oninput = updateClip;
@@ -453,7 +510,7 @@ async function loadTree(refresh) {
   $('treerefresh').disabled = false;
   if (!r.tree) { $('treestate').textContent = 'sin lectura: pulsa ↻ con el solver vivo (~10 s)'; $('simtree').innerHTML = ''; $('b-sim').textContent = ''; return; }
   const at = new Date(r.at * 1000);
-  $('treestate').textContent = `leído ${at.toDateString() === new Date().toDateString() ? 'a las ' + at.toLocaleTimeString('es', { hour: '2-digit', minute: '2-digit' }) : 'el ' + at.toLocaleString('es')}${r.from_disk ? ' · guardado' : ''}${r.alive ? '' : ' (solver apagado)'}`;
+  $('treestate').textContent = `${r.derived ? 'datos' : 'leído'} ${at.toDateString() === new Date().toDateString() ? 'a las ' + at.toLocaleTimeString('es', { hour: '2-digit', minute: '2-digit' }) : 'el ' + at.toLocaleString('es')}${r.derived ? ' · reconstruido del disco (sin solver; sin regiones ni modelos)' : r.from_disk ? ' · guardado' : ''}${r.alive ? '' : ' (solver apagado)'}`;
   $('b-sim').textContent = Object.values(r.tree).reduce((n, v) => n + v.length, 0);
   $('simtree').innerHTML = Object.entries(r.tree).map(([k, items]) => `<details><summary>${esc(KINDS[k] || k)} <span class="badge">${items.length}</span></summary><ul>${items.map(it => `<li><span>${esc(it.name)}</span>${it.type ? `<span class="t">${esc(it.type)}</span>` : ''}${it.value != null ? `<span class="v">${esc(it.value)}</span>` : ''}</li>`).join('')}</ul></details>`).join('');
 }
@@ -612,6 +669,7 @@ function onChatEvent(ev, ctx) {
   if (!ctx.login && ['text', 'result', 'error'].includes(ev.kind) && /401|not logged in|OAuth|auth login/i.test(ev.text || '')) { ctx.login = true; addMsg('err', 'La CLI de Claude Code no tiene sesión. En una terminal ejecuta: <code>claude auth login</code>'); }
 }
 async function sendChat(retry = false) {
+  if (document.documentElement.classList.contains('chat-off')) setChatOpen(true);
   const text = $('chattext').value.trim(); if (!text || st.chatting) return;
   $('chattext').value = ''; st.lastMsg = text; if (!retry) addMsg('user', esc(text));
   setChatting(true); $('chatstate').textContent = 'pensando…';
@@ -673,7 +731,7 @@ function viewerCmd(c) {
   if (c === 'rotor') { setRotor(!V.rotor); toast(V.rotor ? 'Rotor girando (animación del visor, 0,25 rev/s)' : 'Rotor detenido', 'ok'); return; }
   const sc = c === 'pressure' ? find(/^Pressure$/i) || find(/pressure/i) : find(/velocity/i);
   if (!sc) { toast('Este dataset no trae ese campo', 'warn'); return; }
-  st.scalar = sc.name; $('scalar').value = sc.name; LS.set('scc_scalar', sc.name); st.range = null; applyColors();
+  st.scalar = sc.name; $('scalar').value = sc.name; LS.set('scc_scalar', sc.name); st.range = null; applyColors(true);
   if (c === 'pressure') { if (!V.ghost) { V.ghost = true; LS.set('scc_ghost', '1'); applyGhost(); } const bl = st.ds.parts.find(p => /blade/i.test(p.name)); if (bl) flyTo(bl); }
   else fit();
 }
@@ -697,7 +755,20 @@ function propsFor(id) {
   if (id === 'scn') return (d.images || []).map(im => [im.label, new Date(im.mtime * 1000).toLocaleString('es', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })]);
   return [];
 }
+// resultados de un vistazo (última fila de convergencia.csv), con el mismo formato que la leyenda y Reportes
+function renderKpis() {
+  const cv = st.data?.convergencia, el = $('kpis');
+  if (!cv?.rows.length) { el.hidden = true; el.innerHTML = ''; return; }
+  const last = Object.fromEntries(cv.columns.map((c, i) => [c, cv.rows[cv.rows.length - 1][i]]));
+  const defs = [['H', 'H', 'm'], ['M', 'M', 'N·m'], ['eta', 'η', ''], ['continuity', 'continuidad', ''], ['iter', 'iter', '']];
+  const items = defs.filter(([k]) => last[k] != null).map(([k, l, u]) => {
+    const cls = k === 'continuity' ? (Math.abs(last[k]) < 1e-5 ? 'ok' : 'warn') : '';
+    return `<button class="kpi ${cls}" data-k="${k}" title="${esc(l)}: ver la gráfica en el dock">${esc(l)} <b>${k === 'iter' ? last[k] : sci(last[k])}</b>${u ? ` <span class="u">${u}</span>` : ''}</button>`; });
+  el.innerHTML = items.join(''); el.hidden = !items.length;
+  for (const b of el.querySelectorAll('.kpi')) b.onclick = () => { $('stage').classList.remove('dock-collapsed'); $('docktoggle').textContent = '▾'; openTab('plots'); };
+}
 function renderOutline() {
+  renderKpis();
   const ul = $('outline'); if (!st.data) { ul.innerHTML = ''; return; }
   const cnt = { geo: st.ds ? st.ds.parts.length : '', scn: st.data.images.length || '', rep: st.data.convergencia ? 'H M' : '', plots: st.data.convergencia?.rows.length || '' };
   ul.innerHTML = OUT_NODES.map(([id, n]) => `<li role="option" tabindex="0" data-n="${id}" aria-selected="${id === outSel}"><span>${n}</span><span class="c">${esc(cnt[id] ?? '')}</span></li>`).join('');
@@ -715,6 +786,12 @@ function selectNode(id) {
   if (id === 'plots') openTab('plots'); else if (id === 'scn' && st.data.images[0]) showView(st.data.images[0].file); else if (id === 'geo') showView('3d');
 }
 
+// chat plegable (solo escritorio): el visor gana ancho; se abre solo al enviar un mensaje
+function setChatOpen(on) {
+  document.documentElement.classList.toggle('chat-off', !on); $('chattoggle').setAttribute('aria-pressed', on); LS.set('scc_chatopen', on ? '1' : '0'); V.needs = true;
+}
+$('chattoggle').onclick = () => setChatOpen(document.documentElement.classList.contains('chat-off'));
+setChatOpen(LS.get('scc_chatopen', '1') === '1');
 // ---------------------------------------------------------------- tema y teclado
 const theme = LS.get('scc_theme', 'light'); document.documentElement.dataset.theme = theme;
 $('theme').onclick = () => { const nx = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark'; document.documentElement.dataset.theme = nx; LS.set('scc_theme', nx); };
@@ -722,7 +799,7 @@ addEventListener('keydown', e => {
   if (e.key === 'Escape') { $('lightbox').hidden = true; return; }
   if (e.ctrlKey || e.metaKey || e.altKey || e.target.matches('input,textarea,select')) return;
   if (e.key === 'f' || e.key === 'F') fit(); else if (e.key === '1') setView('iso'); else if (e.key === '2') setView('axial'); else if (e.key === '3') setView('lateral');
-  else if (e.key === '`') $('docktoggle').click();
+  else if (e.key === '`') $('docktoggle').click(); else if (e.key === 'c' || e.key === 'C') $('chattoggle').click();
 });
 
 // ---------------------------------------------------------------- arranque
