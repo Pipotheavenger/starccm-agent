@@ -163,8 +163,8 @@ SERVIDOR_MD = ROOT / "vm" / "SERVIDOR.md"
 def _server_info() -> dict:
     """Resumen de vm/SERVIDOR.md: host del ssh y las primeras filas del inventario. Allí no hay claves."""
     info = {"host": None, "user": None, "rows": [], "label": "Servidor Linux", "version": "2502",
-            "installed": True, "install": "/opt/Siemens/20.02.008-R8",  # ya instalado (vm/SERVIDOR.md); falta la ejecución remota
-            "ready": os.environ.get("STARCCM_REMOTE_READY", "0") == "1"}  # ponytail: la ejecución remota la monta otra sesión
+            "installed": True, "install": "/opt/Siemens/20.02.008-R8",  # vm/SERVIDOR.md
+            "ready": True, "ssh": scc.SSH_HOST, "remote_dir": scc.REMOTE_DIR}  # mcp_server: server_start(where="server")
     if not SERVIDOR_MD.is_file():
         return info
     txt = SERVIDOR_MD.read_text(encoding="utf-8", errors="replace")
@@ -346,17 +346,16 @@ def scene_png(fname: str) -> FileResponse:
 
 
 def _solver_alive() -> bool:
-    st = scc._state()
-    return bool(st.get("pid")) and scc._pid_alive(st["pid"]) and scc._port_open(st.get("port", 0))
+    return scc.alive()  # local o remoto (por SSH, cacheado 8 s)
 
 
 def _solver_busy_409() -> None:
     if not _solver_alive():
-        raise HTTPException(409, "no hay solver vivo: pide a Claude que lo arranque (server_start)")
+        raise HTTPException(409, "no hay solver vivo: pide a la IA que lo arranque (server_start)")
     # ponytail: el candado del MCP es por proceso; si Claude está inyectando una macro desde el chat,
     # un segundo cliente batch chocaría con la suya. Mientras el chat trabaja, no se toca el solver desde aquí.
     if CHAT_LOCK.locked():
-        raise HTTPException(409, "Claude está usando el solver ahora; espera a que termine")
+        raise HTTPException(409, "La IA está usando el solver ahora; espera a que termine")
 
 
 class SceneReq(BaseModel):
@@ -671,9 +670,10 @@ def _log_tail(n: int = 12) -> list[str]:
 def status() -> dict:
     st = scc._state()
     pid = st.get("pid")
-    alive = bool(pid) and scc._pid_alive(pid) and scc._port_open(st.get("port", 0))
+    alive = scc.alive(st)
     last = _last_activity()
     return {"alive": alive, "pid": pid, "port": st.get("port"), "host": st.get("host"), "sim": st.get("sim"),
+            "where": st.get("where", "local") if pid else None, "rsim": st.get("rsim"),
             "started": st.get("started"), "np": st.get("np"), "startup_seconds": st.get("startup_seconds"),
             "idle_min": round((time.time() - last) / 60, 1) if (alive and last) else None,
             "idle_limit_min": scc.IDLE_MIN, "stale": bool(pid) and not alive,
@@ -688,7 +688,7 @@ class StopReq(BaseModel):
 @app.post("/api/server/stop")
 def api_server_stop(req: StopReq) -> dict:
     if CHAT_LOCK.locked():  # no inyectar saveState+kill mientras Claude tiene una macro en marcha
-        raise HTTPException(409, "Claude está usando el solver; pulsa Detener en el chat primero")
+        raise HTTPException(409, "La IA está usando el solver; pulsa Detener en el chat primero")
     if not STOP_LOCK.acquire(blocking=False):
         raise HTTPException(409, "ya se está apagando")
     try:
@@ -755,7 +755,7 @@ def _chat_events(req: ChatReq):
         err_tail: deque[str] = deque(maxlen=40)
         err_thread = threading.Thread(target=lambda: [err_tail.append(ln) for ln in p.stderr], daemon=True)
         err_thread.start()
-        yield _sse({"kind": "status", "text": "Claude Code arrancando…"})
+        yield _sse({"kind": "status", "text": "La IA está arrancando…"})
         t0 = time.time()
         while True:
             try:

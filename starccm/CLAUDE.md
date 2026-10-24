@@ -64,7 +64,7 @@ sin licencia, ~20 s) debe pasar antes de entregar. Tools:
 
 | tool | input | output |
 |---|---|---|
-| `server_start(sim_path?, name?)` | .sim a abrir (se copia a `sims/`) o vacío | pid, host:port, sim, segundos. Reutiliza el vivo |
+| `server_start(sim_path?, name?, where?)` | .sim a abrir (se copia a `sims/`) o vacío; `where` = `local` \| `server` \| vacío (lo elegido en la UI) | pid, host:port, sim, segundos. Reutiliza el vivo |
 | `server_stop(save=true)` | | guarda, `sim.kill()`, limpia `.server.json` |
 | `server_status()` | | vivo o no, minutos de inactividad |
 | `inspect(path?)` | `tree`, `regions`, `physics`, `mesh_ops`, `parts`, `reports`, `monitors`, `scenes`, `solver` | JSON con nombres, tipos y valores |
@@ -104,6 +104,18 @@ Reglas del servidor:
 - Siempre trabajar sobre una copia en `sims/`, nunca sobre el .sim original del usuario.
 - Config por env o por `starccm/.env` (ver `.env.example`): `STARCCM_PODKEY`, `STARCCM_LICPATH`,
   `STARCCM_PORT`, `STARCCM_NP`, `STARCCM_IDLE_MIN`, `STARCCM_HOME`, `STARCCM_EXE`.
+
+## Ejecución remota (servidor Linux, STAR-CCM+ 2502)
+
+El MCP sigue en este PC; con `where="server"` (o «Servidor» elegido en la UI → `.ui-settings.json`, o
+`STARCCM_RUN_WHERE=server`) `server_start` lanza por SSH `starccm+ -server` en `investigacion@172.17.76.78`
+(`STARCCM_SSH`, `STARCCM_REMOTE_DIR`, llave del usuario; licencia y `STARCCM_HOME` del `~/.starccm-agent.env`
+del servidor: la clave no sale de allí). Cada macro se sube por stdin, se inyecta con el cliente batch DEL
+SERVIDOR (el 2410 del PC no conecta a un 2502) y su stdout vuelve en vivo al `.out` local; las rutas de
+`starccm/` dentro del Java se traducen a `REMOTE_DIR` y lo que la macro escriba en `cases/` o `macros/` se
+trae con un `tar` por SSH. El `.sim` vive en `REMOTE_DIR/sims` (se sube solo si falta o cambió de tamaño:
+~11 min por 158 MB) y `save`/`server_stop` guardan allí. `.server.json` lleva `where`, `rsim`, `rlog`.
+Detalle y medidas: `vm/SERVIDOR.md`. Comprobación sin licencia: `bash vm/remote_check.sh`.
 
 ## Interfaz web: `ui/`
 

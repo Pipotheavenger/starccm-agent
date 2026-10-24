@@ -189,6 +189,148 @@ def _kill_tree(pid: int) -> None:
             pass
 
 
+# ----------------------------------------------------------------------------- ejecución remota (servidor Linux)
+# El MCP sigue en este PC. En modo «server» (elegido en ui/ → .ui-settings.json, o STARCCM_RUN_WHERE=server, o el
+# argumento where de server_start) el solver corre en el servidor por SSH con la llave del usuario:
+#   - starccm+ -server en el servidor (licencia y STARCCM_HOME de su ~/.starccm-agent.env: la clave no sale del servidor)
+#   - cada macro se sube por stdin, se inyecta con el cliente batch DEL SERVIDOR (2502; el de 2410 no conecta) y su
+#     stdout vuelve EN VIVO al .out local (la pestaña Salida de ui/ funciona igual)
+#   - las rutas de starccm/ dentro de la macro se traducen a REMOTE_DIR, y lo que la macro escriba en cases/ o
+#     macros/ (PNG, CSV, EnSight) se trae de vuelta con un tar por SSH al terminar
+#   - el .sim vive en REMOTE_DIR/sims (subirlo cuesta ~11 min por 158 MB): se sube solo si falta o cambió de tamaño
+SSH_HOST = os.environ.get("STARCCM_SSH", "investigacion@172.17.76.78")
+REMOTE_DIR = os.environ.get("STARCCM_REMOTE_DIR", "/home/investigacion/starccm-agent")
+SETTINGS_FILE = HERE / ".ui-settings.json"
+_SSH_OPTS = ["-o", "BatchMode=yes", "-o", "ConnectTimeout=10", "-o", "ServerAliveInterval=30", "-o", "StrictHostKeyChecking=accept-new", "-o", "LogLevel=ERROR"]
+_REMOTE_ENV = "set -a; . ~/.starccm-agent.env; set +a; "  # STARCCM_HOME, STARCCM_PODKEY, STARCCM_LICPATH, STARCCM_NP
+_REMOTE_EXE = '"$STARCCM_HOME/star/bin/starccm+"'
+_REMOTE_LIC = '-power -podkey "$STARCCM_PODKEY" -licpath "$STARCCM_LICPATH"'
+
+
+def run_where() -> str:
+    """local | server: env STARCCM_RUN_WHERE manda; si no, lo elegido en la interfaz."""
+    w = os.environ.get("STARCCM_RUN_WHERE", "").strip().lower()
+    if w in ("local", "server"):
+        return w
+    try:
+        w = json.loads(SETTINGS_FILE.read_text(encoding="utf-8")).get("run_where")
+    except Exception:  # noqa: BLE001
+        w = None
+    return w if w in ("local", "server") else "local"
+
+
+def _ssh_cmd(remote_cmd: str) -> list[str]:
+    return [shutil.which("ssh") or "ssh", *_SSH_OPTS, SSH_HOST, remote_cmd]
+
+
+def _ssh(remote_cmd: str, timeout: float = 60, input: str | None = None) -> subprocess.CompletedProcess:
+    return subprocess.run(_ssh_cmd(remote_cmd), capture_output=True, text=True, timeout=timeout, input=input,
+                          encoding="utf-8", errors="replace")
+
+
+def _rpath(p: str | os.PathLike) -> str:
+    """Ruta local dentro de starccm/ -> ruta en el servidor (misma estructura bajo REMOTE_DIR)."""
+    rel = Path(p).resolve().relative_to(HERE.resolve())
+    return REMOTE_DIR + "/" + rel.as_posix()
+
+
+def _translate(body: str) -> str:
+    """Reescribe en el Java las rutas de starccm/ (con barra o barra invertida, en cualquier caja de letra de unidad) a REMOTE_DIR."""
+    loc = _jpath(HERE.resolve())
+    rx = re.escape(loc).replace("/", r"[/\\]+") + r"""([^"'\s]*)"""
+    return re.sub(rx, lambda m: REMOTE_DIR + re.sub(r"[/\\]+", "/", m.group(1)), body, flags=re.I)
+
+
+def _qs(s: str) -> str:
+    return "'" + s.replace("'", "'\"'\"'") + "'"
+
+
+_alive_cache: dict = {}
+
+
+def _remote_alive(st: dict) -> bool:
+    """¿Sigue vivo el starccm+ -server remoto y escucha su puerto? (cacheado 8 s: la UI sondea cada 5 s)."""
+    key = (st.get("pid"), st.get("port"))
+    hit = _alive_cache.get(key)
+    if hit and time.time() - hit[0] < 8:
+        return hit[1]
+    try:
+        r = _ssh(f"kill -0 {int(st['pid'])} 2>/dev/null && (exec 3<>/dev/tcp/127.0.0.1/{int(st['port'])}) 2>/dev/null && echo VIVO", timeout=20)
+        ok = "VIVO" in r.stdout
+    except Exception:  # noqa: BLE001
+        ok = False
+    _alive_cache[key] = (time.time(), ok)
+    return ok
+
+
+def alive(st: dict | None = None) -> bool:
+    """Servidor vivo, local o remoto. La usan las tools y ui/server.py."""
+    st = _state() if st is None else st
+    if not st.get("pid"):
+        return False
+    if st.get("where") == "server":
+        return _remote_alive(st)
+    return _pid_alive(st["pid"]) and _port_open(st.get("port", 0))
+
+
+def _pull_new(marker: str) -> list[str]:
+    """Trae del servidor lo que la macro escribió en cases/ y macros/ (más nuevo que marker) a las mismas rutas locales."""
+    import tarfile
+    find = (f"cd {_qs(REMOTE_DIR)} && find cases macros -type f -newer {_qs(marker)} ! -name '*.java' ! -name '*.class' "
+            f"! -name '.mark_*' 2>/dev/null")
+    r = _ssh(find, timeout=60)
+    files = [f for f in r.stdout.splitlines() if f and ".." not in f]
+    if not files:
+        return []
+    p = subprocess.Popen(_ssh_cmd(f"cd {_qs(REMOTE_DIR)} && tar cf - " + " ".join(_qs(f) for f in files)), stdout=subprocess.PIPE)
+    got = []
+    with tarfile.open(fileobj=p.stdout, mode="r|") as tf:
+        for m in tf:
+            dst = (HERE / m.name).resolve()
+            if not m.isfile() or HERE.resolve() not in dst.parents:
+                continue
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            with tf.extractfile(m) as fi, open(dst, "wb") as fo:
+                shutil.copyfileobj(fi, fo)
+            got.append(m.name)
+    p.wait(timeout=60)
+    return got
+
+
+def _inject_remote(st: dict, src: Path, tag: str, timeout: float) -> tuple[int, str, bool, list[str]]:
+    """Sube la macro, la corre con el cliente batch del servidor con su stdout en vivo al .out local, y trae lo nuevo."""
+    body = _translate(src.read_text(encoding="utf-8"))
+    rdir = f"{REMOTE_DIR}/macros"
+    rsrc = f"{rdir}/{src.name}"
+    marker = f"{rdir}/.mark_{tag}"
+    # carpetas de destino que la macro vaya a usar (PNG, CSV, .case): el servidor no tiene las de este PC
+    dirs = {REMOTE_DIR + "/" + d for d in ("sims", "macros", "cases")}
+    for m in re.finditer(re.escape(REMOTE_DIR) + r"/[^\"'\s]+", body):
+        dirs.add(m.group(0).rsplit("/", 1)[0])
+    prep = "mkdir -p " + " ".join(_qs(d) for d in sorted(dirs)) + f" && cat > {_qs(rsrc)} && touch {_qs(marker)}"
+    r = _ssh(prep, timeout=60, input=body)
+    if r.returncode != 0:
+        raise RuntimeError(f"no pude subir la macro al servidor: {r.stderr.strip()[-300:]}")
+    run = (_REMOTE_ENV + f"cd {_qs(rdir)} && {_REMOTE_EXE} -host localhost:{int(st['port'])} -batch {_qs(src.name)} -noexit {_REMOTE_LIC}; "
+           f"rc=$?; rm -f {_qs(marker)}.done; exit $rc")
+    killed = False
+    with open(src.with_suffix(".out"), "w", encoding="utf-8", errors="replace") as fo:
+        p = subprocess.Popen(_ssh_cmd(run), stdout=fo, stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace")
+        try:
+            _, err = p.communicate(timeout=timeout)
+            rc = p.returncode
+        except subprocess.TimeoutExpired:
+            _ssh(f"pkill -f {_qs(src.name)}", timeout=30)  # el cliente batch remoto de ESTA macro
+            p.kill()
+            rc, err, killed = -1, f"timeout {timeout}s: cliente batch remoto matado; la salida puede estar incompleta", True
+    try:
+        pulled = _pull_new(marker)
+    except Exception as e:  # noqa: BLE001
+        pulled, err = [], (err or "") + f"\n[pull] {e}"
+    _ssh(f"rm -f {_qs(marker)}", timeout=30)
+    return rc, err or "", killed, pulled
+
+
 def _touch() -> None:
     """Marca actividad en memoria y en disco (mtime de .server.json): el watchdog de cualquier proceso la ve."""
     global _last_tool
@@ -217,7 +359,7 @@ def idle_seconds() -> float:
 
 def _idle_stop() -> None:
     st = _state()
-    if not (st.get("pid") and idle_seconds() > IDLE_MIN * 60 and _pid_alive(st["pid"])):
+    if not (st.get("pid") and idle_seconds() > IDLE_MIN * 60 and alive(st)):
         return
     with _lock:  # si una tool de este proceso tenía el candado, se reevalúa al liberarse
         if idle_seconds() <= IDLE_MIN * 60:
@@ -310,7 +452,8 @@ def _precompile(src: Path) -> str | None:
 def _inject(body: str, imports: str = "", timeout: float = 3600) -> dict:
     """Escribe la macro, la ejecuta con el cliente batch contra el servidor y devuelve su salida."""
     st = _state()
-    if not st.get("pid") or not _pid_alive(st["pid"]):
+    remote = st.get("where") == "server"
+    if not st.get("pid") or not (alive(st) if remote else _pid_alive(st["pid"])):
         raise RuntimeError("No hay servidor de STAR-CCM+ vivo. Usa server_start primero.")
     MACROS.mkdir(exist_ok=True)
     tag = datetime.now().strftime("%Y%m%d_%H%M%S_%f")[:-3]
@@ -325,6 +468,19 @@ def _inject(body: str, imports: str = "", timeout: float = 3600) -> dict:
         _touch()
         return {"ok": False, "stdout": "", "stderr": "", "exception": "javac: no compila",
                 "trace": err_c, "seconds": round(time.time() - t0, 2), "macro": str(src), "returncode": 1}
+    pulled: list[str] = []
+    if remote:
+        rc, err, killed, pulled = _inject_remote(st, src, tag, timeout)
+        if pulled:
+            _log(f"remoto: {len(pulled)} archivo(s) traídos del servidor: {', '.join(pulled[:6])}")
+        out_file = src.with_suffix(".out")
+    else:
+        rc, err, killed, out_file = _inject_local(st, src, timeout)
+    return _inject_result(st, src, tag, t0, rc, err, killed, out_file, pulled)
+
+
+def _inject_local(st: dict, src: Path, timeout: float) -> tuple[int, str, bool, Path]:
+    killed = False
     cmd = _starccm_cmd() + ["-host", f"localhost:{st['port']}", "-batch", str(src), "-noexit"] + _lic_flags()
     # El stdout del cliente va EN VIVO a <macro>.out (la pestaña Salida de ui/ lo sigue mientras itera);
     # una macro está en marcha mientras su .out no contiene AGENT_END. La UI enmascara la clave al leerlo.
@@ -344,6 +500,10 @@ def _inject(body: str, imports: str = "", timeout: float = 3600) -> dict:
                 e2 = ""
             rc, err = -1, f"timeout {timeout}s: cliente batch (pid {p.pid}) matado; la salida puede estar incompleta. {e2 or ''}"
             killed = True
+    return rc, err, killed, out_file
+
+
+def _inject_result(st: dict, src: Path, tag: str, t0: float, rc: int, err: str, killed: bool, out_file: Path, pulled: list[str]) -> dict:
     out = out_file.read_text(encoding="utf-8", errors="replace")
     secs = round(time.time() - t0, 2)
     # Salida de la macro: entre marcadores, del stdout del cliente; si no, del log del servidor.
@@ -364,6 +524,7 @@ def _inject(body: str, imports: str = "", timeout: float = 3600) -> dict:
         "macro": str(src),
         "returncode": rc,
         **({"client_killed": True} if killed else {}),
+        **({"where": "server", "pulled": pulled} if st.get("where") == "server" else {}),
     }
 
 
@@ -378,6 +539,14 @@ def _trace(text: str) -> str:
 
 
 def _tail_log(st: dict, n: int = 200_000) -> str:
+    if st.get("where") == "server" and st.get("rlog"):  # log del servidor remoto; se deja copia local para ui/
+        try:
+            txt = _ssh(f"tail -c {int(n)} {_qs(st['rlog'])}", timeout=30).stdout
+            if st.get("log"):
+                Path(st["log"]).write_text(_redact(txt[-200_000:]), encoding="utf-8")
+            return txt
+        except Exception:  # noqa: BLE001
+            return ""
     p = Path(st.get("log") or "")
     if not p.is_file():
         return ""
@@ -398,15 +567,19 @@ mcp = FastMCP("starccm")
 
 
 @mcp.tool()
-def server_start(sim_path: str = "", name: str = "") -> dict:
+def server_start(sim_path: str = "", name: str = "", where: str = "") -> dict:
     """Levanta el servidor de STAR-CCM+ (o reutiliza el vivo). sim_path: .sim a abrir; se copia a
     sims/<name>.sim y se trabaja sobre la copia, nunca sobre el original. Vacío = simulación nueva.
-    Devuelve host:port, pid, sim y segundos de arranque. Un solo servidor a la vez."""
+    Devuelve host:port, pid, sim y segundos de arranque. Un solo servidor a la vez.
+    where: local (este PC) | server (servidor Linux por SSH) | vacío = lo elegido en la interfaz (ui/)."""
     with _lock:
         _touch()
         st = _state()
-        if st.get("pid") and _pid_alive(st["pid"]) and _port_open(st["port"]):
+        if st.get("pid") and alive(st):
             return {"reused": True, **st}
+        where = (where or run_where()).strip().lower()
+        if where == "server":
+            return _server_start_remote(sim_path, name, st)
         if st.get("pid"):
             _log(f"servidor {st.get('pid')} muerto; limpio .server.json")
             STATE_FILE.unlink(missing_ok=True)
@@ -467,6 +640,119 @@ def server_start(sim_path: str = "", name: str = "") -> dict:
         return st
 
 
+def _server_start_remote(sim_path: str, name: str, old: dict) -> dict:
+    """server_start en el servidor Linux: sube el .sim si falta (o cambió de tamaño) y lanza starccm+ -server con nohup."""
+    if old.get("pid"):
+        _log(f"servidor {old.get('pid')} ({old.get('where', 'local')}) muerto; limpio .server.json")
+        STATE_FILE.unlink(missing_ok=True)
+    SIMS.mkdir(exist_ok=True)
+    t0 = time.time()
+    chk = _ssh(_REMOTE_ENV + f'mkdir -p {_qs(REMOTE_DIR)}/sims {_qs(REMOTE_DIR)}/macros {_qs(REMOTE_DIR)}/cases && test -x {_REMOTE_EXE} && '
+               f'test -n "$STARCCM_PODKEY" && echo NP=${{STARCCM_NP:-14}} && (exec 3<>/dev/tcp/127.0.0.1/{PORT}) 2>/dev/null && echo PUERTO_OCUPADO; true', timeout=30)
+    if "NP=" not in chk.stdout:
+        raise RuntimeError(f"El servidor {SSH_HOST} no está listo (SSH, STARCCM_HOME o STARCCM_PODKEY en ~/.starccm-agent.env): "
+                           f"{(chk.stderr or chk.stdout).strip()[-300:]}. Comprueba con: bash vm/remote_check.sh")
+    if "PUERTO_OCUPADO" in chk.stdout:
+        raise RuntimeError(f"Puerto {PORT} ocupado en {SSH_HOST}: ¿quedó un starccm+ vivo? (bash vm/remote_check.sh)")
+    np_ = int(re.search(r"NP=(\d+)", chk.stdout).group(1))
+    sim = rsim = None
+    uploaded = None
+    if sim_path or name:
+        srcp = Path(sim_path) if sim_path else None
+        if srcp is not None and not srcp.is_file():
+            raise FileNotFoundError(f"No existe {sim_path}")
+        sim = SIMS / f"{name or srcp.stem}.sim"
+        rsim = _rpath(sim)
+        if srcp is not None:
+            if srcp.resolve() != sim.resolve():
+                shutil.copy2(srcp, sim)
+            rsize = _ssh(f"stat -c %s {_qs(rsim)} 2>/dev/null || echo 0", timeout=30).stdout.strip() or "0"
+            if int(rsize.split()[-1]) != sim.stat().st_size:  # falta o es otro: subirlo (lento: ~0,24 MB/s medido)
+                t1 = time.time()
+                r = subprocess.run([shutil.which("scp") or "scp", *_SSH_OPTS, str(sim), f"{SSH_HOST}:{rsim}"],
+                                   capture_output=True, text=True, timeout=7200)
+                if r.returncode != 0:
+                    raise RuntimeError(f"scp del .sim falló: {r.stderr.strip()[-300:]}")
+                uploaded = round(time.time() - t1, 1)
+    stem = sim.stem if sim else "nuevo"
+    rlog = f"{REMOTE_DIR}/sims/{stem}.server.log"
+    load = f"-load {_qs(rsim)}" if rsim and sim and sim.is_file() else ""
+    # «cd X && nohup … &» mandaría al fondo la lista entera: esa subcapa sin redirigir retiene el stdout del SSH y lo cuelga
+    launch = (_REMOTE_ENV + f"cd {_qs(REMOTE_DIR)}/sims || exit 1; setsid nohup {_REMOTE_EXE} -server -port {PORT} -np {np_} {_REMOTE_LIC} {load} "
+              f"> {_qs(rlog)} 2>&1 < /dev/null & echo PID=$!")
+    r = _ssh(launch, timeout=60)
+    m = re.search(r"PID=(\d+)", r.stdout)
+    if not m:
+        raise RuntimeError(f"no pude lanzar starccm+ en {SSH_HOST}: {r.stderr.strip()[-300:]}")
+    st = {"where": "server", "ssh": SSH_HOST, "pid": int(m.group(1)), "port": PORT, "host": SSH_HOST.split("@")[-1],
+          "sim": str(sim) if sim else None, "rsim": rsim, "log": str(SIMS / f"{stem}.server.log"), "rlog": rlog,
+          "started": datetime.now().isoformat(timespec="seconds"), "np": np_,
+          "cmd": f"ssh {SSH_HOST} starccm+ -server -port {PORT} -np {np_} -power -podkey *** {load}".strip(),
+          **({"uploaded_seconds": uploaded} if uploaded is not None else {})}
+    _write_state(st)
+    deadline = time.time() + 600
+    while time.time() < deadline:
+        tail = _tail_log(st, 20000)
+        if "Server::start" in tail:
+            break
+        if not _ssh(f"kill -0 {st['pid']} 2>/dev/null && echo SI", timeout=20).stdout.strip():
+            STATE_FILE.unlink(missing_ok=True)
+            raise RuntimeError(f"starccm+ remoto terminó al arrancar. Cola del log:\n{_redact(tail)[-3000:]}")
+        time.sleep(2)
+    else:
+        _ssh(f"kill {st['pid']}", timeout=20)
+        STATE_FILE.unlink(missing_ok=True)
+        raise RuntimeError("El servidor remoto no arrancó en 600 s")
+    st["startup_seconds"] = round(time.time() - t0, 1)
+    _write_state(st)
+    _alive_cache.clear()
+    init = ("AutoSave as = sim.getSimulationIterator().getAutoSave();\n"
+            "as.setAutoSaveBatch(false); as.setAutoSaveMesh(false);\n"
+            'sim.println("INIT autosave off");\n')
+    try:
+        st["init"] = _inject(init, timeout=600)["stdout"][-200:]
+    except Exception as e:  # noqa: BLE001
+        st["init"] = f"init falló: {e}"
+    _write_state(st)
+    _log(f"servidor REMOTO {SSH_HOST} pid={st['pid']} puerto={PORT} np={np_} sim={rsim} en {st['startup_seconds']}s"
+         f"{f' (subida del .sim {uploaded}s)' if uploaded is not None else ''}; {st['init']}")
+    return st
+
+
+def _server_stop_remote(st: dict, save: bool, result: dict) -> dict:
+    """server_stop en el servidor Linux: guarda allí (el .sim no se baja: tarda; queda en REMOTE_DIR/sims)."""
+    if alive(st):
+        if save and st.get("rsim"):
+            sp = _jstr(st["rsim"])
+            try:
+                r = _inject(f'sim.saveState("{sp}");\nsim.println("SAVED " + "{sp}");\n', timeout=1800)
+                ok, err = r["ok"] and "SAVED" in (r["stdout"] or ""), r.get("exception") or r.get("stderr") or r.get("stdout")
+            except Exception as e:  # noqa: BLE001
+                ok, err = False, str(e)
+            if not ok:
+                _log(f"server_stop remoto: guardado falló, servidor sigue vivo: {err}")
+                return {"stopped": False, "saved": None, "save_error": str(err)[:500],
+                        "reason": "no se pudo guardar; el servidor sigue vivo (save=False apaga sin guardar)"}
+            result["saved"] = st["rsim"]
+        try:
+            result["stdout"] = _inject("sim.kill();\n", timeout=1800)["stdout"]
+        except Exception as e:  # noqa: BLE001
+            result["kill_error"] = str(e)
+    for _ in range(30):
+        if not _ssh(f"kill -0 {int(st['pid'])} 2>/dev/null && echo SI", timeout=20).stdout.strip():
+            break
+        time.sleep(2)
+    else:
+        _ssh(f"pkill -TERM -P {int(st['pid'])}; kill -TERM {int(st['pid'])}", timeout=20)
+        result["forced"] = True
+    _alive_cache.clear()
+    _tail_log(st)  # copia final del log remoto para la pestaña Salida
+    STATE_FILE.unlink(missing_ok=True)
+    result["where"] = "server"
+    _log(f"servidor REMOTO {st['pid']} apagado {result}")
+    return result
+
+
 @mcp.tool()
 def server_stop(save: bool = True) -> dict:
     """Guarda (si save) y apaga el servidor. Limpia .server.json."""
@@ -476,6 +762,8 @@ def server_stop(save: bool = True) -> dict:
         if not st.get("pid"):
             return {"stopped": False, "reason": "no había servidor"}
         result = {"stopped": True, "saved": None}
+        if st.get("where") == "server":
+            return _server_stop_remote(st, save, result)
         if _pid_alive(st["pid"]) and _port_open(st["port"]):
             if save and st.get("sim"):
                 # el guardado va en su propia macro: si falla, el servidor sigue vivo y el trabajo no se pierde
@@ -515,8 +803,7 @@ def server_stop(save: bool = True) -> dict:
 def server_status() -> dict:
     """Estado del servidor: pid, puerto, sim, vivo o no, minutos de inactividad."""
     st = _state()
-    alive = bool(st.get("pid")) and _pid_alive(st["pid"]) and _port_open(st.get("port", 0))
-    return {"alive": alive, "idle_min": round((time.time() - _last_tool) / 60, 1), **st}
+    return {"alive": alive(st), "idle_min": round(idle_seconds() / 60, 1), "run_where": run_where(), **st}
 
 
 def _jpath(p: str | os.PathLike) -> str:
@@ -711,8 +998,11 @@ def save(path: str = "") -> dict:
         r = _inject(body, timeout=1800)
         if r["ok"]:
             st["sim"] = str(target)
+            if st.get("where") == "server":
+                st["rsim"] = _rpath(target)  # el .sim guardado queda en el servidor
             _write_state(st)
     return {"ok": r["ok"], "sim": str(target), "seconds": r["seconds"],
+            **({"remote_sim": st.get("rsim")} if st.get("where") == "server" else {}),
             **({"exception": r["exception"]} if r["exception"] else {})}
 
 
@@ -846,6 +1136,7 @@ def docs_search(query: str, max_classes: int = 5) -> dict:
 
 # ----------------------------------------------------------------------------- selftest
 def _selftest() -> int:
+    os.environ["STARCCM_RUN_WHERE"] = "local"  # nunca el servidor remoto (ni licencia) desde el selftest
     global EXE, PORT, SIMS, MACROS, STATE_FILE, AGENT_LOG
     import tempfile
     fake = HERE / "tests" / "fake_starccm.py"
@@ -922,6 +1213,14 @@ def _selftest() -> int:
     check(not any(p.suffix in (".log", ".out", ".json") and "FAKE" in p.read_text(encoding="utf-8", errors="replace")[:400] for p in new if p.is_file()),
           "sims/, macros/ y .server.json reales sin rastro del starccm+ falso")
     shutil.rmtree(tmp, ignore_errors=True)
+    # modo remoto: solo traducción de rutas y decisión local/servidor (sin red ni licencia)
+    loc = _jpath(HERE.resolve())
+    tr = _translate(f'a("{loc}/cases/c/images/x.png"); b("{loc.upper()}\\\\macros\\\\r.csv"); c("C:/otra/ruta")')
+    check(f'a("{REMOTE_DIR}/cases/c/images/x.png")' in tr and f'b("{REMOTE_DIR}/macros/r.csv")' in tr and 'c("C:/otra/ruta")' in tr,
+          "remoto: rutas de starccm/ traducidas a REMOTE_DIR (barras y mayúsculas), las demás intactas")
+    check(_rpath(HERE / "sims" / "x.sim") == f"{REMOTE_DIR}/sims/x.sim", "remoto: _rpath de sims/")
+    check(run_where() == "local", "STARCCM_RUN_WHERE=local manda sobre la elección de la interfaz (el selftest nunca va al servidor)")
+    check(not alive({"where": "server"}), "alive() sin pid remoto = False sin tocar la red")
     print(f"selftest: {len(fails)} fallos" if fails else "selftest: todo en verde")
     return 1 if fails else 0
 
