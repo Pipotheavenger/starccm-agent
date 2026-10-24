@@ -283,3 +283,9 @@ dialog label.check{flex-direction:row;align-items:center;gap:6px;color:var(--fg)
 .nclist li{display:flex;align-items:center;gap:6px;padding:1px 0}
 .nclist li .n{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .nclist li .c{font-family:var(--mono);color:var(--mut)}
+
+/* pasos de la IA en el chat: una línea legible por herramienta, el detalle plegado */
+.m.step{align-self:flex-start;display:flex;flex-wrap:wrap;align-items:baseline;gap:6px;background:transparent;border:0;border-left:2px solid var(--acc);border-radius:0;padding:2px 8px;font-size:12px;color:var(--fg);white-space:normal}
+.m.step .ic{color:var(--acc);width:12px} .m.step.ok .ic{color:var(--ok)} .m.step.bad{border-left-color:var(--err)} .m.step.bad .ic{color:var(--err)}
+.m.step .dur{color:var(--mut);font-family:var(--mono);font-size:11px}
+.m.step details{flex-basis:100%;font-family:var(--mono);font-size:11px;color:var(--mut)} .m.step summary{cursor:pointer;width:fit-content}

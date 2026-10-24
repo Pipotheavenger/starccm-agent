@@ -101,6 +101,8 @@ CHAT_SYSTEM = (
     "(PATTERN «.», FUNCS «Pressure,TotalPressure,Velocity,WallYplus», OUT cases/<caso>/surfaces/_raw/superficies/"
     "superficies.case): el visor las convierte solo; y escribe cases/<caso>/RESUMEN.md (geometría, malla, física, "
     "resultados y tiempos en tablas, como cases/cursocfturbo/RESUMEN.md). Si algo falla dos veces, para y explica. "
+    "NARRA: el usuario solo ve el chat. Antes de CADA herramienta escribe UNA frase corta (máx. 12 palabras) de "
+    "qué vas a hacer y por qué; tras un resultado importante, una línea con el dato clave (celdas, H, residuo…). "
     "Termina siempre con una línea: qué quedó hecho y qué cambió."
 )
 
@@ -802,6 +804,40 @@ class ChatReq(BaseModel):
     case: str | None = Field(None, max_length=100)
 
 
+_STEP_RX = [  # palabra clave del Java -> paso legible (el primero que aparezca)
+    (r"importCadPart|PartImportManager", "Importando la geometría"), (r"newRegionsFromParts|RegionManager\(\)\.newRegion", "Creando regiones"),
+    (r"setPresentationName\(.*(inlet|outlet|blade|hub|shroud)", "Nombrando fronteras"), (r"Interface", "Creando interfaces"),
+    (r"AutoMeshOperation|MeshOperationManager|executeMeshOperation|\.execute\(\)", "Mallando"),
+    (r"PhysicsContinuum|SegregatedFlowModel|KOmegaTurbulence|SstKwTurbModel", "Configurando la física"),
+    (r"RotatingReferenceFrame|ReferenceFrame", "Marco rotatorio (MRF)"), (r"MassFlowBoundary|PressureBoundary|setBoundaryType", "Condiciones de contorno"),
+    (r"createReport|ExpressionReport|MassFlowAverage|MomentReport", "Creando reportes"), (r"getSimulationIterator\(\)\.step", "Iterando"),
+    (r"ImportManager\(\)\.export|\.case", "Exportando superficies con campo"), (r"createScene|ScalarDisplayer|VectorDisplayer|PlaneSection", "Creando escena"),
+    (r"saveState", "Guardando"), (r"println\(.*(getParts|getRegions|getBoundaries)", "Leyendo la simulación"),
+]
+_TOOL_LABEL = {"server_start": "Arrancando el solver", "server_stop": "Guardando y apagando el solver", "server_status": "Consultando el solver",
+               "inspect": "Leyendo la simulación", "iterate": "Iterando", "export_scene": "Exportando escena", "save": "Guardando",
+               "recipe_search": "Buscando recetas", "recipe_save": "Guardando receta", "docs_search": "Consultando la API de STAR-CCM+"}
+
+
+def _tool_label(name: str, inp: dict) -> str:
+    """Una frase corta de qué hace la herramienta, para el chat (el detalle va plegado)."""
+    inp = inp or {}
+    if name == "run_java":
+        body = str(inp.get("body", ""))
+        m = re.search(r"//\s*QUE:\s*(.+)", body)
+        if m:
+            return m.group(1).strip()[:90]
+        for rx, lab in _STEP_RX:
+            if re.search(rx, body):
+                return lab
+        return "Ejecutando una macro Java"
+    lab = _TOOL_LABEL.get(name) or {"Read": "Leyendo un archivo", "Write": "Escribiendo un archivo", "Edit": "Editando un archivo",
+                                    "Glob": "Buscando archivos", "Grep": "Buscando en archivos"}.get(name, name)
+    extra = inp.get("n") and f"{inp['n']} iteraciones" or inp.get("name") or inp.get("path") or (inp.get("query") and f"«{inp['query']}»") \
+        or (inp.get("file_path") and Path(str(inp["file_path"])).name) or (inp.get("sim_path") and Path(str(inp["sim_path"])).name)
+    return f"{lab}: {extra}" if extra else lab
+
+
 def _sse(obj: dict) -> str:
     return "data: " + json.dumps(obj, ensure_ascii=False) + "\n\n"
 
@@ -827,7 +863,7 @@ def _chat_events(req: ChatReq):
     p = None
     try:
         prompt = f"({'Caso seleccionado en el panel: cases/' + req.case + ' · ' if req.case else ''}{_where_text()})\n{req.message}"
-        cmd = [CLAUDE_BIN, "-p", prompt, "--output-format", "stream-json", "--verbose",
+        cmd = ([sys.executable, CLAUDE_BIN] if CLAUDE_BIN.lower().endswith(".py") else [CLAUDE_BIN]) + ["-p", prompt, "--output-format", "stream-json", "--verbose",
                "--mcp-config", str(REPO / ".mcp.json"), "--strict-mcp-config",
                # escribe SOLO dentro de cases/ (RESUMEN.md, convergencia.csv); nada de shell ni red
                "--allowedTools", "mcp__starccm__*,Read,Glob,Grep,Write(cases/**),Edit(cases/**)",
@@ -878,10 +914,16 @@ def _chat_events(req: ChatReq):
                         yield _sse({"kind": "text", "text": scc._redact(b["text"])})
                     elif b.get("type") == "tool_use":
                         name = b.get("name", "")
+                        if name in ("Write", "Edit"):
+                            yield _sse({"kind": "tool", "name": name, "label": _tool_label(name, b.get("input") or {}),
+                                        "input": {"file_path": (b.get("input") or {}).get("file_path")}})
+                            continue
                         if not name.startswith("mcp__starccm__"):
                             hidden.add(b.get("id", ""))
                             continue
-                        yield _sse({"kind": "tool", "name": name.replace("mcp__starccm__", ""), "input": json.loads(scc._redact(json.dumps(b.get("input"))))})
+                        short = name.replace("mcp__starccm__", "")
+                        yield _sse({"kind": "tool", "name": short, "label": _tool_label(short, b.get("input") or {}),
+                                    "input": json.loads(scc._redact(json.dumps(b.get("input"))))})
             elif t == "user":
                 for b in o.get("message", {}).get("content", []):
                     if isinstance(b, dict) and b.get("type") == "tool_result" and b.get("tool_use_id") not in hidden:
@@ -909,10 +951,71 @@ def _chat_events(req: ChatReq):
         CHAT_LOCK.release()
 
 
+# La CLI ya no muere si se cierra o recarga la pestaña: un hilo consume _chat_events y guarda cada evento; las
+# pestañas se enganchan (POST /api/chat la empieza, GET /api/chat/stream se vuelve a enganchar desde el evento N).
+CHAT_RUN: dict = {"id": 0, "events": [], "done": True, "message": "", "case": None, "started": None}
+CHAT_COND = threading.Condition()
+
+
+def _chat_worker(req: "ChatReq", rid: int) -> None:
+    try:
+        for ev in _chat_events(req):
+            with CHAT_COND:
+                if CHAT_RUN["id"] == rid:
+                    CHAT_RUN["events"].append(ev)
+                    CHAT_COND.notify_all()
+    finally:
+        with CHAT_COND:
+            if CHAT_RUN["id"] == rid:
+                CHAT_RUN["done"] = True
+            CHAT_COND.notify_all()
+
+
+def _chat_stream(rid: int, frm: int = 0):
+    i, t0 = max(0, frm), time.time()
+    while True:
+        with CHAT_COND:
+            if CHAT_RUN["id"] != rid:
+                return
+            if i >= len(CHAT_RUN["events"]) and not CHAT_RUN["done"]:
+                CHAT_COND.wait(timeout=15)
+            evs, done = CHAT_RUN["events"][i:], CHAT_RUN["done"]
+        for ev in evs:
+            i += 1
+            yield ev
+        if not evs:
+            if done:
+                return
+            yield _sse({"kind": "ping", "t": round(time.time() - t0)})
+
+
+_SSE_HDR = {"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
+
+
 @app.post("/api/chat")
 def api_chat(req: ChatReq) -> StreamingResponse:
-    return StreamingResponse(_chat_events(req), media_type="text/event-stream",
-                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+    if CHAT_LOCK.locked() or not CHAT_RUN["done"]:  # la conversación en curso sigue intacta
+        return StreamingResponse(iter([_sse({"kind": "error", "text": "ya hay una conversación en curso; espera o pulsa Detener"})]),
+                                 media_type="text/event-stream", headers=_SSE_HDR)
+    with CHAT_COND:
+        rid = CHAT_RUN["id"] + 1
+        CHAT_RUN.update(id=rid, events=[], done=False, message=req.message, case=req.case, started=time.strftime("%Y-%m-%d %H:%M:%S"))
+    threading.Thread(target=_chat_worker, args=(req, rid), daemon=True, name=f"chat-{rid}").start()
+    return StreamingResponse(_chat_stream(rid, 0), media_type="text/event-stream", headers=_SSE_HDR)
+
+
+@app.get("/api/chat/current")
+def api_chat_current() -> dict:
+    """La conversación en curso o la última: para que una pestaña nueva o recargada la muestre y se enganche."""
+    return {"id": CHAT_RUN["id"], "running": not CHAT_RUN["done"], "n": len(CHAT_RUN["events"]),
+            "message": CHAT_RUN["message"], "case": CHAT_RUN["case"], "started": CHAT_RUN["started"]}
+
+
+@app.get("/api/chat/stream")
+def api_chat_stream(id: int, frm: int = 0) -> StreamingResponse:
+    if id != CHAT_RUN["id"]:
+        raise HTTPException(404, "esa conversación ya no está en memoria")
+    return StreamingResponse(_chat_stream(id, frm), media_type="text/event-stream", headers=_SSE_HDR)
 
 
 @app.post("/api/chat/stop")
@@ -1061,6 +1164,28 @@ def _selftest() -> int:
         check(c in (404, 409), "POST /api/surface sin servidor -> 409")
     c, r = post("/api/chat/stop", {})
     check(c == 200 and r.get("stopped") is False, "POST /api/chat/stop sin chat -> stopped=false")
+    # chat desacoplado de la pestaña, con la CLI falsa de tests/: cortar la conexión no mata la conversación y
+    # una pestaña nueva se engancha y recibe lo que faltaba (pasos con etiqueta legible incluidos)
+    global CLAUDE_BIN
+    real_bin, CLAUDE_BIN = CLAUDE_BIN, str(ROOT / "tests" / "fake_claude.py")
+    try:
+        rq = urllib.request.Request(base + "/api/chat", data=json.dumps({"message": "hola"}).encode(), headers={"content-type": "application/json"}, method="POST")
+        with urllib.request.urlopen(rq, timeout=30) as rr:
+            first = rr.read(200)  # leo un trozo y cierro: como recargar la pestaña
+        cur = get("/api/chat/current")[1]
+        check(b"data:" in first and cur.get("running") is True, "chat: tras cerrar la conexión la conversación sigue en marcha")
+        for _ in range(60):
+            if not get("/api/chat/current")[1].get("running"):
+                break
+            time.sleep(0.25)
+        with urllib.request.urlopen(base + f"/api/chat/stream?id={cur['id']}&frm=0", timeout=30) as rr:
+            evs = [json.loads(x[6:]) for x in rr.read().decode("utf-8").split("\n\n") if x.startswith("data: ")]
+        kinds = [e["kind"] for e in evs]
+        lab = next((e.get("label") for e in evs if e["kind"] == "tool"), None)
+        check("result" in kinds and "done" in kinds and "stopped" not in kinds, f"chat: la conversación terminó sola ({len(evs)} eventos)")
+        check(lab == "importar los STEP del caso", f"chat: paso con etiqueta legible ({lab})")
+    finally:
+        CLAUDE_BIN = real_bin
     c, r = post("/api/chat", {"message": ""})
     check(c == 422 and "detail" in r, "POST /api/chat con mensaje vacío -> 422 JSON")
     server.should_exit = True

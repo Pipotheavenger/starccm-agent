@@ -739,11 +739,15 @@ function onChatEvent(ev, ctx) {
   if (ev.kind === 'init') { st.session = ev.session_id; LS.set('scc_session', st.session); $('chatstate').textContent = `sesión ${st.session.slice(0, 8)} · ${ev.model || ''}`; }
   else if (ev.kind === 'text') { addMsg('bot', md(ev.text)); ctx.tool = ''; $('chatstate').textContent = 'pensando…'; }
   else if (ev.kind === 'tool') {
-    addMsg('tool', `<details><summary>Tool: ${esc(toolSummary(ev.name, ev.input || {}))}</summary>${esc(JSON.stringify(ev.input || {}, null, 1)).slice(0, 2000)}</details>`);
+    const lab = ev.label || toolSummary(ev.name, ev.input || {});
+    ctx.step = addMsg('step', `<span class="ic">▶</span><span class="lab">${esc(lab)}</span><span class="dur"></span><details><summary>detalle</summary>${esc(JSON.stringify(ev.input || {}, null, 1)).slice(0, 2000)}</details>`);
     ctx.tool = ev.name; ctx.t0 = Date.now(); setChatState(`ejecutando ${esc(ev.name)}…<span id="chatsecs" aria-hidden="true"></span>`);
     if (/server_|export_scene|iterate|run_java|save/.test(ev.name)) ctx.refresh = true;
   }
-  else if (ev.kind === 'tool_result') { if (ev.is_error) addMsg('tool bad', 'Error de tool: ' + esc(ev.text)); else if (/server_/.test(ctx.tool)) poll(); if (st.tab === 'out') loadProgress(); }
+  else if (ev.kind === 'tool_result') {
+    if (ctx.step) { const s = Math.round((Date.now() - ctx.t0) / 1000); ctx.step.classList.add(ev.is_error ? 'bad' : 'ok');
+      ctx.step.querySelector('.ic').textContent = ev.is_error ? '✗' : '✓'; ctx.step.querySelector('.dur').textContent = ctx.replay ? '' : ` ${s} s`; ctx.step = null; }
+    if (ev.is_error) addMsg('tool bad', 'Error: ' + esc(ev.text)); else if (/server_/.test(ctx.tool)) poll(); if (st.tab === 'out') loadProgress(); }
   else if (ev.kind === 'status') $('chatstate').textContent = ev.text;
   else if (ev.kind === 'ping') { if (!ctx.tool) $('chatstate').textContent = `trabajando… ${ev.t} s`; }
   else if (ev.kind === 'error') addMsg('err', /conversación en curso/.test(ev.text) ? 'Ya hay una conversación en curso. Espera o pulsa Detener.' : esc(ev.text));
@@ -752,20 +756,51 @@ function onChatEvent(ev, ctx) {
   else if (ev.kind === 'done') { ctx.done = true; if (ev.rc && ev.rc !== 0 && !/listo|detenido/.test($('chatstate').textContent)) $('chatstate').textContent = `terminó con código ${ev.rc}`; }
   if (!ctx.login && ['text', 'result', 'error'].includes(ev.kind) && /401|not logged in|OAuth|auth login/i.test(ev.text || '')) { ctx.login = true; addMsg('err', 'La CLI de la IA no tiene sesión. En una terminal ejecuta: <code>claude auth login</code>'); }
 }
+async function readSSE(r, ctx) {  // cuenta los eventos (ctx.n) para poder reengancharse desde ahí
+  const reader = r.body.getReader(), dec = new TextDecoder(); let buf = '';
+  while (true) { const { value, done } = await reader.read(); if (done) break; buf += dec.decode(value, { stream: true });
+    let idx; while ((idx = buf.indexOf('\n\n')) >= 0) { const chunk = buf.slice(0, idx); buf = buf.slice(idx + 2); if (!chunk.startsWith('data: ')) continue;
+      let ev; try { ev = JSON.parse(chunk.slice(6)); } catch { continue; } if (ev.kind !== 'ping') ctx.n = (ctx.n || 0) + 1; onChatEvent(ev, ctx); } }
+}
+async function reattach(ctx) {
+  try {
+    const cur = await api('/api/chat/current'); if (!cur.id) return false;
+    if (ctx.rid && cur.id !== ctx.rid) return false; ctx.rid = cur.id;
+    const r = await fetch(`/api/chat/stream?id=${cur.id}&frm=${ctx.n || 0}`); if (!r.ok || !r.body) return false;
+    await readSSE(r, ctx); return true;
+  } catch { await new Promise(res => setTimeout(res, 2000)); return true; }
+}
+// al cargar la página: si la IA está trabajando (p. ej. tras recargar), se muestra lo hecho y se sigue en vivo
+async function resumeChat() {
+  let cur; try { cur = await api('/api/chat/current'); } catch { return; }
+  if (!cur.running) return;
+  if (document.documentElement.classList.contains('chat-off')) setChatOpen(true);
+  addMsg('user', esc(cur.message || '(mensaje)'));
+  setChatting(true); $('chatstate').textContent = 'retomando la conversación en curso…';
+  const ctx = { t0: Date.now(), tool: '', login: false, done: false, refresh: true, rid: cur.id, n: 0, replay: true };
+  const clock = setInterval(() => { if (ctx.tool) { const secs = $('chatsecs'); if (secs) secs.textContent = ` ${Math.round((Date.now() - ctx.t0) / 1000)} s`; } }, 1000);
+  try {
+    const r = await fetch(`/api/chat/stream?id=${cur.id}&frm=0`);
+    if (r.ok && r.body) { setTimeout(() => { ctx.replay = false; }, 1500); await readSSE(r, ctx); }
+    for (let k = 0; k < 20 && !ctx.done && st.chatting; k++) { if (!(await reattach(ctx))) break; }
+  } catch {}
+  clearInterval(clock); setChatting(false); poll();
+  refreshCaseList().then(() => { if (st.case) openCase(st.case); });
+}
 async function sendChat(retry = false) {
   if (document.documentElement.classList.contains('chat-off')) setChatOpen(true);
   if (NARROW.matches && st.tab !== 'chat') openTab('chat');  // los parámetros viven en Propiedades: al pedir, se muestra la conversación
   const text = $('chattext').value.trim(); if (!text || st.chatting) return;
   $('chattext').value = ''; st.lastMsg = text; if (!retry) addMsg('user', esc(text));
   setChatting(true); $('chatstate').textContent = 'pensando…';
-  const ctx = { t0: Date.now(), tool: '', login: false, done: false, refresh: false };
+  const ctx = { t0: Date.now(), tool: '', login: false, done: false, refresh: false, n: 0 };
   const clock = setInterval(() => { if (ctx.tool) { const secs = $('chatsecs'); if (secs) secs.textContent = ` ${Math.round((Date.now() - ctx.t0) / 1000)} s`; } }, 1000);
   try {
     const r = await fetch('/api/chat', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ message: text, session_id: st.session, case: st.case }) });
     if (!r.ok || !r.body) throw new Error('HTTP ' + r.status);
-    const reader = r.body.getReader(), dec = new TextDecoder(); let buf = '';
-    while (true) { const { value, done } = await reader.read(); if (done) break; buf += dec.decode(value, { stream: true });
-      let idx; while ((idx = buf.indexOf('\n\n')) >= 0) { const chunk = buf.slice(0, idx); buf = buf.slice(idx + 2); if (!chunk.startsWith('data: ')) continue; let ev; try { ev = JSON.parse(chunk.slice(6)); } catch { continue; } onChatEvent(ev, ctx); } }
+    await readSSE(r, ctx);
+    // la conversación vive en el servidor: si el flujo se corta, se vuelve a enganchar donde iba
+    for (let k = 0; k < 20 && !ctx.done && st.chatting; k++) { if (!(await reattach(ctx))) break; }
     if (!ctx.done && st.chatting) throw new Error('el flujo se cortó');
   } catch (e) {
     const d = addMsg('err', `Se cortó la conexión con el chat (${esc(String(e.message || e))}). Tu mensaje no se perdió:<div class="actions"><button class="sm">Reenviar</button></div>`);
@@ -786,6 +821,7 @@ $('newchat').onclick = () => {
 const busyChat = () => { if (st.chatting) { toast('La IA está trabajando; espera o pulsa Detener', 'warn'); return true; } return false; };
 for (const b of $('quick').querySelectorAll('[data-q]')) b.onclick = () => { if (busyChat()) return; $('chattext').value = b.dataset.q.replace('<caso>', st.case || 'caso'); sendChat(); };
 st.session = LS.get('scc_session'); if (st.session) $('chatstate').textContent = `sesión ${st.session.slice(0, 8)} (continúa)`;
+resumeChat();
 
 // parámetros -> prompt (la página nunca edita el .sim)
 const PARAMS = [['p_rpm', v => `velocidad de giro del rotor a ${v} rpm (MRF)`], ['p_mdot', v => `caudal másico de entrada a ${v} kg/s`], ['p_base', v => `tamaño base de malla a ${v} mm (remallar las 3 operaciones)`], ['p_iter', v => `luego corre ${v} iteraciones (en bloques de 100 con iterate)`]];
