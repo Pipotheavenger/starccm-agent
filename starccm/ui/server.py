@@ -28,6 +28,7 @@ from __future__ import annotations
 import csv
 import json
 import logging
+import math
 import os
 import queue
 import re
@@ -96,7 +97,8 @@ CHAT_SYSTEM = (
 
 def _clean_env() -> dict[str, str]:
     """La CLI se autentica sola (llavero), no hereda la sesión anidada de Claude Code."""
-    return {k: v for k, v in os.environ.items() if not k.startswith("CLAUDE")}
+    # sin STARCCM_PODKEY: el MCP la lee de sus .env; la CLI y sus tools (Read) no necesitan verla
+    return {k: v for k, v in os.environ.items() if not k.startswith("CLAUDE") and k != "STARCCM_PODKEY"}
 
 
 def _kill_tree(p: subprocess.Popen) -> None:
@@ -232,9 +234,10 @@ def _case_dir(name: str) -> Path:
 
 def _num(s: str):
     try:
-        return float(s)
+        v = float(s)
     except (TypeError, ValueError):
         return None
+    return v if math.isfinite(v) else None  # nan/inf no caben en JSON
 
 
 def _convergencia(d: Path) -> dict | None:
@@ -247,7 +250,7 @@ def _convergencia(d: Path) -> dict | None:
         return None
     cols = [c.strip() for c in rows[0]]
     data = [[_num(x) for x in r] for r in rows[1:] if r and any(x.strip() for x in r)]
-    return {"columns": cols, "rows": data[:5000], "file": "reports/convergencia.csv"}
+    return {"columns": cols, "rows": data[-5000:], "truncated": len(data) > 5000, "file": "reports/convergencia.csv"}
 
 
 def _images(d: Path) -> list[dict]:
@@ -638,6 +641,8 @@ class StopReq(BaseModel):
 
 @app.post("/api/server/stop")
 def api_server_stop(req: StopReq) -> dict:
+    if CHAT_LOCK.locked():  # no inyectar saveState+kill mientras Claude tiene una macro en marcha
+        raise HTTPException(409, "Claude está usando el solver; pulsa Detener en el chat primero")
     if not STOP_LOCK.acquire(blocking=False):
         raise HTTPException(409, "ya se está apagando")
     try:
@@ -826,6 +831,7 @@ def _selftest() -> int:
     c, body = get("/")
     check(c == 200 and "STAR-CCM+" in body, "GET / sirve la página")
     check(get("/app.js")[0] == 200 and get("/style.css")[0] == 200, "GET /app.js y /style.css")
+    check(_num("nan") is None and _num("inf") is None and _num("1.5") == 1.5, "_num descarta nan/inf (JSON no los admite)")
     c, rows = get("/api/cases")
     names = [r["name"] for r in rows] if c == 200 else []
     check(c == 200 and isinstance(rows, list), f"GET /api/cases -> {len(names)} casos {names}")

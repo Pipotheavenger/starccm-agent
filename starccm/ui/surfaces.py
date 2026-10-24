@@ -125,16 +125,23 @@ class _Bin:
         self.e = "<"
 
     def s80(self) -> str:
+        self._need(80)
         s = bytes(self.b[self.pos:self.pos + 80]).split(b"\0", 1)[0].decode("latin-1").strip()
         self.pos += 80
         return s
 
     def i(self) -> int:
+        self._need(4)
         v = struct.unpack_from(self.e + "i", self.b, self.pos)[0]
         self.pos += 4
         return v
 
+    def _need(self, n: int) -> None:
+        if n < 0 or self.pos + n > len(self.b):
+            raise ValueError(f"EnSight truncado en el byte {self.pos} (faltan {self.pos + n - len(self.b)} bytes)")
+
     def ints(self, n: int) -> array.array:
+        self._need(4 * n)
         a = array.array("i")
         a.frombytes(bytes(self.b[self.pos:self.pos + 4 * n]))
         self.pos += 4 * n
@@ -143,6 +150,7 @@ class _Bin:
         return a
 
     def floats(self, n: int) -> array.array:
+        self._need(4 * n)
         a = array.array("f")
         a.frombytes(bytes(self.b[self.pos:self.pos + 4 * n]))
         self.pos += 4 * n
@@ -161,7 +169,7 @@ class _Bin:
 
 
 def _sane_count(n: int) -> bool:
-    return 0 <= n < 200_000_000
+    return 0 <= n < 65536  # un part id real es pequeño; en el orden equivocado un id <= 11 daría >= 16 777 216
 
 
 def read_geometry(geo: Path) -> tuple[Dataset, dict]:
@@ -269,9 +277,10 @@ def _read_geo_binary(geo: Path) -> tuple[Dataset, dict]:
             break
         pid = r.i()
         if not _sane_count(pid):
-            r.e = ">" if r.e == "<" else "<"
-            r.pos -= 4
-            pid = r.i()
+            alt = struct.unpack(">i" if r.e == "<" else "<i", struct.pack(r.e + "i", pid))[0]
+            if _sane_count(alt):  # solo si el otro orden da un id plausible
+                r.e = ">" if r.e == "<" else "<"
+                pid = alt
         name = r.s80() or f"part {pid}"
         xyz = array.array("f")
         if r.peek_s80().lower() == "coordinates":
