@@ -66,11 +66,11 @@ async function openCase(name) {
   catch (e) { if (gen === openGen) { toast('No pude abrir el caso: ' + e.message, 'error'); $('case').value = st.case || ''; } return; }
   if (gen !== openGen) return;  // llegó otra apertura después: esta respuesta ya no vale
   st.case = name; LS.set('scc_case', name); st.data = d;
-  $('simname').textContent = `${d.title || d.name} · sims/${d.name}.sim`;
+  $('simname').textContent = `Simulación: ${d.title || d.name} · sims/${d.name}.sim`;
   $('bconv').textContent = d.convergencia ? d.convergencia.rows.length : '';
   $('resumen').innerHTML = d.resumen ? md(d.resumen) : '<p class="mut">Este caso no tiene RESUMEN.md</p>';
-  renderScenes(d); renderConv(d); fillParams(d);
-  await loadDatasets();
+  renderScenes(d); renderConv(d); fillParams(d); renderOutline();
+  await loadDatasets(); renderOutline();
   if (gen === openGen) loadTree(false);
 }
 
@@ -90,13 +90,13 @@ for (const b of $('where').querySelectorAll('[role=radio]')) b.onclick = async (
   catch (e) { toast('No pude guardar la elección: ' + e.message, 'error'); }
   renderWhere();
   const sv = st.settings?.server || {};
-  toast(st.where === 'server' ? `La simulación correrá en ${sv.label || 'el servidor Linux'} ${sv.host || ''}${sv.ready ? '' : ' · ejecución remota pendiente de instalación: Claude prepara y avisa'}` : 'La simulación corre en este PC (STAR-CCM+ 2410)', st.where === 'server' && !sv.ready ? 'warn' : 'ok');
+  toast(st.where === 'server' ? `La simulación correrá en ${sv.label || 'el servidor Linux'} ${sv.host || ''}${sv.ready ? '' : ` · STAR-CCM+ ${sv.version} instalado; la ejecución remota aún no está implementada: Claude prepara y avisa`}` : 'La simulación corre en este PC (STAR-CCM+ 2410)', st.where === 'server' && !sv.ready ? 'warn' : 'ok');
 };
 function whereRows() {  // filas del panel Solver
   const s = st.settings; if (!s) return [];
   if (st.where !== 'server') return [[['corre en', `Local (este PC) · STAR-CCM+ ${s.local.version} · np ${s.local.np}`], 'where']];
   const sv = s.server;
-  return [[['corre en', `${sv.label}${sv.host ? ' ' + sv.host : ''} · STAR-CCM+ ${sv.version} · ${sv.ready ? 'remoto listo' : 'pendiente de instalación'}`], 'where'],
+  return [[['corre en', `${sv.label}${sv.host ? ' ' + sv.host : ''} · STAR-CCM+ ${sv.version} · ${sv.ready ? 'remoto listo' : 'instalado · remoto aún no implementado'}`], 'where'],
     ...sv.rows.map(r => [r, 'srv'])];
 }
 
@@ -143,6 +143,9 @@ function loop(t) {
   if (st.view !== '3d') return;
   if (V.anim) { const k = Math.min(1, (t - V.anim.t0) / V.anim.ms); const e = 1 - Math.pow(1 - k, 3);
     V.camera.position.lerpVectors(V.anim.p0, V.anim.p1, e); V.controls.target.lerpVectors(V.anim.c0, V.anim.c1, e); V.needs = true; if (k >= 1) V.anim = null; }
+  if (V.rotor) { const a = t * 0.001 * 0.25 * Math.PI * 2, c = V.bbox.getCenter(new THREE.Vector3()), co = Math.cos(a), si = Math.sin(a);
+    for (const m of V.meshes) if (ROTOR.test(m.userData.part.name) && !/shroud|casing/i.test(m.userData.part.name)) { m.rotation.z = a; m.position.set(c.x - (co * c.x - si * c.y), c.y - (si * c.x + co * c.y), 0); }
+    V.needs = true; }
   if (V.spin) { V.controls.autoRotate = true; V.needs = true; } else V.controls.autoRotate = false;
   V.controls.update();
   if (!V.needs) return;
@@ -174,7 +177,12 @@ function setView(name) {
 }
 function flyTo(part) {
   if (!part) return;
-  const m = part.mesh; m.geometry.computeBoundingBox(); const b = m.geometry.boundingBox;
+  // una superficie oculta tras la carcasa opaca: se activa la carcasa translúcida y se avisa
+  if (!part.mesh.visible) { part.mesh.visible = true; const cb = part.li?.querySelector('input'); if (cb) cb.checked = true; }
+  if (!V.ghost && !OUTER.test(part.name) && st.ds.parts.some(q => OUTER.test(q.name) && q.mesh.visible)) {
+    V.ghost = true; LS.set('scc_ghost', '1'); applyGhost(); toast(`Carcasa translúcida para ver ${part.name}`, 'ok');
+  }
+  const m = part.mesh; m.geometry.computeBoundingBox(); const b = m.geometry.boundingBox.clone().applyMatrix4(m.matrixWorld);
   const c = b.getCenter(new THREE.Vector3()), size = Math.max(b.getSize(new THREE.Vector3()).length(), V.bbox.getSize(new THREE.Vector3()).length() / 8);
   const dir = V.camera.position.clone().sub(V.controls.target).normalize();
   tween(c.clone().add(dir.multiplyScalar(size / (2 * Math.tan(V.camera.fov * Math.PI / 360)) * 1.3)), c, 700);
@@ -218,6 +226,7 @@ const unitOf = n => /pressure/i.test(n) ? ' Pa' : /velocity/i.test(n) ? ' m/s' :
 // nombres internos de STAR-CCM+ -> etiqueta legible (lo que no está aquí se muestra tal cual)
 const LABELS = { Pressure: 'Presión', TotalPressure: 'Presión total', VelocityMagnitude: '|Velocidad|', 'Velocity |mag|': '|Velocidad|', WallY: 'y+', WallYplus: 'y+', WallShearStressMagnitude: '|Esfuerzo cortante|', AbsolutePressure: 'Presión absoluta', Temperature: 'Temperatura' };
 const labelOf = n => LABELS[n] || n;
+const ROTOR = /blade|hub|impeller|rotor/i;  // partes que gira el botón «Rotor» (solo animación, eje Z)
 const OUTER = /shroud|casing|volute|voluta|spiral|diffuser|cutwater|carcasa|housing|outer|wall$/i;  // superficies que tapan los álabes
 
 // ---------------------------------------------------------------- superficies con campo (dataset de surfaces.py)
@@ -253,12 +262,15 @@ async function loadDatasets() {
 function clearDataset() {
   for (const m of V.meshes) { V.group.remove(m); m.geometry.dispose(); m.material.dispose(); }
   setHot(null); V.meshes = []; st.ds = null; V.bbox = null; $('parts').innerHTML = ''; $('vstate').textContent = ''; $('vtip').hidden = true;
+  $('rmin').value = ''; $('rmax').value = ''; st.scalar = ''; st.range = null; V.rotor = false; $('rotor').setAttribute('aria-pressed', false);
   $('scalar').innerHTML = '<option value="">(geometría)</option>'; V.needs = true; syncOverlays();
 }
 // una sola función decide qué capas se ven sobre el visor según la vista (3D o escena PNG) y si hay dataset
 function syncOverlays() {
   const is3d = st.view === '3d';
   $('vtools').hidden = !is3d; $('vactions').hidden = !is3d;
+  // sin superficies (caso vacío) la barra del visor se apaga: nada de valores del caso anterior
+  for (const id of ['vtools', 'vactions']) { $(id).classList.toggle('off', !st.ds); for (const c of $(id).querySelectorAll('button,select,input')) c.disabled = !st.ds; }
   $('legend').hidden = !is3d || !st.ds || !st.scalar;
   $('vempty').hidden = !is3d || !!st.ds || !$('vbusy').hidden;
   if (!is3d) { $('vtip').hidden = true; setHot(null); }
@@ -299,7 +311,7 @@ async function loadDataset(d, keep = false) {
     renderParts(); applyColors(); applyGhost(); updateClip();
     if (prev) { V.camera.position.copy(prev.pos); V.controls.target.copy(prev.tgt); for (const p of st.ds.parts) if (prev.hidden.has(p.name)) { p.mesh.visible = false; p.li.querySelector('input').checked = false; } }
     else { fit(0); setView('iso'); }
-    $('vstate').textContent = `${man.n_triangles.toLocaleString('es')} triángulos · ${man.parts.length} superficies${man.exported ? ' · ' + man.exported : ''}`;
+    $('vstate').textContent = `${man.n_triangles.toLocaleString('es')} triángulos · ${st.ds.parts.length} superficies${st.ds.parts.length < man.parts.length ? ` (+${man.parts.length - st.ds.parts.length} vacías)` : ''}${man.exported ? ' · ' + man.exported : ''}`;
     fadeIn();
   } catch (e) { if (gen !== V.gen) return; toast('No pude cargar las superficies: ' + e.message, 'error'); clearDataset(); }
   if (gen !== V.gen) return;
@@ -350,7 +362,9 @@ function drawLegend(name, lo, hi) {
   $('lgtitle').textContent = labelOf(name) + (unitOf(name) ? ` (${unitOf(name).trim()})` : '');
   const cv = $('lgbar'), ctx = cv.getContext('2d'); const c = [0, 0, 0];
   for (let y = 0; y < cv.height; y++) { cmapColor(1 - y / (cv.height - 1), c); ctx.fillStyle = `rgb(${c[0] * 255 | 0},${c[1] * 255 | 0},${c[2] * 255 | 0})`; ctx.fillRect(0, y, cv.width, 1); }
-  $('lgticks').innerHTML = [1, 0.75, 0.5, 0.25, 0].map(t => `<span>${sci(lo + (hi - lo) * t)}</span>`).join('');
+  // un único formato para todas las marcas del eje (científico si algún valor es muy grande o pequeño)
+  const m = Math.max(Math.abs(lo), Math.abs(hi)), sc = m >= 1e5 || (m > 0 && m < 1e-2), dec = hi - lo >= 100 ? 0 : hi - lo >= 10 ? 1 : hi - lo >= 1 ? 2 : 3;
+  $('lgticks').innerHTML = [1, 0.75, 0.5, 0.25, 0].map(t => { const v = lo + (hi - lo) * t; return `<span>${(sc ? v.toExponential(2) : v.toFixed(dec)).replace('.', ',')}</span>`; }).join('');
 }
 $('scalar').onchange = () => { st.scalar = $('scalar').value; LS.set('scc_scalar', st.scalar); st.range = null; applyColors(); };
 $('cmap').value = st.cmap; $('cmap').onchange = () => { st.cmap = $('cmap').value; LS.set('scc_cmap', st.cmap); applyColors(); };
@@ -362,6 +376,12 @@ $('fit').onclick = () => fit();
 $('spin').onclick = () => { V.spin = !V.spin; $('spin').setAttribute('aria-pressed', V.spin); };
 V.ghost = LS.get('scc_ghost', '1') === '1';
 $('ghost').onclick = () => { V.ghost = !V.ghost; LS.set('scc_ghost', V.ghost ? '1' : '0'); applyGhost(); };
+function setRotor(on) {
+  V.rotor = on && !!st.ds; $('rotor').setAttribute('aria-pressed', V.rotor);
+  if (!V.rotor) for (const m of V.meshes) { m.rotation.z = 0; m.position.set(0, 0, 0); }
+  V.needs = true;
+}
+$('rotor').onclick = () => setRotor(!V.rotor);
 $('wire').onclick = () => { V.wire = !V.wire; $('wire').setAttribute('aria-pressed', V.wire); for (const m of V.meshes) m.material.wireframe = V.wire; V.needs = true; };
 function updateClip() {
   const on = $('clipon').checked; const ax = $('clipax').value; const t = +$('clipv').value / 1000;
@@ -443,10 +463,19 @@ $('treerefresh').onclick = e => { e.preventDefault(); e.stopPropagation(); loadT
 function openTab(t) {
   st.tab = t; LS.set('scc_tab', t);
   for (const b of document.querySelectorAll('.dock-tabs [role=tab]')) b.setAttribute('aria-selected', b.dataset.tab === t);
-  for (const id of ['out', 'plots', 'res']) $('tab-' + id).hidden = id !== t;
+  for (const id of ['out', 'plots', 'res', 'chat']) $('tab-' + id).hidden = id !== t;
+  $('stage').classList.toggle('chat-open', t === 'chat');
+  if (t === 'chat') $('stage').classList.remove('dock-collapsed');
   if (t === 'out') loadProgress();
 }
 for (const b of document.querySelectorAll('.dock-tabs [role=tab]')) b.onclick = () => openTab(b.dataset.tab);
+// < 1100 px el chat vive en el dock (pestaña «Claude»); en escritorio vuelve a su columna
+function placeChat() {
+  const col = $('chatcol');
+  if (NARROW.matches) { if (col.parentElement !== $('tab-chat')) $('tab-chat').appendChild(col); }
+  else { if (col.parentElement !== $('app')) $('app').appendChild(col); if (st.tab === 'chat') openTab('out'); }
+}
+NARROW.addEventListener('change', placeChat);
 $('docktoggle').onclick = () => { const c = $('stage').classList.toggle('dock-collapsed'); $('docktoggle').textContent = c ? '▴' : '▾'; };
 (() => { let y0 = 0, h0 = 0; const rs = $('dockresize');
   rs.onpointerdown = e => { y0 = e.clientY; h0 = parseInt(getComputedStyle($('stage')).getPropertyValue('--dock-h')) || 230; rs.setPointerCapture(e.pointerId); };
@@ -519,7 +548,7 @@ function renderStatus(s) {
   const remote = st.where === 'server';
   $('opengui').disabled = !!s.alive || remote; $('opengui').title = remote ? 'Solo en local: la GUI abre el .sim de este PC' : s.alive ? 'Hay un servidor batch vivo: apágalo antes de abrir la GUI' : 'Abre este .sim en la GUI de STAR-CCM+ (la licencia PoD cobra por hora)';
   const ready = !!st.settings?.server?.ready;
-  $('solvertag').innerHTML = (s.alive ? '<span class="tag ok">vivo</span>' : s.stale ? '<span class="tag warn">caído</span>' : '<span class="tag">apagado</span>') + (remote ? ` <span class="tag ${ready ? 'ok' : 'warn'}">${ready ? 'servidor' : 'servidor · no disponible todavía'}</span>` : '');
+  $('solvertag').innerHTML = (s.alive ? '<span class="tag ok">vivo</span>' : s.stale ? '<span class="tag warn">caído</span>' : '<span class="tag">apagado</span>') + (remote ? ` <span class="tag ${ready ? 'ok' : 'warn'}">${ready ? 'servidor' : 'servidor · remoto no implementado'}</span>` : '');
   const rows = (s.alive || s.stale ? [['pid', s.pid], ['puerto', s.port], ['sim', s.sim ? s.sim.split(/[\\/]/).pop() : '(nueva)'], ['procesos', s.np], ['arranque', s.started ? s.started.replace('T', ' ') : '–'], ['inactivo', s.idle_min != null ? `${fmt(s.idle_min, 0)} / ${s.idle_limit_min} min` : '–']] : [['apagado por inactividad', `${s.idle_limit_min} min`]]).map(r => [r, '']);
   const kv = [...whereRows(), ...rows].map(([[k, v], cls]) => `<tr class="${cls}"><td class="mut">${esc(k)}</td><td class="mono" title="${esc(v)}">${esc(v)}</td></tr>`).join('');
   if (renderStatus.kv !== kv) { renderStatus.kv = kv; $('solverkv').querySelector('tbody').innerHTML = kv; }
@@ -529,6 +558,8 @@ async function poll() {
   catch (e) { $('offline').hidden = false; $('offlinetxt').textContent = 'Sin conexión con el servidor local: ' + e.message; }
 }
 $('retry').onclick = poll; setInterval(poll, 5000);
+$('solverbtn').onclick = e => { e.stopPropagation(); const o = $('solverpop').hidden; $('solverpop').hidden = !o; $('solverbtn').setAttribute('aria-expanded', o); };
+addEventListener('click', e => { if (!$('solverpop').hidden && !e.target.closest('#solverpop,#solverbtn')) { $('solverpop').hidden = true; $('solverbtn').setAttribute('aria-expanded', 'false'); } });
 // confirm() del navegador no aparece en el panel embebido de la app: confirmación en la página (segundo clic)
 function armed(btn, label, ms = 5000) {
   if (btn.dataset.armed) { clearTimeout(+btn.dataset.t); delete btn.dataset.armed; btn.textContent = btn.dataset.orig; return true; }
@@ -560,7 +591,7 @@ function toolSummary(name, inp = {}) {
   return [name, ...bits].join(' · ');
 }
 const setChatState = html => { if ($('chatstate').innerHTML !== html) $('chatstate').innerHTML = html; };
-function setChatting(on) { st.chatting = on; $('send').disabled = on; $('stopchat').disabled = !on; if (st.status.alive != null) renderStatus(st.status); }
+function setChatting(on) { st.chatting = on; $('chatdot').hidden = !on; $('send').disabled = on; $('stopchat').disabled = !on; if (st.status.alive != null) renderStatus(st.status); }
 function onChatEvent(ev, ctx) {
   if (['result', 'error'].includes(ev.kind) && /No conversation found/i.test(ev.text || '')) { ctx.stale = true; return; }
   if (ev.kind === 'result' && ev.turns === 0 && ev.subtype !== 'success' && !ev.text) return;
@@ -629,9 +660,60 @@ function fillParams(d) {
   const cur = { p_rpm: num((r.match(/[−-]?\s*(\d[\d\s]*)\s*rpm/) || [])[1]), p_mdot: num((r.match(/ṁ\s*=\s*([\d.,]+)\s*kg\/s/) || r.match(/([\d.,]+)\s*kg\/s/) || [])[1]),
     p_base: num((r.match(/base\s*([\d.,]+)\s*mm/i) || [])[1]), p_iter: (r.match(/(\d+)\s*iteraciones/) || [])[1] };
   for (const [id] of PARAMS) { const el = $(id); el.placeholder = cur[id] || ''; el.value = ''; el.classList.remove('edited'); el.oninput = () => el.classList.toggle('edited', !!el.value.trim() && el.value.trim() !== el.placeholder); }
-  $('pnow').textContent = [cur.p_rpm && `${cur.p_rpm} rpm`, cur.p_mdot && `${fmt(+cur.p_mdot, 1)} kg/s`, cur.p_base && `base ${cur.p_base} mm`, cur.p_iter && `${cur.p_iter} iter`].filter(Boolean).join(' · ');
+  $('params').hidden = !d.pump;  // los parámetros son de bomba (pump.py): sin él no se muestran
+  $('pnow').textContent = [cur.p_rpm && `${cur.p_rpm} rpm`, cur.p_mdot && `${cur.p_mdot.replace('.', ',')} kg/s`, cur.p_base && `base ${cur.p_base} mm`, cur.p_iter && `${cur.p_iter} iter`].filter(Boolean).join(' · ');
 }
-$('params').ontoggle = () => LS.set('scc_params', $('params').open ? '1' : '0'); $('params').open = LS.get('scc_params', '1') === '1';
+$('params').ontoggle = () => LS.set('scc_params', $('params').open ? '1' : '0'); $('params').open = LS.get('scc_params', '0') === '1';
+
+// acciones del visor desde el chat: se ejecutan en el cliente, sin solver ni Claude
+function viewerCmd(c) {
+  if (!st.ds) { toast('No hay superficies 3D en este caso', 'warn'); return; }
+  showView('3d');
+  const find = re => st.ds.manifest.scalars.find(x => re.test(x.name));
+  if (c === 'rotor') { setRotor(!V.rotor); toast(V.rotor ? 'Rotor girando (animación del visor, 0,25 rev/s)' : 'Rotor detenido', 'ok'); return; }
+  const sc = c === 'pressure' ? find(/^Pressure$/i) || find(/pressure/i) : find(/velocity/i);
+  if (!sc) { toast('Este dataset no trae ese campo', 'warn'); return; }
+  st.scalar = sc.name; $('scalar').value = sc.name; LS.set('scc_scalar', sc.name); st.range = null; applyColors();
+  if (c === 'pressure') { if (!V.ghost) { V.ghost = true; LS.set('scc_ghost', '1'); applyGhost(); } const bl = st.ds.parts.find(p => /blade/i.test(p.name)); if (bl) flyTo(bl); }
+  else fit();
+}
+for (const b of $('chips').querySelectorAll('[data-vc]')) b.onclick = () => viewerCmd(b.dataset.vc);
+
+// ---------------------------------------------------------------- árbol de la simulación (desde datos en disco, sin solver) + propiedades
+const OUT_NODES = [['geo', 'Geometría'], ['phys', 'Física'], ['mesh', 'Malla'], ['solv', 'Solucionadores'], ['rep', 'Reportes'], ['mon', 'Monitores'], ['plots', 'Gráficos'], ['scn', 'Escenas']];
+let outSel = LS.get('scc_outnode', 'geo');
+const resLines = re => (st.data?.resumen || '').split('\n').map(l => l.replace(/[*`|#]/g, '').replace(/^\s*[-]\s*/, '').trim()).filter(l => l && re.test(l));
+function propsFor(id) {
+  const d = st.data || {}, cv = d.convergencia, last = cv?.rows.length ? Object.fromEntries(cv.columns.map((c, i) => [c, cv.rows[cv.rows.length - 1][i]])) : null;
+  const txt = (re, n = 8) => resLines(re).slice(0, n).map((l, i) => [i ? '' : 'RESUMEN.md', l]);
+  if (id === 'geo') { const m = st.ds?.manifest; if (!m) return [['superficies', 'sin dataset 3D']]; const sz = V.bbox.getSize(new THREE.Vector3());
+    return [['dataset', st.ds.name], ['superficies', `${st.ds.parts.length}${st.ds.parts.length < m.parts.length ? ` (+${m.parts.length - st.ds.parts.length} vacías)` : ''}`], ['triángulos', m.n_triangles.toLocaleString('es')], ['vértices', m.n_vertices.toLocaleString('es')], ['campos', m.scalars.map(x => labelOf(x.name)).join(', ') || '–'], ['caja (m)', [sz.x, sz.y, sz.z].map(v => fmt(v, 3)).join(' × ')], ['exportado', m.exported || '–']]; }
+  if (id === 'phys') return txt(/k-?\s?(ω|omega|w)|sst|turbul|MRF|estacion|agua|densidad|líquido|segregad/i);
+  if (id === 'mesh') return txt(/celdas|malla|prism|poli|base/i);
+  if (id === 'solv') return [['iteraciones', last?.iter != null ? String(last.iter) : '–'], ['filas de convergencia', cv ? String(cv.rows.length) : '0'], ...txt(/iteraci|residual|under|relaj/i, 4)];
+  if (id === 'rep') return last ? Object.entries(last).filter(([k]) => k !== 'iter').map(([k, v]) => [k, sci(v)]) : [['reportes', 'sin convergencia.csv']];
+  if (id === 'mon') return cv ? [['columnas', cv.columns.join(', ')], ['archivo', cv.file]] : [['monitores', 'sin convergencia.csv']];
+  if (id === 'plots') return [['gráficos', 'H y M frente a iteración (pestaña Gráficos)'], ['filas', cv ? String(cv.rows.length) : '0']];
+  if (id === 'scn') return (d.images || []).map(im => [im.label, new Date(im.mtime * 1000).toLocaleString('es', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })]);
+  return [];
+}
+function renderOutline() {
+  const ul = $('outline'); if (!st.data) { ul.innerHTML = ''; return; }
+  const cnt = { geo: st.ds ? st.ds.parts.length : '', scn: st.data.images.length || '', rep: st.data.convergencia ? 'H M' : '', plots: st.data.convergencia?.rows.length || '' };
+  ul.innerHTML = OUT_NODES.map(([id, n]) => `<li role="option" tabindex="0" data-n="${id}" aria-selected="${id === outSel}"><span>${n}</span><span class="c">${esc(cnt[id] ?? '')}</span></li>`).join('');
+  for (const li of ul.querySelectorAll('li')) { li.onclick = () => selectNode(li.dataset.n); li.onkeydown = e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); selectNode(li.dataset.n); } }; }
+  renderProps();
+}
+function renderProps() {
+  const rows = propsFor(outSel), name = (OUT_NODES.find(n => n[0] === outSel) || [])[1] || '';
+  $('props').innerHTML = rows.length ? `<h4>Propiedades · ${esc(name)}</h4><table class="kv"><tbody>${rows.map(([k, v]) => `<tr><td class="mut">${esc(k)}</td><td title="${esc(v)}" style="white-space:normal;max-width:none">${esc(v)}</td></tr>`).join('')}</tbody></table>` : '';
+}
+function selectNode(id) {
+  outSel = id; LS.set('scc_outnode', id);
+  for (const li of $('outline').querySelectorAll('li')) li.setAttribute('aria-selected', li.dataset.n === id);
+  renderProps();
+  if (id === 'plots') openTab('plots'); else if (id === 'scn' && st.data.images[0]) showView(st.data.images[0].file); else if (id === 'geo') showView('3d');
+}
 
 // ---------------------------------------------------------------- tema y teclado
 const theme = LS.get('scc_theme', 'light'); document.documentElement.dataset.theme = theme;
@@ -644,5 +726,5 @@ addEventListener('keydown', e => {
 });
 
 // ---------------------------------------------------------------- arranque
-initViewer(); narrowZoom(); placeQuick(); openTab(['out', 'plots', 'res'].includes(st.tab) ? st.tab : 'out'); poll();
+initViewer(); narrowZoom(); placeChat(); placeQuick(); openTab(['out', 'plots', 'res', 'chat'].includes(st.tab) && (st.tab !== 'chat' || NARROW.matches) ? st.tab : 'out'); poll();
 loadSettings().then(() => loadCases()).catch(e => { toast('No pude leer los casos: ' + e.message, 'error'); });

@@ -66,28 +66,35 @@ mínimo arriba a la izquierda; por defecto `cursocfturbo`):
 - **Izquierda, árbol de la simulación**: *Superficies 3D* (datasets exportados, una fila por frontera
   con casilla de visibilidad, color y nº de triángulos; clic = volar a ella; «↓ solver» abre el diálogo
   de exportación), *Escenas* (PNG de `images/`, «↻» re-exporta desde el solver), *Árbol del .sim*
-  (`inspect("tree")`: regiones, física, malla, reportes, monitores, escenas; a demanda y cacheado) y
-  el panel *Solver* (`.server.json`, inactividad).
+  (`inspect("tree")`: regiones, física, malla, reportes, monitores, escenas; a demanda y cacheado).
+  Arriba va el esquema fijo *Simulación* (Geometría, Física, Malla, Solucionadores, Reportes, Monitores,
+  Gráficos, Escenas), armado con datos en disco (RESUMEN.md, convergencia.csv, dataset 3D) sin solver;
+  al seleccionar un nodo, el panel *Propiedades* del pie muestra su tabla clave/valor.
 - **Centro, visor 3D** (three.js): superficies con el campo pintado en los vértices (presión, presión
   total, |velocidad|, y+…), paleta azul→rojo / viridis / gris, rango editable, leyenda, tooltip con el
   valor bajo el ratón, resaltado de la frontera, vistas iso/axial/lateral con transición animada,
-  encuadrar, giro automático, malla, plano de corte X/Y/Z con deslizador, tríada de ejes. Las escenas
+  encuadrar, giro automático, malla, botón *Rotor* (anima el giro de álabes y cubo, 0,25 rev/s, eje Z,
+  solo visual), plano de corte X/Y/Z con deslizador, tríada de ejes. La barra de acciones va abajo y la
+  leyenda en su propia columna a la derecha (sin solaparse; la leyenda se oculta bajo 760 px). Sin
+  superficies (caso `cilindro`) la barra se apaga y se vacía. Volar a una superficie tapada por la carcasa
+  activa «Carcasa» y avisa. Las marcas de la leyenda usan un único formato. Las escenas
   PNG se abren como pestañas sobre el mismo visor.
 - **Abajo, dock** (plegable, arrastrable): *Salida* (la «terminal»: cola del `sims/<sim>.server.log`,
   última macro inyectada y su salida, `agent.log`, cada 3 s), *Gráficos* (`reports/convergencia.csv`:
   H y M frente a iteración, un gráfico por magnitud, tabla y criterio < 0,5 %) y *Resumen* (RESUMEN.md).
-- **Derecha, Claude**: chat (Claude Code CLI con cwd en `starccm/` y el MCP `starccm` del `.mcp.json`
-  de la raíz) y *Parámetros* (rpm, caudal, tamaño base de malla, iteraciones) que la página convierte
+- **Derecha, Claude** (bajo 1100 px el chat pasa a ser la pestaña *Claude* del dock; a 800 px ya no queda
+  fuera de pantalla): chips «Presión en álabes», «Velocidad», «Girar rotor» (acciones del visor en el
+  cliente, sin solver ni Claude); chat (Claude Code CLI con cwd en `starccm/` y el MCP `starccm` del `.mcp.json`
+  de la raíz) y *Parámetros* (solo en casos con `pump.py`; plegado por defecto; rpm, caudal, tamaño base de malla, iteraciones) que la página convierte
   en un prompt; la UI nunca edita el .sim. Planos, vectores y escenas nuevas se piden por el chat.
 - **Arriba**: selector **Local · este PC / Servidor · Linux** (dónde corre la simulación), estado del
-  solver, «Apagar solver», «Abrir en STAR-CCM+» (GUI con `sims/<caso>.sim`, solo sin servidor batch
+  solver (clic: popover con el detalle Local / Servidor), «Apagar solver», «Abrir en STAR-CCM+» (GUI con `sims/<caso>.sim`, solo sin servidor batch
   vivo y solo en local, avisando del coste PoD), tema claro/oscuro.
 
 Dónde corre la simulación (ronda 1 de UX, 2026-10-23): la elección se guarda en `starccm/.ui-settings.json`
 (fuera de git; `GET/POST /api/settings`), no en el navegador, para que Claude pueda leerla. El panel
 *Solver* muestra el destino: en local, `STAR-CCM+ 2410 · np N`; en servidor, el host y las primeras filas
-del inventario de `vm/SERVIDOR.md` (16 vCPU, 62 GiB, 2502) y la etiqueta «servidor · no disponible
-todavía» mientras `STARCCM_REMOTE_READY=1` no esté en `.env`. Cada mensaje del chat empieza con
+del inventario de `vm/SERVIDOR.md` (16 vCPU, 62 GiB, 2502) y la etiqueta «servidor · remoto no implementado» (2502 ya está instalado en `/opt/Siemens/20.02.008-R8`) mientras `STARCCM_REMOTE_READY=1` no esté en `.env`. Cada mensaje del chat empieza con
 `(Caso … · ejecución: Local …)` o `(… ejecución elegida: Servidor Linux 172.17.76.78 · … remoto aún no
 disponible: no arranques nada allí, prepara y avisa)`. La ejecución remota en sí la monta otra sesión
 (`STARCCM_RUN_HOST` del MCP, ver `vm/SERVIDOR.md`); la UI solo elige, persiste y muestra.

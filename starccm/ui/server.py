@@ -90,7 +90,7 @@ CHAT_SYSTEM = (
     "cases/<caso>/reports/convergencia.csv para que la galería los muestre. "
     "Termina siempre con una línea: qué quedó hecho y qué cambió. "
     "Cada mensaje empieza con el caso y dónde eligió el usuario correr la simulación (Local = este PC Windows con "
-    "STAR-CCM+ 2410; Servidor = el Linux de vm/SERVIDOR.md con 2502, cuya ejecución remota aún no está montada: "
+    "STAR-CCM+ 2410; Servidor = el Linux de vm/SERVIDOR.md con 2502 ya instalado, cuya ejecución remota aún no está montada: "
     "si está elegido, no arranques nada allí; prepara, explica y avisa)."
 )
 
@@ -163,6 +163,7 @@ SERVIDOR_MD = ROOT / "vm" / "SERVIDOR.md"
 def _server_info() -> dict:
     """Resumen de vm/SERVIDOR.md: host del ssh y las primeras filas del inventario. Allí no hay claves."""
     info = {"host": None, "user": None, "rows": [], "label": "Servidor Linux", "version": "2502",
+            "installed": True, "install": "/opt/Siemens/20.02.008-R8",  # ya instalado (vm/SERVIDOR.md); falta la ejecución remota
             "ready": os.environ.get("STARCCM_REMOTE_READY", "0") == "1"}  # ponytail: la ejecución remota la monta otra sesión
     if not SERVIDOR_MD.is_file():
         return info
@@ -296,7 +297,8 @@ def case(name: str) -> dict:
     d = _case_dir(name)
     r = d / "RESUMEN.md"
     return {**_case_row(d), "resumen": r.read_text(encoding="utf-8", errors="replace") if r.is_file() else "",
-            "images": _images(d), "convergencia": _convergencia(d), "dir": str(d)}
+            "images": _images(d), "convergencia": _convergencia(d), "dir": str(d),
+            "pump": (d / "pump.py").is_file()}
 
 
 @app.get("/files/{name}/images/{fname}")

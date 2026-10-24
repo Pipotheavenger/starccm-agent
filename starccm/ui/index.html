@@ -14,16 +14,21 @@
 <header class="topbar">
   <h1 class="brand">STAR-CCM+ <span>Agente</span></h1>
   <span class="simname mono" id="simname"></span>
+  <span class="lbl-ejec">Ejecutar en</span>
   <div class="seg" id="where" role="radiogroup" aria-label="Dónde corre la simulación">
     <button role="radio" data-where="local" aria-checked="true" title="Local: STAR-CCM+ 2410 en este PC (Windows); Claude usa el solver de aquí">Local · este PC</button>
-    <button role="radio" data-where="server" aria-checked="false" title="Servidor Linux (vm/SERVIDOR.md): 16 núcleos, STAR-CCM+ 2502; la ejecución remota está pendiente de instalación">Servidor · Linux</button>
+    <button role="radio" data-where="server" aria-checked="false" title="Servidor Linux (vm/SERVIDOR.md): 16 núcleos, STAR-CCM+ 2502 instalado en /opt/Siemens; la ejecución remota aún no está implementada">Servidor · Linux</button>
   </div>
   <span class="sp"></span>
-  <span id="solver" role="status" aria-live="polite"><span class="dot"></span><span>Conectando…</span></span>
+  <button id="solverbtn" aria-expanded="false" aria-controls="solverpop" title="Detalle del solver (Local / Servidor)"><span id="solver" role="status" aria-live="polite"><span class="dot"></span><span>Conectando…</span></span> <span class="mut" aria-hidden="true">▾</span></button>
   <button class="sm danger" id="stopsolver" hidden title="Guarda el .sim y apaga el servidor de STAR-CCM+ (server_stop)">Apagar solver</button>
   <button class="sm" id="opengui" title="Abre este .sim en la GUI de STAR-CCM+ (solo sin servidor batch vivo; la licencia PoD cobra por hora)">Abrir en STAR-CCM+</button>
   <button class="sm icon" id="theme" title="Tema claro / oscuro" aria-label="Cambiar tema">◐</button>
 </header>
+<div id="solverpop" hidden>
+  <div class="solverpane"><div class="sec-h">Solver <span class="sp"></span><span id="solvertag"></span></div>
+    <table class="kv" id="solverkv"><tbody></tbody></table></div>
+</div>
 <div id="offline" class="offline-band" role="alert" hidden><span id="offlinetxt">Sin conexión con el servidor local.</span><button class="sm" id="retry">Reintentar</button></div>
 
 <main class="app" id="app">
@@ -31,6 +36,7 @@
   <aside class="simtree" aria-label="Simulación">
     <div class="tree-head"><span class="sec-h">Simulación</span><span class="sp"></span><select id="case" aria-label="Caso" title="Caso (carpeta en cases/)"></select></div>
     <div class="tree" id="tree">
+      <details open id="n-out"><summary>Simulación <span class="badge" id="b-out"></span></summary><ul id="outline"></ul></details>
       <details open id="n-geo"><summary>Superficies 3D <span class="badge" id="b-geo"></span><button class="sm mini" id="exportbtn" title="Exportar fronteras con campo desde el solver vivo (EnSight → visor)">↓ solver</button></summary>
         <div id="datasets" class="mut small">Sin superficies exportadas.</div>
         <ul id="parts" class="parts"></ul>
@@ -41,10 +47,7 @@
         <div id="simtree"></div>
       </details>
     </div>
-    <div class="solverpane">
-      <div class="sec-h">Solver <span class="sp"></span><span id="solvertag"></span></div>
-      <table class="kv" id="solverkv"><tbody></tbody></table>
-    </div>
+    <div class="props" id="props" aria-live="polite"></div>
   </aside>
 
   <!-- Centro: visor 3D con pestañas de escena y dock inferior -->
@@ -70,9 +73,10 @@
         <button class="sm" data-view="axial" title="Mirando a lo largo del eje Z (2)">Axial</button>
         <button class="sm" data-view="lateral" title="Eje Z horizontal (3)">Lateral</button>
         <button class="sm" id="fit" title="Encuadrar (F)">Encuadrar</button>
-        <button class="sm" id="spin" aria-pressed="false" title="Giro automático">⟳</button>
+        <button class="sm" id="spin" aria-pressed="false" title="Giro automático de la cámara">⟳</button>
         <button class="sm" id="ghost" aria-pressed="true" title="Carcasa translúcida: voluta, shroud y casing al 25 % para ver los álabes">Carcasa</button>
         <button class="sm" id="wire" aria-pressed="false" title="Malla superficial">Malla</button>
+        <button class="sm" id="rotor" aria-pressed="false" title="Gira los álabes y el cubo en el visor (solo animación: 0,25 rev/s, eje Z)">Rotor</button>
         <label class="clip"><input type="checkbox" id="clipon"> Corte <select id="clipax" aria-label="Eje del corte"><option>Z</option><option>X</option><option>Y</option></select><input type="range" id="clipv" min="0" max="1000" value="500" aria-label="Posición del corte"></label>
         <button class="sm icon" id="help" title="Atajos: F encuadrar · 1 iso · 2 axial · 3 lateral · doble clic vuela a la superficie · ` pliega el dock · Esc cierra" aria-label="Atajos de teclado">?</button>
       </div>
@@ -88,6 +92,7 @@
         <button role="tab" data-tab="out" aria-selected="true">Salida <span class="dot" id="progdot" hidden></span></button>
         <button role="tab" data-tab="plots" aria-selected="false">Gráficos <span class="badge" id="bconv"></span></button>
         <button role="tab" data-tab="res" aria-selected="false">Resumen</button>
+        <button role="tab" data-tab="chat" aria-selected="false">Claude <span class="dot chat" id="chatdot" hidden></span></button>
         <span class="sp"></span>
         <button class="sm" id="docktoggle" title="Plegar o desplegar (tecla `)">▾</button>
       </div>
@@ -98,16 +103,22 @@
         </section>
         <section class="tabpane" id="tab-plots" role="tabpanel" hidden><div id="conv"></div></section>
         <section class="tabpane" id="tab-res" role="tabpanel" hidden><div id="resumen" class="md"></div></section>
+        <section class="tabpane" id="tab-chat" role="tabpanel" hidden></section>
       </div>
     </div>
   </section>
 
   <!-- Derecha: la IA -->
-  <aside class="chatcol" aria-label="Chat">
+  <aside class="chatcol" id="chatcol" aria-label="Chat">
     <div class="chat-head"><span class="sec-h">Claude</span><span id="chatstate" aria-live="polite"></span><span class="sp"></span>
       <button class="sm" id="newchat">Nueva</button><button class="sm danger" id="stopchat" disabled>Detener</button></div>
     <div id="chatlog"><div class="chat-empty" id="chatempty"><p>Pide escenas, planos de corte, vectores, cambios de parámetros o que corra iteraciones. Claude opera STAR-CCM+ por el MCP y la página se actualiza sola.</p></div></div>
-    <details class="params" id="params" open>
+    <div class="chips" id="chips" aria-label="Acciones del visor (sin gastar solver)">
+      <button class="sm" data-vc="pressure" title="Campo Presión, carcasa translúcida y vuelo a los álabes">Presión en álabes</button>
+      <button class="sm" data-vc="velocity" title="Campo |Velocidad| en todo el modelo">Velocidad</button>
+      <button class="sm" data-vc="rotor" title="Anima el giro del rotor en el visor">Girar rotor</button>
+    </div>
+    <details class="params" id="params">
       <summary>Parámetros <span class="mono" id="pnow"></span><span class="mut small" id="pnote">(los cambia Claude, nunca la página)</span></summary>
       <div class="pgrid">
         <label>rpm<input id="p_rpm" inputmode="decimal" placeholder="2980"></label>
