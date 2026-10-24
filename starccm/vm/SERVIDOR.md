@@ -1,8 +1,9 @@
 # Servidor Linux para correr STAR-CCM+ (estado 2026-10-24)
 
-Instalado, verificado y en uso: la ejecución remota está implementada (commit 038629d) y probada con
-`cursocfturbo.sim`. El MCP sigue en el PC; el servidor solo corre STAR-CCM+ 2502. Se elige «Servidor»
-en la página o `server_start(where="server")`.
+**El agente ya no usa este servidor** (ejecución remota retirada el 2026-10-24; el código sigue en los
+commits `038629d`…`e163e33`). El servidor existe y tiene STAR-CCM+ 2502 instalado, pero solo se usa a mano:
+para una corrida grande, Sebastián mueve el `.sim` y lo corre allí (ver «Correr a mano un .sim grande»).
+El resto del archivo (inventario, instalación, medidas, riesgos) es histórico y sigue siendo válido.
 
 Acceso: `ssh investigacion@172.17.76.78` con la llave `~/.ssh/id_ed25519` del PC de Sebastián
 (instalada en `authorized_keys` el 2026-10-23). Sin contraseñas ni claves en este repo.
@@ -39,7 +40,7 @@ Lanzador `star/bin/starccm+`; JDK 21.0.4 en `/opt/Siemens/20.02.008-R8/jdk/linux
 Variables en `~/.starccm-agent.env` del servidor (chmod 600, sin copia en el repo): `STARCCM_PODKEY`,
 `STARCCM_LICPATH`, `STARCCM_HOME`, `STARCCM_NP=14`. No hay pasos pendientes para Sebastián.
 
-## Decisión: el MCP sigue en el PC
+## Decisión histórica: el MCP seguía en el PC
 
 Ubuntu 20.04 trae Python 3.8 y el paquete `mcp` pide ≥ 3.10. `mcp_server.py` corre en Windows y, con
 `where="server"`, lanza por SSH `starccm+ -server`, inyecta cada macro (por stdin) con el cliente batch
@@ -47,6 +48,46 @@ Ubuntu 20.04 trae Python 3.8 y el paquete `mcp` pide ≥ 3.10. `mcp_server.py` c
 guarda el `.sim` en el servidor. La UI no cambia: lee `.server.json`, `macros/` y `cases/` locales.
 `Server::start` anuncia el host del servidor, pero el cliente batch se inyecta con `localhost:47827`
 dentro de él: no se abren puertos al PC. Carpetas en el servidor: `~/starccm-agent/{sims,macros,cases}`.
+
+## Correr a mano un .sim grande
+
+Para corridas largas (por ejemplo la bomba, ~2× más rápido por iteración: 41,6 s frente a ~82 s por 100).
+Todo lo hace Sebastián; el agente no interviene.
+
+Antes de empezar:
+- **Licencia de una sola copia**: mientras corre el solver en el servidor no se puede usar el solver del PC
+  (ni el agente). Apagar antes el solver local (`server_stop`).
+- **2502 abre los .sim de 2410, pero no al revés**: un `.sim` guardado en el servidor no se abre en 2410.
+  Trabajar en el PC sobre otra copia o dejar el resultado solo para leerlo allí.
+- Subir 158 MB tarda ~11 min (`scp` ≈0,24 MB/s): se sube una vez.
+
+Pasos:
+
+```bash
+# 1. En el PC: subir el .sim (desde starccm/)
+scp sims/<caso>.sim investigacion@172.17.76.78:~/starccm-agent/sims/
+
+# 2. En el servidor: cargar la clave y la licencia (viven en ~/.starccm-agent.env, no en el repo)
+ssh investigacion@172.17.76.78
+cd ~/starccm-agent/sims
+set -a; . ~/.starccm-agent.env; set +a
+
+# 3. Lanzar y dejarlo corriendo aunque se cierre la sesión
+nohup "$STARCCM_HOME/star/bin/starccm+" -batch run -np 14 -power -podkey "$STARCCM_PODKEY"   -licpath "$STARCCM_LICPATH" <caso>.sim > corrida.log 2>&1 &
+tail -f corrida.log        # Ctrl+C no detiene la corrida
+
+# 4. Al terminar, traer resultados al PC
+scp investigacion@172.17.76.78:~/starccm-agent/sims/corrida.log sims/
+scp investigacion@172.17.76.78:~/starccm-agent/sims/<caso>.sim sims/<caso>_servidor.sim
+```
+
+Notas:
+- Línea base: `starccm+ -batch run -np 14 -power -podkey "$STARCCM_PODKEY" -licpath "$STARCCM_LICPATH" <sim>`.
+  Si `starccm+` no está en el PATH, usar la ruta completa `$STARCCM_HOME/star/bin/starccm+` (como arriba).
+- Qué hace `run` (iteraciones, si guarda el `.sim` al terminar) lo decide el `.sim`; comprobarlo en
+  `corrida.log` antes de dar por buena la corrida.
+- La clave va en la línea de comandos: la ve cualquier usuario del servidor con `ps`.
+- Si hay que cortarla: `pkill -f starccm`. La PoD cobra por hora de sesión.
 
 ## Verificación (sin licencia): `bash starccm/vm/remote_check.sh`
 
@@ -81,7 +122,7 @@ Bomba `cursocfturbo` con el `.sim` ya en el servidor, contra el PC (np 4):
 | `export_scene` (PNG traído al PC por tar/SSH) | 25 s | ~11 s |
 | guardar 158 MB y apagar | 50 s | ~15 s |
 
-## Cuándo conviene Local o Servidor
+## Cuándo conviene Local o Servidor (histórico)
 
 | tarea | elegir | por qué |
 |---|---|---|
@@ -90,7 +131,7 @@ Bomba `cursocfturbo` con el `.sim` ya en el servidor, contra el PC (np 4):
 | caso nuevo con un `.sim` grande que aún no está en el servidor | Local, o aceptar la subida | 158 MB = ~11 min de `scp` (se hace una vez) |
 | GUI de STAR-CCM+ | **Local** | «Abrir en STAR-CCM+» solo existe en el PC |
 
-## Reglas de la ejecución remota
+## Reglas de la ejecución remota (retirada)
 
 - El `.sim` se sube SOLO si falta en el servidor o si el del PC es más nuevo (con copia `.antes` del
   remoto). Las entradas que una macro cita (CAD en `cases/<caso>/cad/`) se suben solas si faltan o cambiaron.

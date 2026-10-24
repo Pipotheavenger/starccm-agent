@@ -5,7 +5,7 @@ su MCP, su venv y su memoria. No comparten código ni se llaman entre sí.
 
 | carpeta | qué es | estado |
 |---|---|---|
-| [`starccm/`](starccm/CLAUDE.md) | Agente que opera Simcenter STAR-CCM+ (2410 en este PC o 2502 en el servidor Linux, a elección): malla, física, corrida, altura, torque, eficiencia; interfaz web `starccm/ui/` (puerto 8767) con visor 3D, Fronteras, convergencia en vivo y chat | MCP verificado con el solver real, local y remoto; bomba cursocfturbo convergida; caso nuevo desde la página hasta la simulación |
+| [`starccm/`](starccm/CLAUDE.md) | Agente que opera Simcenter STAR-CCM+ (2410, solo en este PC, 4 procesos): malla, física, corrida, altura, torque, eficiencia; interfaz web `starccm/ui/` (puerto 8767) con visor 3D, Fronteras, convergencia en vivo y chat | MCP verificado con el solver real, solo local (remoto retirado el 2026-10-24; el servidor Linux es opción manual: `starccm/vm/SERVIDOR.md`); bomba cursocfturbo convergida; caso nuevo por etapas desde la página, con preguntas de la IA con opciones |
 | [`cfturbo/`](cfturbo/CLAUDE.md) | Agente de diseño 1D con CFturbo 2026 + interfaz web controladora con visor 3D | terminado, evaluado 9/10 |
 
 Reglas comunes:

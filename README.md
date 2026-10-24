@@ -6,7 +6,7 @@ cada uno en su carpeta, con su `CLAUDE.md` (brief que manda), su MCP, su entorno
 
 | carpeta | herramienta | qué hace | estado (2026-10-24) |
 |---|---|---|---|
-| [`starccm/`](starccm/README.md) | Simcenter STAR-CCM+ 2410 (este PC) o 2502 (servidor Linux por SSH), licencia PoD | prepara, malla, configura física, corre y entrega altura, torque, eficiencia y escenas de una bomba | MCP verificado contra el solver real, local y remoto; bomba `cursocfturbo` convergida; interfaz web completa |
+| [`starccm/`](starccm/README.md) | Simcenter STAR-CCM+ 2410 (este PC, 4 procesos), licencia PoD | prepara, malla, configura física, corre y entrega altura, torque, eficiencia y escenas de una bomba | MCP verificado contra el solver real, solo local; bomba `cursocfturbo` convergida; interfaz web completa |
 | [`cfturbo/`](cfturbo/README.md) | CFturbo 2026.1 (este PC) | diseño 1D por semejanza, variantes de geometría, curvas, exportación a CFD, interfaz web con visor 3D | terminado, evaluado 9/10 |
 
 No comparten código ni se llaman entre sí. CFturbo exporta STEP + `.cfturbo-ccm`; el agente de
@@ -36,7 +36,8 @@ Principios (de los dos `CLAUDE.md`):
   `iterate`, `export_scene`, `save`, `recipe_search`, `recipe_save`, `docs_search`). Un servidor de
   STAR-CCM+ vivo con el `.sim` en memoria; cada tool inyecta una macro Java por cliente batch
   (`-host localhost:47827 -batch Macro.java -noexit`), precompilada antes con el `javac` de STAR-CCM+.
-  Local (2410 en este PC) o remoto (2502 en el servidor Linux por SSH, elegido en la página).
+  Solo local (2410 en este PC). El servidor Linux (2502) queda como opción manual: Sebastián mueve el `.sim`
+  y lo corre allí (`starccm/vm/SERVIDOR.md`).
 - Casos: `cases/cilindro/` (prueba de fontanería) y `cases/cursocfturbo/` (bomba centrífuga, 370 k
   celdas, 400 iteraciones, H 78,8 m, M 192,5 N·m, η 89,4 %). Cada caso tiene `RESUMEN.md`, `images/`,
   `reports/` y, el de la bomba, un guion reproducible `pump.py`.
@@ -46,15 +47,18 @@ Principios (de los dos `CLAUDE.md`):
   visor 3D con campos, modo Fronteras (el usuario marca entrada, salida, pared…), dock con Salida,
   Gráficos en vivo y Resumen, panel de IA plegable, «＋ Caso nuevo» desde una geometría. Detalle y guía
   de punta a punta en `starccm/README.md`.
+- La IA pregunta con opciones cuando duda (bloque `pregunta`, «ver», Fronteras) y el caso nuevo va por
+  etapas: preparar, 100 iteraciones de prueba con resultados y confirmación antes de seguir hasta el criterio
+  de parada.
 
 Tiempos medidos (100 iteraciones de la bomba):
 
 | dónde | segundos |
 |---|---|
 | Local (2410, 4 procesos) | ~82 |
-| Servidor (2502, 14 procesos) | 41,6 |
+| Servidor a mano (2502, 14 procesos; medido con el agente antes de retirarlo) | 41,6 |
 
-Arranque local 4,5 s; macro 8–10 s; primera macro de CAD/física 50–75 s. Servidor: arranque 26 s, macro +5 s.
+Arranque local 4,5 s; macro 8–10 s; primera macro de CAD/física 50–75 s.
 
 ## cfturbo/ en una página
 
@@ -80,13 +84,15 @@ carpeta). Reiniciar la sesión de Claude Code para que aparezcan las tools.
 
 ## Hoja de ruta
 
-1. ~~Interfaz web de `starccm/`~~ hecha (2026-10-23/24), incluida la ejecución remota y el caso nuevo.
+1. ~~Interfaz web de `starccm/`~~ hecha (2026-10-23/24), con caso nuevo, preguntas con opciones y etapas. La ejecución remota se probó y se retiró el 2026-10-24: el agente es solo local.
 2. Probar el flujo completo desde una geometría nueva (caras sin nombre → Fronteras → «Aplicar con la IA»)
    y el salto a la GUI (`/api/open_gui`).
 3. Perfeccionar la bomba: malla y y+, reflujo en la salida de la voluta, comparación con la predicción 1D
    de CFturbo (84,4 m frente a 78,8 m del CFD), monitores de parada automáticos.
-4. Varias simulaciones: curva H-Q de 5 caudales reusando la malla (`PRIMER-PROMPT.md`, tercer prompt) en el
-   servidor, comparación entre variantes de geometría. La PoD de una sola copia obliga a hacerlas en serie.
+4. Varias simulaciones: curva H-Q de 5 caudales reusando la malla (`PRIMER-PROMPT.md`, tercer prompt) en local,
+   comparación entre variantes de geometría. La PoD de una sola copia obliga a hacerlas en serie.
+5. Corridas grandes: a mano en el servidor Linux (2502 abre los `.sim` de 2410; al revés no). Pasos en
+   `starccm/vm/SERVIDOR.md`.
 
 ## Historia
 
@@ -101,4 +107,7 @@ carpeta). Reiniciar la sesión de Claude Code para que aparezcan las tools.
   chat y apagado. Solo queda sin probar el salto a la GUI de STAR-CCM+.
 - 2026-10-24: ejecución remota en el servidor Linux (2502 por SSH; 41,6 s por 100 iteraciones frente a ~82 s
   local), caso nuevo desde la página hasta la simulación, modo Fronteras, convergencia en vivo y chat que
-  sobrevive a recargar la pestaña.
+  sobrevive a recargar la pestaña. Preguntas de la IA con opciones y caso nuevo por etapas.
+- 2026-10-24 (tarde): se quitó la ejecución remota (commit be0df78; era lo más frágil: 7 fallos solo por ser
+  remoto, dos versiones de STAR-CCM+, solvers huérfanos). El agente es solo local; el servidor queda como
+  opción manual. Recuperable en los commits `038629d`…`e163e33`.

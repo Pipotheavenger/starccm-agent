@@ -6,28 +6,28 @@ STAR-CCM+ es el solver. Claude es el ingeniero que lo opera. Claude nunca resuel
 
 Proyecto independiente dentro del repo `starccm-agent`: todo vive en `starccm/`. No depende de
 `cfturbo/` (el agente hermano de diseño 1D) ni lo toca. Uso paso a paso y endpoints: `README.md`.
-Servidor Linux y tiempos remotos: `vm/SERVIDOR.md`.
+Servidor Linux (solo a mano, fuera del agente): `vm/SERVIDOR.md`.
 
 ## Entorno
 
-Dos sitios donde corre el solver; se elige por simulación (selector Local/Servidor de la UI,
-`where=` en `server_start` o `STARCCM_RUN_WHERE`).
+El solver corre solo en este PC. La ejecución remota se retiró el 2026-10-24 (ver «Remoto (retirado el
+2026-10-24)» en Lecciones). El servidor Linux sigue existiendo, pero el agente no lo usa: `vm/SERVIDOR.md`.
 
-| | Local (este PC, Windows 11) | Servidor (Linux, por SSH) |
-|---|---|---|
-| STAR-CCM+ | **2410.0001** (build 19.06.009-R8, doble precisión) | **2502.0001** (build 20.02.008-R8) en `/opt/Siemens/20.02.008-R8` |
-| CPU | i5-1245U: 2 núcleos P + 8 E (12 hilos) | 16 vCPU Xeon Gold 6230R, 62 GiB |
-| procesos del solver | `STARCCM_NP` (por defecto hilos − 2; en `.env`: 4) | `STARCCM_NP=14` (en su `~/.starccm-agent.env`) |
-| lanzador | `star\bin\starccm+.bat` bajo `STARCCM_HOME` (se detecta solo) | `star/bin/starccm+` |
+| | Local (este PC, Windows 11) |
+|---|---|
+| STAR-CCM+ | **2410.0001** (build 19.06.009-R8, doble precisión) |
+| CPU | i5-1245U: 2 núcleos P + 8 E (12 hilos) |
+| procesos del solver | `STARCCM_NP` (por defecto hilos − 2; en `.env`: 4) |
+| lanzador | `star\bin\starccm+.bat` bajo `STARCCM_HOME` (se detecta solo) |
 
 - Licencia Power-on-Demand contra `1999@flex.cd-adapco.com`. Flags: `-power -podkey $STARCCM_PODKEY
   -licpath $STARCCM_LICPATH`. La clave vive **solo** en `starccm/.env` (ignorado por git),
-  `%USERPROFILE%\.starccm-agent.env` o, en el servidor, `~/.starccm-agent.env`. Nunca en código,
+  o `%USERPROFILE%\.starccm-agent.env`. Nunca en código,
   recetas, logs, `.server.json` ni commits; `mcp_server.py` la enmascara en todo lo que escribe.
-  La PoD es por periodo y de una sola copia (Sebastián): un solo solver vivo a la vez, local o remoto,
-  y PoD cobra por hora de sesión (ver `vm/SERVIDOR.md`).
+  La PoD es por periodo y de una sola copia (Sebastián): un solo solver vivo a la vez
+  (también frente a una corrida a mano en el servidor) y PoD cobra por hora de sesión (ver `vm/SERVIDOR.md`).
 - Python 3.14 en `starccm/.venv` (paquetes `mcp`, `fastapi`, `uvicorn`). Java: el de STAR-CCM+, no instalar otro
-  (JDK en `..\jdk\win64\jdk21.0.2\bin`; en el servidor `jdk/linux-x86_64/jdk21.0.4`).
+  (JDK en `..\jdk\win64\jdk21.0.2\bin`).
 - Javadoc de la API Java: `$STARCCM_HOME\doc\client\html\star\...` (1 595 clases solo en `star.common`):
   fuente de verdad de nombres y métodos → tool `docs_search`. Guía de usuario: `$STARCCM_HOME\doc\UserGuide_19.06.pdf`.
 - `vm/bootstrap.sh` es el plan original (MV Rocky con 2606), aparcado: el servidor real es el Ubuntu de `vm/SERVIDOR.md`.
@@ -36,16 +36,16 @@ Dos sitios donde corre el solver; se elige por simulación (selector Local/Servi
 
 ```
 Claude Code ──MCP stdio──> mcp_server.py ──> starccm+ -server -port 47827 (UN servidor vivo, .sim en memoria)
-                               │               ▲   local, o por SSH en el servidor Linux
+                               │               ▲
                                │  por tool:    │ starccm+ -host localhost:47827 -batch Agent_<ts>.java -noexit
                                │
                                ├── recipes/   snippets Java verificados (memoria del agente)
                                ├── cases/     un directorio por caso: cad, reportes, imágenes, RESUMEN.md
-                               ├── sims/      .sim de trabajo y logs del servidor (ignorado por git)
+                               ├── sims/      .sim de trabajo y logs del solver (ignorado por git)
                                ├── macros/    cada macro inyectada + su salida .out (ignorado por git)
                                ├── tests/     starccm+ y claude falsos para los selftests
                                ├── ui/        interfaz web local (puerto 8767)
-                               └── vm/        servidor Linux (SERVIDOR.md, remote_check.sh) y bootstrap.sh (aparcado)
+                               └── vm/        servidor Linux, uso manual (SERVIDOR.md, remote_check.sh) y bootstrap.sh (aparcado)
 ```
 
 STAR-CCM+ es cliente-servidor. Se levanta UN servidor con el .sim en memoria y cada tool le inyecta
@@ -55,7 +55,7 @@ Inyección verificada el 2026-10-23 contra 2410 real: `starccm+ -host localhost:
 (el `-noexit` evita que el cliente batch apague el servidor). Plan B (macro residente que vigila un
 `inbox/`) no hizo falta.
 
-Tiempos medidos en este PC (local):
+Tiempos medidos en este PC:
 
 | paso | segundos |
 |---|---|
@@ -72,7 +72,7 @@ sin licencia, 5–20 s) debe pasar antes de entregar. Tools:
 
 | tool | input | output |
 |---|---|---|
-| `server_start(sim_path?, name?, where?)` | .sim a abrir (se copia a `sims/`) o vacío; `where` = `local` \| `server` \| vacío (lo elegido en la UI) | pid, host:port, sim, segundos. Reutiliza el vivo; se niega si hay otro .sim cargado |
+| `server_start(sim_path?, name?)` | .sim a abrir (se copia a `sims/`) o vacío | pid, host:port, sim, segundos. Reutiliza el vivo; se niega si hay otro .sim cargado |
 | `server_stop(save=true)` | | guarda, `sim.kill()`, limpia `.server.json` |
 | `server_status()` | | vivo o no, minutos de inactividad |
 | `inspect(path?)` | `tree`, `regions`, `physics`, `mesh_ops`, `parts`, `reports`, `monitors`, `scenes`, `solver` | JSON con nombres, tipos y valores |
@@ -109,29 +109,12 @@ Reglas del servidor:
 - Apagado por inactividad: 30 min sin actividad medida en disco (mtime de macros/`.out` y `.server.json`)
   → `save` + `server_stop`; lo vigilan el MCP y la UI. Si el guardado falla no se apaga. PoD cobra por hora de sesión.
 - Un solo servidor a la vez. Barridos se encadenan en la misma sesión, no se abren varias.
-- `server_start` registra PID, puerto, sim, `where`, `rsim` y log en `.server.json`. Si el proceso murió, limpia y relanza.
+- `server_start` registra PID, puerto, sim y log en `.server.json`. Si el proceso murió, limpia y relanza.
   Si ya hay un .sim distinto cargado se niega: apagar antes con `server_stop()`.
 - Siempre trabajar sobre una copia en `sims/`, nunca sobre el .sim original del usuario.
 - `server_start` apaga el autoguardado batch (`AutoSave.setAutoSaveBatch(false)`).
 - Config por env o por `starccm/.env` (ver `.env.example`): `STARCCM_PODKEY`, `STARCCM_LICPATH`, `STARCCM_PORT`,
-  `STARCCM_NP`, `STARCCM_IDLE_MIN`, `STARCCM_HOME`, `STARCCM_EXE`, `STARCCM_PRECOMPILE`, y las remotas
-  `STARCCM_RUN_WHERE`, `STARCCM_SSH`, `STARCCM_REMOTE_DIR`.
-
-## Ejecución remota (servidor Linux, STAR-CCM+ 2502)
-
-Implementada y probada el 2026-10-24 con `cursocfturbo.sim`. El MCP sigue en el PC; con `where="server"`
-(o «Servidor» en la UI → `.ui-settings.json`, o `STARCCM_RUN_WHERE=server`) `server_start` lanza por SSH
-`starccm+ -server` en `investigacion@172.17.76.78` (`STARCCM_SSH`, `STARCCM_REMOTE_DIR`, llave del usuario;
-licencia y `STARCCM_HOME` del `~/.starccm-agent.env` del servidor: la clave no sale de allí). El puerto que
-se adopta es el real que abre STAR-CCM+.
-- Cada macro se sube por stdin y se inyecta con el cliente batch DEL servidor (el 2410 del PC no conecta a
-  un 2502); su stdout vuelve en vivo al `.out` local. SSH va con stdin vacío y con `HOME` puesto (`_ssh_env()`).
-- Las rutas de `starccm/` dentro del Java se traducen a `REMOTE_DIR`. Lo que la macro escriba en `cases/` o
-  `macros/` se trae con un `tar` por SSH. Los archivos de una carpeta de `cases/` citada en la macro (la IA
-  arma «…/cad/» + nombre) se suben solos si faltan o cambiaron.
-- El `.sim` vive en `REMOTE_DIR/sims`: se sube solo si falta o si el del PC es más nuevo (copia `.antes`);
-  ~11 min por 158 MB. `save`/`server_stop` guardan allí; bajarlo es bajo demanda.
-- Medidas, cuándo conviene Local o Servidor y riesgos: `vm/SERVIDOR.md`. Comprobación sin licencia: `bash vm/remote_check.sh`.
+  `STARCCM_NP`, `STARCCM_IDLE_MIN`, `STARCCM_HOME`, `STARCCM_EXE`, `STARCCM_PRECOMPILE`.
 
 ## Interfaz web: `ui/`
 
@@ -143,7 +126,7 @@ conversión de un EnSight mínimo y chat con `tests/fake_claude.py`; sin solver 
 
 Imita el cliente de STAR-CCM+ asistido por IA, alrededor de UNA simulación (Sebastián, 2026-10-23:
 «primero a 1 simulación», «todo animado tipo 3D, como el cliente de ccm pero IA driven, tema claro»).
-Zonas: barra superior (Local/Servidor, «＋ Caso nuevo», estado del solver, apagar, abrir en la GUI), árbol
+Zonas: barra superior («＋ Caso nuevo», estado del solver, apagar, abrir en la GUI), árbol
 plegable a la izquierda, visor 3D en el centro (campos, Fronteras, Carcasa, Rotor, corte), dock abajo
 (Salida, Gráficos en vivo, Resumen) y panel de IA plegable y redimensionable a la derecha.
 
@@ -156,8 +139,7 @@ Reglas:
   SOLO dentro de `cases/` (RESUMEN.md, convergencia.csv, 250 turnos máx.). Corre en un hilo del servidor
   que guarda los eventos: recargar o cerrar la pestaña no lo mata (`/api/chat/current` y `/api/chat/stream`
   reenganchan). La IA narra cada paso en una frase corta; cada tool se ve como «▶ Importando la geometría … 12 s ✓».
-- Cada mensaje del chat empieza con `(Caso … · ejecución: Local …)` o `(… ejecución elegida: Servidor …)`;
-  la elección vive en `.ui-settings.json` para que la IA la lea.
+- Cada mensaje del chat empieza con `(Caso …)` y el estado del solver local.
 - `cases/<caso>/fronteras.json` (modo Fronteras): papel de cada cara elegido por el usuario
   (`inlet|outlet|wall|interface|symmetry`). La IA lo usa tal cual, sin adivinar. Si la geometría trae caras
   agrupadas o con nombres genéricos: separarlas por ángulo (receta `separar-caras-por-angulo.java`),
@@ -310,7 +292,7 @@ Agrupadas por tema; fecha 2026-10-23 salvo indicación.
   (peligroso con un solver vivo de otra sesión; la Salida de la UI enseñaba el «FAKE server»). Ahora
   redirige `SIMS`, `MACROS`, `STATE_FILE` y `AGENT_LOG` a un temporal, nunca apaga un solver registrado, y
   la UI filtra además `FAKE`, `<fake>` y `starccm-selftest-` en logs y macros viejos. El selftest de la UI
-  fuerza modo local (antes leía «Servidor» de `.ui-settings.json` y lanzaba un solver real).
+  fuerza modo local (antes leía el modo remoto de `.ui-settings.json` y lanzaba un solver real).
 - `server_start` falló justo después de que otra sesión apagara el servidor (12:23, stop sin guardar): el
   log dice `Fatal error in MPI_Init_thread … init called when another process has exited without calling
   init`. Es un fallo transitorio de MPI, no de licencia: el reintento una hora después arrancó en 32,6 s.
@@ -319,7 +301,10 @@ Agrupadas por tema; fecha 2026-10-23 salvo indicación.
   niega si hay un .sim distinto cargado; apagar con `server_stop()`. (Desde f953f56 el chat corre en un
   hilo y sobrevive a cerrar la pestaña; «Detener» sigue matando la CLI.)
 
-### Servidor Linux (remoto)
+### Remoto (retirado el 2026-10-24)
+Retirado por decisión de Sebastián: era la parte más frágil (7 fallos solo por ser remoto, dos versiones de
+STAR-CCM+, solvers huérfanos) y para montar casos va mejor en local. Para recuperarlo: commits `038629d`…`e163e33`.
+Las corridas grandes se hacen a mano: `vm/SERVIDOR.md`. Lecciones que dejó:
 - 2026-10-24 · Arranca en 16,6 s y la macro se inyecta en 5 s, pero el `scp` PC→servidor va a ≈0,24 MB/s
   (158 MB = 694 s): subir el .sim una vez y no recopiarlo por `server_start`.
 - 2026-10-24 · El servidor de la UI (lanzado por el preview) no tiene `HOME` y el `ssh` de Git busca la
