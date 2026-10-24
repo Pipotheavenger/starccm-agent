@@ -4,9 +4,9 @@ Agentes de IA para turbomáquinas hidráulicas que operan software de ingenierí
 natural, con Claude Code como cerebro y un servidor MCP por herramienta. Dos agentes independientes,
 cada uno en su carpeta, con su `CLAUDE.md` (brief que manda), su MCP, su entorno Python y su memoria:
 
-| carpeta | herramienta | qué hace | estado (2026-10-23) |
+| carpeta | herramienta | qué hace | estado (2026-10-24) |
 |---|---|---|---|
-| [`starccm/`](starccm/README.md) | Simcenter STAR-CCM+ 2410 (este PC, licencia PoD) | prepara, malla, configura física, corre y entrega altura, torque, eficiencia y escenas de una bomba | MCP verificado contra el solver real; bomba `cursocfturbo` convergida |
+| [`starccm/`](starccm/README.md) | Simcenter STAR-CCM+ 2410 (este PC) o 2502 (servidor Linux por SSH), licencia PoD | prepara, malla, configura física, corre y entrega altura, torque, eficiencia y escenas de una bomba | MCP verificado contra el solver real, local y remoto; bomba `cursocfturbo` convergida; interfaz web completa |
 | [`cfturbo/`](cfturbo/README.md) | CFturbo 2026.1 (este PC) | diseño 1D por semejanza, variantes de geometría, curvas, exportación a CFD, interfaz web con visor 3D | terminado, evaluado 9/10 |
 
 No comparten código ni se llaman entre sí. CFturbo exporta STEP + `.cfturbo-ccm`; el agente de
@@ -36,17 +36,25 @@ Principios (de los dos `CLAUDE.md`):
   `iterate`, `export_scene`, `save`, `recipe_search`, `recipe_save`, `docs_search`). Un servidor de
   STAR-CCM+ vivo con el `.sim` en memoria; cada tool inyecta una macro Java por cliente batch
   (`-host localhost:47827 -batch Macro.java -noexit`), precompilada antes con el `javac` de STAR-CCM+.
-- Tiempos medidos: arranque 4,5 s; macro 8–10 s; primera macro de CAD/física 60–75 s (módulos).
+  Local (2410 en este PC) o remoto (2502 en el servidor Linux por SSH, elegido en la página).
 - Casos: `cases/cilindro/` (prueba de fontanería) y `cases/cursocfturbo/` (bomba centrífuga, 370 k
   celdas, 400 iteraciones, H 78,8 m, M 192,5 N·m, η 89,4 %). Cada caso tiene `RESUMEN.md`, `images/`,
-  `reports/` y, el de la bomba, un guion reproducible `pump.py` paso a paso.
-- 22 recetas en `recipes/` (geometría, regiones, interfaces, malla por parte, MRF, fronteras,
-  reportes, escenas, residuales, autosave, exportación de superficies con campo a EnSight).
-- `ui/`: interfaz web (FastAPI + three.js, puerto 8767, tema claro) que imita el cliente de
-  STAR-CCM+ pero asistido por IA, alrededor de UNA simulación: árbol de la simulación, visor 3D con
-  los campos pintados en las superficies (presión, velocidad, y+…), escenas PNG como pestañas, dock
-  con Salida (log y macros en vivo), Gráficos de convergencia y Resumen, chat con Claude Code y
-  parámetros que se convierten en prompt. Detalle en `starccm/README.md`.
+  `reports/` y, el de la bomba, un guion reproducible `pump.py`.
+- 25 recetas en `recipes/` (geometría, separar caras por ángulo, regiones, interfaces, malla por parte,
+  MRF, fronteras, reportes, escenas, residuales, autosave, exportación de superficies a EnSight).
+- `ui/`: interfaz web (FastAPI + three.js, puerto 8767, tema claro) alrededor de UNA simulación: árbol,
+  visor 3D con campos, modo Fronteras (el usuario marca entrada, salida, pared…), dock con Salida,
+  Gráficos en vivo y Resumen, panel de IA plegable, «＋ Caso nuevo» desde una geometría. Detalle y guía
+  de punta a punta en `starccm/README.md`.
+
+Tiempos medidos (100 iteraciones de la bomba):
+
+| dónde | segundos |
+|---|---|
+| Local (2410, 4 procesos) | ~82 |
+| Servidor (2502, 14 procesos) | 41,6 |
+
+Arranque local 4,5 s; macro 8–10 s; primera macro de CAD/física 50–75 s. Servidor: arranque 26 s, macro +5 s.
 
 ## cfturbo/ en una página
 
@@ -72,15 +80,13 @@ carpeta). Reiniciar la sesión de Claude Code para que aparezcan las tools.
 
 ## Hoja de ruta
 
-1. **Interfaz web de `starccm/`** (`starccm/ui/`, puerto 8767): construida el 2026-10-23 alrededor de
-   UNA simulación (chat, árbol, visor 3D con campos, escenas, progreso en vivo, parámetros, salto a la
-   GUI de STAR-CCM+). Falta exportar las superficies reales de la bomba al visor con el solver vivo
-   (`POST /api/surface`; cuesta licencia PoD) y pedir por el chat planos de corte y vectores.
-2. Perfeccionar esa simulación: malla y y+, comparación con la predicción 1D de CFturbo (84,4 m
-   frente a 78,8 m del CFD), monitores de parada automáticos.
-3. Después, varias simulaciones: curva H-Q de 5 caudales reusando la malla (`PRIMER-PROMPT.md`,
-   tercer prompt), comparación entre variantes de geometría.
-4. MV Linux con STAR-CCM+ 2606 (`starccm/vm/bootstrap.sh`), cuando haga falta más potencia.
+1. ~~Interfaz web de `starccm/`~~ hecha (2026-10-23/24), incluida la ejecución remota y el caso nuevo.
+2. Probar el flujo completo desde una geometría nueva (caras sin nombre → Fronteras → «Aplicar con la IA»)
+   y el salto a la GUI (`/api/open_gui`).
+3. Perfeccionar la bomba: malla y y+, reflujo en la salida de la voluta, comparación con la predicción 1D
+   de CFturbo (84,4 m frente a 78,8 m del CFD), monitores de parada automáticos.
+4. Varias simulaciones: curva H-Q de 5 caudales reusando la malla (`PRIMER-PROMPT.md`, tercer prompt) en el
+   servidor, comparación entre variantes de geometría. La PoD de una sola copia obliga a hacerlas en serie.
 
 ## Historia
 
@@ -93,3 +99,6 @@ carpeta). Reiniciar la sesión de Claude Code para que aparezcan las tools.
   recorrido completo del caso `cursocfturbo` desde la página con el solver real: superficies con campo
   de todas las fronteras, escenas de plano con vectores y de malla, iteraciones con la Salida en vivo,
   chat y apagado. Solo queda sin probar el salto a la GUI de STAR-CCM+.
+- 2026-10-24: ejecución remota en el servidor Linux (2502 por SSH; 41,6 s por 100 iteraciones frente a ~82 s
+  local), caso nuevo desde la página hasta la simulación, modo Fronteras, convergencia en vivo y chat que
+  sobrevive a recargar la pestaña.

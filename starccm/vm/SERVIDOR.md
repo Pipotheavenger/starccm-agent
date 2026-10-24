@@ -1,33 +1,33 @@
-# Servidor Linux para correr STAR-CCM+ (inventario 2026-10-23)
+# Servidor Linux para correr STAR-CCM+ (estado 2026-10-24)
+
+Instalado, verificado y en uso: la ejecución remota está implementada (commit 038629d) y probada con
+`cursocfturbo.sim`. El MCP sigue en el PC; el servidor solo corre STAR-CCM+ 2502. Se elige «Servidor»
+en la página o `server_start(where="server")`.
 
 Acceso: `ssh investigacion@172.17.76.78` con la llave `~/.ssh/id_ed25519` del PC de Sebastián
-(instalada en `authorized_keys` el 2026-10-23). Sin contraseñas en este repo ni en ningún archivo.
+(instalada en `authorized_keys` el 2026-10-23). Sin contraseñas ni claves en este repo.
+
+## Inventario
 
 | dato | valor |
 |---|---|
 | hostname | server-inv-001332 |
 | sistema | Ubuntu 20.04.3 LTS, kernel 5.4.0-81, máquina virtual VMware (escritorio xrdp) |
-| CPU | 16 vCPU Intel Xeon Gold 6230R @ 2,10 GHz (1 hilo por núcleo) |
+| CPU | 16 vCPU Intel Xeon Gold 6230R @ 2,10 GHz (1 hilo por vCPU) |
 | RAM | 62 GiB (61 libres) + 4 GiB swap |
-| disco | 245 GB en `/`, 226 GB libres |
-| GPU | ninguna (VMware SVGA): sin render por GPU; las escenas en batch van por software |
+| disco | 245 GB en `/`; 173 GB libres tras instalar |
+| GPU | ninguna (VMware SVGA): las escenas en batch van por software |
 | usuario | `investigacion` (uid 1003), en el grupo `sudo`, sudo pide contraseña |
-| herramientas | wget, curl, tar, python3; **sin** java, mpirun ni gcc (STAR-CCM+ trae JDK y MPI propios) |
-| red | sale a Dropbox (HTTP 200) |
+| herramientas | wget, curl, tar, python3 (3.8, sin `venv`/`pip`); **sin** java, mpirun ni gcc (STAR-CCM+ trae JDK y MPI propios) |
+| solver | STAR-CCM+ **2502.0001** (build 20.02.008, doble precisión) en `/opt/Siemens/20.02.008-R8` (18 GB), `STARCCM_NP=14` |
 
-Comparación con el PC Windows (i5-1245U, 2P+8E, `STARCCM_NP=4`): el servidor tiene 16 núcleos reales
-de servidor y 4× la RAM: bomba de 370 k celdas debería ir claramente más rápido con `-np 12…16`.
-
-## Instalador
-
-`~/installers/STAR-CCM-2502.0001_008_linux-x86_64-r8.tar.gz` (descargado desde Dropbox el
-2026-10-23; log en `~/installers/wget.log`). Versión 2502 (en el PC hay 2410): las recetas Java y el
-MCP valen igual, pero medir de nuevo tiempos y revisar que la API no cambió en lo que usan las recetas.
+Frente al PC Windows (i5-1245U, 2P+8E, `STARCCM_NP=4`) el servidor tiene 16 vCPU (el solver usa 14
+procesos, dejando 2 al sistema) y 4× la RAM.
 
 ## Instalación (2026-10-23, Sebastián escribió el sudo)
 
-El tar trae un ejecutable ELF `STAR-CCM+2502.0001_008_linux-x86_64-2.28_clang17.0-r8.aol` (7 GB) con
-`--help`. Línea usada (modo silencioso, sin licencia configurada: la PoD se pasa al arrancar):
+Instalador `~/installers/STAR-CCM-2502.0001_008_linux-x86_64-r8.tar.gz` (Dropbox). El tar trae un
+ELF `.aol` de 7 GB con `--help`. Línea usada (silencioso, sin licencia: la PoD se pasa al arrancar):
 
 ```bash
 sudo ./STAR-CCM+2502.0001_008_linux-x86_64-2.28_clang17.0-r8.aol -i silent -DINSTALLMETHOD=custom \
@@ -35,56 +35,43 @@ sudo ./STAR-CCM+2502.0001_008_linux-x86_64-2.28_clang17.0-r8.aol -i silent -DINS
   -DINSTALL_SVIEW=false -DINSTALL_LICENSING=false -DINSTALL_JDK=true -DADDSYSTEMPATH=true
 ```
 
-Queda en `/opt/Siemens/20.02.008-R8/STAR-CCM+20.02.008-R8` (lanzador `star/bin/starccm+`, JDK en
-`/opt/Siemens/20.02.008-R8/jdk/…`). Variables en `~/.starccm-agent.env` del servidor (chmod 600, sin
-copia en el repo): `STARCCM_PODKEY`, `STARCCM_LICPATH`, `STARCCM_HOME`, `STARCCM_NP=14`.
+Lanzador `star/bin/starccm+`; JDK 21.0.4 en `/opt/Siemens/20.02.008-R8/jdk/linux-x86_64/jdk21.0.4`.
+Variables en `~/.starccm-agent.env` del servidor (chmod 600, sin copia en el repo): `STARCCM_PODKEY`,
+`STARCCM_LICPATH`, `STARCCM_HOME`, `STARCCM_NP=14`. No hay pasos pendientes para Sebastián.
 
-## Decisión: el MCP sigue en el PC; el servidor solo corre STAR-CCM+
+## Decisión: el MCP sigue en el PC
 
-Ubuntu 20.04 trae Python 3.8 sin `venv`/`pip`, y el paquete `mcp` pide ≥ 3.10: montar Python en el
-servidor exige sudo o `uv`. No hace falta: `mcp_server.py` corre en Windows y, con
-`STARCCM_RUN_HOST=server`, lanza por SSH `starccm+ -server` en el servidor, copia cada macro con `scp`,
-la inyecta con el cliente batch **del servidor** (misma versión 2502; el cliente 2410 del PC no puede
-conectarse a un servidor 2502) y trae de vuelta `.out`, PNG y exportaciones. La UI no cambia: sigue
-leyendo `.server.json`, `macros/` y `cases/` locales. **Implementado y probado el 2026-10-24** (ver abajo).
+Ubuntu 20.04 trae Python 3.8 y el paquete `mcp` pide ≥ 3.10. `mcp_server.py` corre en Windows y, con
+`where="server"`, lanza por SSH `starccm+ -server`, inyecta cada macro (por stdin) con el cliente batch
+**del servidor** (el 2410 del PC no conecta a un 2502), trae `.out`, PNG y exportaciones con un `tar` y
+guarda el `.sim` en el servidor. La UI no cambia: lee `.server.json`, `macros/` y `cases/` locales.
+`Server::start` anuncia el host del servidor, pero el cliente batch se inyecta con `localhost:47827`
+dentro de él: no se abren puertos al PC. Carpetas en el servidor: `~/starccm-agent/{sims,macros,cases}`.
 
-## Verificación del servidor (2026-10-24, solver real, sin sudo)
+## Verificación (sin licencia): `bash starccm/vm/remote_check.sh`
 
-Comprobable en cualquier momento y sin licencia: `bash starccm/vm/remote_check.sh` (13 comprobaciones,
-no arranca el solver; enmascara la clave).
+13 comprobaciones, no arranca el solver, enmascara la clave.
 
 | comprobación | resultado |
 |---|---|
-| instalador | terminó (sin `install.aol` vivo); `/opt/Siemens` = 18 GB; disco libre 173 GB |
-| versión | Simcenter STAR-CCM+ 2502.0001 Build 20.02.008, doble precisión (linux-x86_64-2.28/clang17.0-r8) |
-| `javac` | `/opt/Siemens/20.02.008-R8/jdk/linux-x86_64/jdk21.0.4/bin/javac` (JDK 21.0.4) |
-| javadoc | `$STARCCM_HOME/doc/client/html/star/…` |
-| licencia PoD | `ccmppower` obtenida de `1999@flex.cd-adapco.com`; expira en 135 días |
+| versión | Simcenter STAR-CCM+ 2502.0001 Build 20.02.008, doble precisión |
+| `javac` y javadoc | JDK 21.0.4; `$STARCCM_HOME/doc/client/html/star/…` |
+| licencia PoD | `ccmppower` obtenida de `1999@flex.cd-adapco.com`; expiraba en 135 días a 2026-10-24 |
 | MPI | Open MPI 4.1.5 propio, 14 rangos en 1 host |
-| dependencias de sistema | ninguna que instalar: `libgfortran`, `libGLEW`, `libjpeg.so.62`, `libhwloc`, `libtbb`, `libhdf5`, Boost, Poco… vienen en el árbol de la instalación; las del sistema (`libGL`, `libGLU`, `libX11`, `libxcb`, `libfontconfig`, `libnuma`) ya están. glibc 2.31 ≥ 2.28 requerido. `check_dependencies` no corre (pide `python` sin versión; irrelevante) |
+| dependencias de sistema | nada que instalar: las bibliotecas vienen en el árbol de la instalación y las del sistema ya están; glibc 2.31 ≥ 2.28 |
 
-Tiempos medidos (`-np 14`, sim nueva vacía, comandos de `~/.starccm-agent.env`):
+## Tiempos medidos
+
+Sim nueva vacía, `-np 14` (2026-10-24):
 
 | paso | segundos |
 |---|---|
 | `starccm+ -server …` hasta `Server::start` | 16,6 |
-| inyección de macro trivial (`-host localhost:47827 -batch Ping.java -noexit`), imprime `PING` | 5,0 |
-| apagado con macro `sim.kill();` | ~5, sin procesos starccm restantes (0) |
+| inyección de macro trivial (`-batch Ping.java -noexit`) | 5,0 |
+| apagado con macro `sim.kill();` | ~5, sin procesos restantes |
 | `scp` de `cursocfturbo.sim` (158 MB) PC → servidor | **694** (≈0,24 MB/s, hash idéntico) |
 
-Consecuencias para el MCP remoto:
-- El `scp` de un .sim grande es el cuello de botella (11,6 min): subir el .sim UNA vez y dejarlo en
-  `~/starccm-agent/sims/` (ya está `cursocfturbo.sim`); no copiarlo en cada `server_start`.
-  Macros (KB), PNG y CSV viajan en segundos. Traer el .sim de vuelta tardaría lo mismo o más: guardar en
-  el servidor y bajar solo bajo demanda.
-- `Server::start` anuncia el host como `server-inv-001332.uniandes.edu.co:47827`; el cliente batch se
-  inyecta con `localhost:47827` dentro del servidor, sin abrir puertos al PC.
-- Carpetas creadas: `~/starccm-agent/{sims,macros,cases}`. Log de la prueba: `sims/prueba.server.log`.
-- Sin sudo no falta nada: no hay pasos pendientes para Sebastián.
-
-## Ejecución remota en uso (2026-10-24, bomba cursocfturbo, solver real)
-
-Se elige «Servidor» en la página (o `server_start(where="server")`). Medido con el `.sim` ya en el servidor:
+Bomba `cursocfturbo` con el `.sim` ya en el servidor, contra el PC (np 4):
 
 | paso | servidor (np 14) | PC (np 4) |
 |---|---|---|
@@ -94,10 +81,37 @@ Se elige «Servidor» en la página (o `server_start(where="server")`). Medido c
 | `export_scene` (PNG traído al PC por tar/SSH) | 25 s | ~11 s |
 | guardar 158 MB y apagar | 50 s | ~15 s |
 
-- Cada macro paga ~5 s extra (SSH + cliente batch remoto). Para iterar compensa de sobra; para tareas
-  cortas (una escena) es más lento que en local.
-- El `.sim` se sube SOLO si falta en el servidor o si el del PC es más nuevo (y se guarda una copia
-  `.antes` del remoto). Lección: la primera versión comparaba solo el tamaño y pisó un `.sim` guardado
-  en el servidor con el del PC (se perdieron 20 iteraciones de prueba).
-- La clave PoD va en `-podkey` en la línea de comandos: en el servidor la ve cualquier usuario con `ps`.
-  Es como funciona STAR-CCM+ también en Windows; si el servidor es compartido, tenerlo en cuenta.
+## Cuándo conviene Local o Servidor
+
+| tarea | elegir | por qué |
+|---|---|---|
+| iterar, mallar, curvas H-Q, cualquier corrida larga | **Servidor** | ~2× más rápido por iteración (41,6 s frente a ~82 s por 100) |
+| escenas, `inspect`, consultas y arreglos cortos | **Local** | el servidor paga ~5 s extra por macro (SSH + cliente remoto) y el PNG viaja de vuelta |
+| caso nuevo con un `.sim` grande que aún no está en el servidor | Local, o aceptar la subida | 158 MB = ~11 min de `scp` (se hace una vez) |
+| GUI de STAR-CCM+ | **Local** | «Abrir en STAR-CCM+» solo existe en el PC |
+
+## Reglas de la ejecución remota
+
+- El `.sim` se sube SOLO si falta en el servidor o si el del PC es más nuevo (con copia `.antes` del
+  remoto). Las entradas que una macro cita (CAD en `cases/<caso>/cad/`) se suben solas si faltan o cambiaron.
+- Macros (KB), PNG y CSV viajan en segundos. Traer el `.sim` de vuelta tardaría lo mismo o más: se guarda
+  en el servidor y se baja solo bajo demanda.
+- Apagado por inactividad a los 30 min (también remoto); un solo solver vivo a la vez.
+
+## Licencia PoD
+
+Es por periodo y de una sola copia (según Sebastián): solo cabe un solver con licencia a la vez, así que
+no se puede correr una simulación local y otra en el servidor al mismo tiempo, ni dejar una sesión vieja
+viva mientras se arranca otra. PoD cobra por hora de sesión: apagar el solver al terminar.
+
+## Riesgos conocidos
+
+| riesgo | detalle |
+|---|---|
+| clave PoD visible | va en `-podkey` en la línea de comandos: en el servidor la ve cualquier usuario con `ps`. Es igual en Windows; tenerlo en cuenta si el servidor es compartido |
+| `.sim` pisado | la primera versión comparaba solo el tamaño y pisó un `.sim` guardado en el servidor con el del PC (20 iteraciones perdidas). Ya solo sube si el del PC es más nuevo, con copia `.antes` |
+| subida lenta | ≈0,24 MB/s PC → servidor: 158 MB = 694 s |
+| solver huérfano | si el chat se desconecta, una macro en curso (p. ej. una malla) sigue en el solver y cobra; `server_stop()` lo apaga. Desde f953f56 el chat sobrevive a cerrar la pestaña |
+| SSH sin `HOME` o con stdin | el servidor de la UI no tiene `HOME` y `ssh` buscaba la llave en `$HOME/.ssh`: fallaba en silencio y la UI daba el solver por muerto. Corregido (`_ssh_env()`, stdin vacío) |
+| 2410 vs 2502 | el PC y el servidor usan versiones distintas: recetas y MCP valen igual, pero una receta nueva debe probarse en la versión donde va a correr |
+| fallo transitorio de MPI | tras apagar otra sesión sin guardar, `server_start` puede fallar con `MPI_Init_thread`; reintentar |

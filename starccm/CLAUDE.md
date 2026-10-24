@@ -5,66 +5,74 @@ malla, configura la física, corre y entrega altura, torque, eficiencia y escena
 STAR-CCM+ es el solver. Claude es el ingeniero que lo opera. Claude nunca resuelve física a mano.
 
 Proyecto independiente dentro del repo `starccm-agent`: todo vive en `starccm/`. No depende de
-`cfturbo/` (el agente hermano de diseño 1D) ni lo toca.
+`cfturbo/` (el agente hermano de diseño 1D) ni lo toca. Uso paso a paso y endpoints: `README.md`.
+Servidor Linux y tiempos remotos: `vm/SERVIDOR.md`.
 
-## Entorno (este PC, Windows 11)
+## Entorno
 
-- STAR-CCM+ **2410.0001** (build 19.06.009-R8, doble precisión) en
-  `C:\Program Files\Siemens\19.06.009-R8\STAR-CCM+19.06.009-R8` (= `STARCCM_HOME`, se detecta solo).
-  Lanzador: `star\bin\starccm+.bat`. JDK propio con `javac` en `..\jdk\win64\jdk21.0.2\bin`.
-- Licencia Power-on-Demand contra `1999@flex.cd-adapco.com` (`CDLMD_LICENSE_FILE` ya apunta ahí).
-  Flags: `-power -podkey $STARCCM_PODKEY -licpath $STARCCM_LICPATH`. La clave vive **solo** en
-  `starccm/.env` (ignorado por git) o en `%USERPROFILE%\.starccm-agent.env`. Nunca en código,
+Dos sitios donde corre el solver; se elige por simulación (selector Local/Servidor de la UI,
+`where=` en `server_start` o `STARCCM_RUN_WHERE`).
+
+| | Local (este PC, Windows 11) | Servidor (Linux, por SSH) |
+|---|---|---|
+| STAR-CCM+ | **2410.0001** (build 19.06.009-R8, doble precisión) | **2502.0001** (build 20.02.008-R8) en `/opt/Siemens/20.02.008-R8` |
+| CPU | i5-1245U: 2 núcleos P + 8 E (12 hilos) | 16 vCPU Xeon Gold 6230R, 62 GiB |
+| procesos del solver | `STARCCM_NP` (por defecto hilos − 2; en `.env`: 4) | `STARCCM_NP=14` (en su `~/.starccm-agent.env`) |
+| lanzador | `star\bin\starccm+.bat` bajo `STARCCM_HOME` (se detecta solo) | `star/bin/starccm+` |
+
+- Licencia Power-on-Demand contra `1999@flex.cd-adapco.com`. Flags: `-power -podkey $STARCCM_PODKEY
+  -licpath $STARCCM_LICPATH`. La clave vive **solo** en `starccm/.env` (ignorado por git),
+  `%USERPROFILE%\.starccm-agent.env` o, en el servidor, `~/.starccm-agent.env`. Nunca en código,
   recetas, logs, `.server.json` ni commits; `mcp_server.py` la enmascara en todo lo que escribe.
-- Python 3.14 en `starccm/.venv` (paquete `mcp`). Java: el de STAR-CCM+, no instalar otro.
-- Javadoc de la API Java: `$STARCCM_HOME\doc\client\html\star\...` (1 595 clases solo en
-  `star.common`). Es la fuente de verdad de nombres de clases y métodos → tool `docs_search`.
-  La guía de usuario está en `$STARCCM_HOME\doc\UserGuide_19.06.pdf`.
-- 12 núcleos; el servidor usa `STARCCM_NP` = núcleos − 2 por defecto.
-- La MV Linux del brief original queda para después: `vm/bootstrap.sh` la prepara cuando toque.
+  La PoD es por periodo y de una sola copia (Sebastián): un solo solver vivo a la vez, local o remoto,
+  y PoD cobra por hora de sesión (ver `vm/SERVIDOR.md`).
+- Python 3.14 en `starccm/.venv` (paquetes `mcp`, `fastapi`, `uvicorn`). Java: el de STAR-CCM+, no instalar otro
+  (JDK en `..\jdk\win64\jdk21.0.2\bin`; en el servidor `jdk/linux-x86_64/jdk21.0.4`).
+- Javadoc de la API Java: `$STARCCM_HOME\doc\client\html\star\...` (1 595 clases solo en `star.common`):
+  fuente de verdad de nombres y métodos → tool `docs_search`. Guía de usuario: `$STARCCM_HOME\doc\UserGuide_19.06.pdf`.
+- `vm/bootstrap.sh` es el plan original (MV Rocky con 2606), aparcado: el servidor real es el Ubuntu de `vm/SERVIDOR.md`.
 
 ## Arquitectura
 
 ```
 Claude Code ──MCP stdio──> mcp_server.py ──> starccm+ -server -port 47827 (UN servidor vivo, .sim en memoria)
-                               │               ▲
+                               │               ▲   local, o por SSH en el servidor Linux
                                │  por tool:    │ starccm+ -host localhost:47827 -batch Agent_<ts>.java -noexit
                                │
                                ├── recipes/   snippets Java verificados (memoria del agente)
                                ├── cases/     un directorio por caso: cad, reportes, imágenes, RESUMEN.md
                                ├── sims/      .sim de trabajo y logs del servidor (ignorado por git)
                                ├── macros/    cada macro inyectada + su salida .out (ignorado por git)
-                               ├── tests/     starccm+ falso para el selftest
-                               ├── ui/        interfaz web local (puerto 8767): chat, casos, solver, escena en vivo
-                               └── vm/        bootstrap de la MV Linux (futuro)
+                               ├── tests/     starccm+ y claude falsos para los selftests
+                               ├── ui/        interfaz web local (puerto 8767)
+                               └── vm/        servidor Linux (SERVIDOR.md, remote_check.sh) y bootstrap.sh (aparcado)
 ```
 
 STAR-CCM+ es cliente-servidor. Se levanta UN servidor con el .sim en memoria y cada tool le inyecta
 una macro Java con un cliente batch. No se recarga el .sim entre pasos. La macro imprime entre los
 marcadores `AGENT_BEGIN <tag>` / `AGENT_END <tag>` y el MCP recorta esa salida.
+Inyección verificada el 2026-10-23 contra 2410 real: `starccm+ -host localhost:PORT -batch Macro.java -noexit`
+(el `-noexit` evita que el cliente batch apague el servidor). Plan B (macro residente que vigila un
+`inbox/`) no hizo falta.
 
-Inyección de macros: **verificada el 2026-10-23 contra STAR-CCM+ 2410 real**:
-`starccm+ -host localhost:PORT -batch Macro.java -noexit` (el `-noexit` evita que el cliente batch
-apague el servidor al terminar la macro). Tiempos medidos en este PC:
+Tiempos medidos en este PC (local):
 
 | paso | segundos |
 |---|---|
 | `server_start` (licencia + MPI, sim nueva) | 4,5 |
+| `server_start` en frío con el .sim de 158 MB | 32,6 (en caliente 4,5–6) |
 | inyección de una macro trivial (arranque del cliente Java) | 8–10 |
 | primera macro que carga módulos (3D-CAD/Parasolid, malla, física) | 50–75 |
 | precompilación con `javac` | 2 |
 
-Plan B (macro residente que vigila un `inbox/`) no hizo falta; solo si el cliente batch deja de
-funcionar en otra versión.
-
 ## MCP: `mcp_server.py`
 
 Un solo archivo, FastMCP, stdio. `python mcp_server.py --selftest` (starccm+ falso de `tests/`,
-sin licencia, ~20 s) debe pasar antes de entregar. Tools:
+sin licencia, 5–20 s) debe pasar antes de entregar. Tools:
 
 | tool | input | output |
 |---|---|---|
-| `server_start(sim_path?, name?, where?)` | .sim a abrir (se copia a `sims/`) o vacío; `where` = `local` \| `server` \| vacío (lo elegido en la UI) | pid, host:port, sim, segundos. Reutiliza el vivo |
+| `server_start(sim_path?, name?, where?)` | .sim a abrir (se copia a `sims/`) o vacío; `where` = `local` \| `server` \| vacío (lo elegido en la UI) | pid, host:port, sim, segundos. Reutiliza el vivo; se niega si hay otro .sim cargado |
 | `server_stop(save=true)` | | guarda, `sim.kill()`, limpia `.server.json` |
 | `server_status()` | | vivo o no, minutos de inactividad |
 | `inspect(path?)` | `tree`, `regions`, `physics`, `mesh_ops`, `parts`, `reports`, `monitors`, `scenes`, `solver` | JSON con nombres, tipos y valores |
@@ -98,56 +106,72 @@ public class Agent_<timestamp> extends StarMacro {
 ```
 
 Reglas del servidor:
-- Apagado por inactividad: 30 min sin actividad medida en disco (mtime de macros/`.out` y `.server.json`) → `save` + `server_stop`; lo vigilan el MCP y la UI. Si el guardado falla no se apaga. PoD cobra por hora de sesión.
+- Apagado por inactividad: 30 min sin actividad medida en disco (mtime de macros/`.out` y `.server.json`)
+  → `save` + `server_stop`; lo vigilan el MCP y la UI. Si el guardado falla no se apaga. PoD cobra por hora de sesión.
 - Un solo servidor a la vez. Barridos se encadenan en la misma sesión, no se abren varias.
-- `server_start` registra PID, puerto, sim y log en `.server.json`. Si el proceso murió, limpia y relanza.
+- `server_start` registra PID, puerto, sim, `where`, `rsim` y log en `.server.json`. Si el proceso murió, limpia y relanza.
+  Si ya hay un .sim distinto cargado se niega: apagar antes con `server_stop()`.
 - Siempre trabajar sobre una copia en `sims/`, nunca sobre el .sim original del usuario.
-- Config por env o por `starccm/.env` (ver `.env.example`): `STARCCM_PODKEY`, `STARCCM_LICPATH`,
-  `STARCCM_PORT`, `STARCCM_NP`, `STARCCM_IDLE_MIN`, `STARCCM_HOME`, `STARCCM_EXE`.
+- `server_start` apaga el autoguardado batch (`AutoSave.setAutoSaveBatch(false)`).
+- Config por env o por `starccm/.env` (ver `.env.example`): `STARCCM_PODKEY`, `STARCCM_LICPATH`, `STARCCM_PORT`,
+  `STARCCM_NP`, `STARCCM_IDLE_MIN`, `STARCCM_HOME`, `STARCCM_EXE`, `STARCCM_PRECOMPILE`, y las remotas
+  `STARCCM_RUN_WHERE`, `STARCCM_SSH`, `STARCCM_REMOTE_DIR`.
 
 ## Ejecución remota (servidor Linux, STAR-CCM+ 2502)
 
-El MCP sigue en este PC; con `where="server"` (o «Servidor» elegido en la UI → `.ui-settings.json`, o
-`STARCCM_RUN_WHERE=server`) `server_start` lanza por SSH `starccm+ -server` en `investigacion@172.17.76.78`
-(`STARCCM_SSH`, `STARCCM_REMOTE_DIR`, llave del usuario; licencia y `STARCCM_HOME` del `~/.starccm-agent.env`
-del servidor: la clave no sale de allí). Cada macro se sube por stdin, se inyecta con el cliente batch DEL
-SERVIDOR (el 2410 del PC no conecta a un 2502) y su stdout vuelve en vivo al `.out` local; las rutas de
-`starccm/` dentro del Java se traducen a `REMOTE_DIR` y lo que la macro escriba en `cases/` o `macros/` se
-trae con un `tar` por SSH. El `.sim` vive en `REMOTE_DIR/sims` (se sube solo si falta o cambió de tamaño:
-~11 min por 158 MB) y `save`/`server_stop` guardan allí. `.server.json` lleva `where`, `rsim`, `rlog`.
-Detalle y medidas: `vm/SERVIDOR.md`. Comprobación sin licencia: `bash vm/remote_check.sh`.
+Implementada y probada el 2026-10-24 con `cursocfturbo.sim`. El MCP sigue en el PC; con `where="server"`
+(o «Servidor» en la UI → `.ui-settings.json`, o `STARCCM_RUN_WHERE=server`) `server_start` lanza por SSH
+`starccm+ -server` en `investigacion@172.17.76.78` (`STARCCM_SSH`, `STARCCM_REMOTE_DIR`, llave del usuario;
+licencia y `STARCCM_HOME` del `~/.starccm-agent.env` del servidor: la clave no sale de allí). El puerto que
+se adopta es el real que abre STAR-CCM+.
+- Cada macro se sube por stdin y se inyecta con el cliente batch DEL servidor (el 2410 del PC no conecta a
+  un 2502); su stdout vuelve en vivo al `.out` local. SSH va con stdin vacío y con `HOME` puesto (`_ssh_env()`).
+- Las rutas de `starccm/` dentro del Java se traducen a `REMOTE_DIR`. Lo que la macro escriba en `cases/` o
+  `macros/` se trae con un `tar` por SSH. Los archivos de una carpeta de `cases/` citada en la macro (la IA
+  arma «…/cad/» + nombre) se suben solos si faltan o cambiaron.
+- El `.sim` vive en `REMOTE_DIR/sims`: se sube solo si falta o si el del PC es más nuevo (copia `.antes`);
+  ~11 min por 158 MB. `save`/`server_stop` guardan allí; bajarlo es bajo demanda.
+- Medidas, cuándo conviene Local o Servidor y riesgos: `vm/SERVIDOR.md`. Comprobación sin licencia: `bash vm/remote_check.sh`.
 
 ## Interfaz web: `ui/`
 
 `ui/server.py` (FastAPI) + `ui/surfaces.py` (EnSight/STL → dataset) + `ui/index.html` + `ui/app.js`
 (three.js por CDN) + `ui/style.css`, sin build, tema claro por defecto. Preview `starccm-ui`
-(`.claude/launch.json` de la raíz, puerto 8767). Paneles y endpoints: `README.md`.
-Comprobación: `python ui/server.py --selftest` (HTTP contra los casos + conversión de un EnSight
-mínimo, sin solver ni CLI).
+(`.claude/launch.json` de la raíz, puerto 8767). Paneles, flujo y endpoints: `README.md`.
+Comprobación: `python ui/server.py --selftest` (HTTP contra los casos, caso nuevo y subida, `fronteras.json`,
+conversión de un EnSight mínimo y chat con `tests/fake_claude.py`; sin solver ni CLI real).
+
 Imita el cliente de STAR-CCM+ asistido por IA, alrededor de UNA simulación (Sebastián, 2026-10-23:
-«primero a 1 simulación», «todo animado tipo 3D, como el cliente de ccm pero IA driven, tema claro»):
-árbol a la izquierda (superficies 3D, escenas, árbol del .sim, solver), visor three.js en el centro
-(campo en los vértices, leyenda, tooltip, corte, vistas animadas; las escenas PNG como pestañas),
-dock abajo (Salida = terminal, Gráficos, Resumen), Claude a la derecha (chat + parámetros → prompt).
-Reglas: la UI solo **lee** (casos, `.server.json`, logs, `macros/`, `surfaces/`) y pide al MCP importado
-como módulo: `server_stop`, `export_scene`, `inspect`, `run_java` (solo la receta de exportación).
-Nunca arranca el solver batch, nunca edita el .sim, nunca inyecta macros mientras el chat trabaja
-(el candado del MCP es por proceso). El chat lanza `claude -p` con cwd `starccm/` y solo las tools
-`mcp__starccm__*`, Read, Glob, Grep. Cuando el agente termine un bloque de trabajo debe dejar lo que
-la página muestra: `images/*.png`, `reports/convergencia.csv` y las superficies (receta
-`exportar-superficies-ensight.java` o `POST /api/surface`).
-Verificado el 2026-10-23 en el preview sin solver: visor con un dataset sintético (colores, leyenda,
-volar a una frontera, pestañas de escena, corte), chat con `server_status` (10 s), Salida con la última
-macro real, 409 correctos. Verificados contra el solver real el 2026-10-23 12:02 (otra sesión, servidor
-con `cursocfturbo.sim`): `/api/status` vivo, `/api/tree?refresh=1` (9,9 s, regiones estator/rotor/voluta),
-`POST /api/scene` (9,1 s, PNG regenerado), `/api/scenes` (3 escenas), `/api/progress` con la macro y su
-`.out`, `POST /api/server/stop` (guardó 158 MB y apagó), y a las 12:21 `POST /api/surface` (dataset
-real `cases/cursocfturbo/surfaces/superficies`, en el visor). Recorrido completo del caso de uso desde
-la página el 2026-10-23 14:10–14:21 (esta sesión, solver real): exportar TODAS las fronteras con campo
-(187 400 triángulos), escenas nuevas de plano con vectores y de malla regeneradas con «↻», 180
-iteraciones con la Salida mostrando las iteraciones en vivo y `convergencia.csv` creciendo, chat con
-`inspect` (4 turnos, 36 s) y apagado con guardado desde el botón (segundo clic). Por probar: `/api/open_gui`. Los `confirm()` del navegador no aparecen en el panel
-embebido de la app: toda confirmación va dentro de la página (segundo clic «¿Seguro?»).
+«primero a 1 simulación», «todo animado tipo 3D, como el cliente de ccm pero IA driven, tema claro»).
+Zonas: barra superior (Local/Servidor, «＋ Caso nuevo», estado del solver, apagar, abrir en la GUI), árbol
+plegable a la izquierda, visor 3D en el centro (campos, Fronteras, Carcasa, Rotor, corte), dock abajo
+(Salida, Gráficos en vivo, Resumen) y panel de IA plegable y redimensionable a la derecha.
+
+Reglas:
+- La UI solo **lee** (casos, `.server.json`, logs, `macros/`, `surfaces/`) y pide al MCP importado como
+  módulo: `server_stop`, `export_scene`, `inspect`, `run_java` (solo la receta de exportación). Nunca
+  arranca el solver, nunca edita el .sim, nunca inyecta macros mientras el chat trabaja (el candado del
+  MCP es por proceso).
+- El chat lanza `claude -p` con cwd `starccm/`, las tools `mcp__starccm__*`, Read, Glob, Grep y escribir
+  SOLO dentro de `cases/` (RESUMEN.md, convergencia.csv, 250 turnos máx.). Corre en un hilo del servidor
+  que guarda los eventos: recargar o cerrar la pestaña no lo mata (`/api/chat/current` y `/api/chat/stream`
+  reenganchan). La IA narra cada paso en una frase corta; cada tool se ve como «▶ Importando la geometría … 12 s ✓».
+- Cada mensaje del chat empieza con `(Caso … · ejecución: Local …)` o `(… ejecución elegida: Servidor …)`;
+  la elección vive en `.ui-settings.json` para que la IA la lea.
+- `cases/<caso>/fronteras.json` (modo Fronteras): papel de cada cara elegido por el usuario
+  (`inlet|outlet|wall|interface|symmetry`). La IA lo usa tal cual, sin adivinar. Si la geometría trae caras
+  agrupadas o con nombres genéricos: separarlas por ángulo (receta `separar-caras-por-angulo.java`),
+  exportar la geometría al visor y PARAR pidiendo al usuario que marque entrada y salida. No seguir
+  iterando si diverge.
+- Al terminar un bloque de trabajo el agente deja lo que la página muestra: `images/*.png`,
+  `reports/convergencia.csv` y las superficies (receta `exportar-superficies-ensight.java` o `POST /api/surface`;
+  el visor convierte solo los EnSight nuevos de `surfaces/_raw/`).
+- Toda confirmación va dentro de la página (segundo clic «¿Seguro?»): los `confirm()` del navegador no
+  aparecen en el panel embebido de la app.
+- Verificado contra el solver real el 2026-10-23 (recorrido completo de `cursocfturbo`): `/api/status`,
+  `/api/tree?refresh=1` (9,9 s), `POST /api/scene` (9,1 s), `/api/progress`, `POST /api/server/stop`
+  (guardó 158 MB), `POST /api/surface` (17 fronteras, 187 400 triángulos), escenas de plano con vectores y
+  de malla, 180 iteraciones con la Salida en vivo, chat con `inspect` (4 turnos, 36 s). Por probar: `/api/open_gui`.
 
 ## Memoria
 
@@ -156,11 +180,13 @@ embebido de la app: toda confirmación va dentro de la página (segundo clic «�
   Antes de escribir Java nuevo: `recipe_search` primero, `docs_search` segundo, inventar tercero.
   Las recetas con `// ESTADO: no verificado` son de memoria de Claude: probarlas antes de confiar.
 - Este archivo: tras cualquier error que costara más de dos intentos, añadir una línea en
-  "Lecciones" abajo con la causa y la solución. Corto, una línea.
+  «Lecciones» con la causa y la solución. Corto, una línea.
 - `cases/<caso>/RESUMEN.md`: al terminar un caso, geometría, malla, parámetros, resultados, tiempo.
 
 ## Flujo estándar: bomba centrífuga, estado estacionario
 
+0. Geometría nueva: importar y mirar los nombres de cara. Si vienen agrupadas o genéricas, separar por
+   ángulo y pedir al usuario que marque entrada y salida en el modo Fronteras (`fronteras.json`).
 1. Importar CAD (STEP/Parasolid) como parte de geometría. Listar superficies y renombrar:
    `inlet`, `outlet`, `blades`, `hub`, `shroud`, `volute`, `walls`.
 2. Surface wrapper si el CAD trae huecos. Extraer volumen de fluido interno. Leak detection
@@ -185,12 +211,13 @@ embebido de la app: toda confirmación va dentro de la página (segundo clic «�
 
 Turbina: mismo flujo, cambia el signo del momento y el objetivo es potencia extraída.
 
-## Criterios de "no sirve"
+## Criterios de «no sirve»
 
 - Desbalance de masa > 1 %: revisar interfaz rotor/estator y leaks.
 - Residuales planos altos: bajar under-relaxation de presión a 0.2 y velocidad a 0.5, 300 iter, reevaluar.
 - H oscila: malla gruesa en la lengua de la voluta o el caso es realmente transitorio. Refinar primero.
 - Celdas malas > 0.1 %: mesh repair o subir prism layer shrink.
+- Diverge (residuales que suben, H o M sin sentido): parar y avisar; no seguir iterando.
 
 ## Estilo
 
@@ -201,90 +228,106 @@ Turbina: mismo flujo, cambia el signo del momento y el objetivo es potencia extr
 
 ## Lecciones
 
-- 2026-10-23 · El sandbox del tool Bash de Claude Code bloquea las DLL de STAR-CCM+ («Una directiva
-  de Control de aplicaciones bloqueó este archivo», `DynamicLoader: couldn't load StarProfile`).
-  El solver solo arranca fuera del sandbox: desde el MCP (que Claude Code lanza sin sandbox) o con
-  el tool Bash sin sandbox. No es una política de Windows.
-- 2026-10-23 · Sin `-podkey`, `starccm+` pide `ccmpsuite` a `1999@flex.cd-adapco.com` y aborta
-  (`Failed to get all licenses`, rc 8, ~60 s). No hay ninguna clave guardada en el PC: va en `.env`.
-- 2026-10-23 · `doc/api` de la instalación es la API de co-simulación (C), no el javadoc. El javadoc
-  Java está en `doc/client/html`. `StarMacro` y `Simulation` viven en
-  `star/lib/java/platform/modules/ext/starbase.jar`; `MeshOperationManager` en `meshing.jar`.
-- 2026-10-23 · El cliente batch por defecto apaga el servidor al acabar la macro: siempre `-noexit`.
-- 2026-10-23 · La precompilación con `javac` detecta nombres de API equivocados en 2 s sin licencia:
-  usarla antes de inyectar. Ejemplos cazados: `MonitorManager.export` necesita 3 argumentos;
-  `ThreeDimensionalModel` vive en `star.metrics` (ya en los imports por defecto).
-- 2026-10-23 · `MonitorManager.export` falla en batch («StarUpdate unexpectedly missing»). Residuales:
-  exportar el plot `Residuals` (`sim.getPlotManager().getPlot("Residuals").export(csv, ",")`); valores
-  de reportes: `getReportMonitorValue()` directo. Así lo hace `iterate`.
-- 2026-10-23 · `createScene("X")` deja la escena como «X 1». Para que el PNG no salga en blanco en batch:
-  `PartDisplayer` con las **fronteras** como entrada (no la región), `initialize()`,
-  `setRepresentation(getDefaultFvRepresentation())` y `resetCamera(true)`. Receta `escena-malla.java`.
-- 2026-10-23 · `newRegionsFromParts` crea solo un continuo «Physics 1»; crear otro deja dos. Reusarlo.
-- 2026-10-23 · Autoguardado «batch» activo por defecto: deja `<sim>@meshed.sim` y `<sim>@00050.sim`.
-  `server_start` lo apaga al arrancar (`AutoSave.setAutoSaveBatch(false)`).
-- 2026-10-23 · CPU i5-1245U: 2 núcleos P + 8 E. Con `-np 10` el solver avisa de sobresuscripción;
-  `STARCCM_NP=4` en `.env`. El selftest y el cilindro no notan la diferencia; medir en una bomba.
-- 2026-10-23 · Export de CFturbo (3 STEP con caras coincidentes en las interfaces): una sola
-  operación de malla con las 3 partes falla en el remallador («Surface intersects self» en r = D2/2).
-  Cada parte por separado se remalla limpia. Regla: **una operación de malla por parte** y añadir
-  `star.resurfacer.AutomaticSurfaceRepairAutoMesher` a la lista de malladores.
-- 2026-10-23 · `importCadPart(ruta, "SharpEdges", 30.0, 2, 1e-5)` conserva los nombres de cara de
-  CFturbo como superficies de parte (`[Impeller_1]-Flow domain-BladePS`…); `newRegionsFromParts`
-  con `OneBoundaryPerPartSurface` las convierte en fronteras con el mismo nombre (renombrar por sufijo).
-- 2026-10-23 · MRF en 2410: `ReferenceFrameManager.createReferenceFrame(RotatingReferenceFrame.class, n)`
-  + `getRotationRate().setValueAndUnits(rpm, "rpm")` + `getAxisDirection/Origin`; se asigna con
-  `region.getValues().get(MotionSpecification.class).setReferenceFrame(frame)`. `RotatingMotion` no
-  expone la velocidad directamente.
-- 2026-10-23 · Expresiones entre reportes: `${{nombreReport}}` (p.ej. `${{pt_outReport}}`).
-- 2026-10-23 · Caso cursocfturbo (bomba CFturbo, D2 270 mm, 250 m³/h, 2980 rpm): 370 k celdas,
-  converge en 400 iteraciones (82 s/100 con 4 procesos): H 78,8 m, M 192,5 N·m, η 89,4 %, balance
-  de masa 0 %. Guion reproducible `cases/cursocfturbo/pump.py`; recetas `bomba-*.java`.
-- 2026-10-23 · Exportar superficies con campo para el visor: `ImportManager.export(String, Collection<Region>,
-  Collection<Boundary>, Collection<Part>, Collection<PartSurface>, Collection<FieldFunction>, boolean append,
-  boolean dataAtVerts)` con un `.case` escribe EnSight Gold (javadoc 2410; `docs_search` no lo encuentra
-  porque indexa mal `ImportManager`: grep en `doc/client/html/star/common/ImportManager.html`). Las
-  constantes de opciones viven en `AutoExport` (`OptionDataAtVerts`, `OptionTriangulatePoly`…).
-  Vectores → `getMagnitudeFunction()`. `ui/surfaces.py` lee ASCII y C Binary, `tria3/quad4/nsided`.
-  Verificado con el solver real el 2026-10-23 12:21 (sesión hermana): 8 fronteras del impulsor,
-  107 189 triángulos, 4 campos en 13,5 s; conversión 0,3 s. Trampas del EnSight de STAR-CCM+: el
-  `.case` nombra las variables con asteriscos (`superficies*****.Pressure` → índice `00000`) y los
-  archivos de variables binarios NO llevan la cabecera «C Binary» (su primera línea es la descripción):
-  el formato lo fija la geometría.
-- 2026-10-23 · Caso cilindro (r 50 mm, L 0,5 m, 11 463 celdas poliédricas + prismas, agua 1 m/s,
-  SST): 100 iteraciones, residuales 1e-6, Q_in = −Q_out = 7,755 kg/s. Recetas de cada paso guardadas.
-  `cases/cilindro/RESUMEN.md`.
-- 2026-10-23 · `server_start` falló justo después de que otra sesión apagara el servidor (12:23, stop sin
-  guardar): el log del servidor dice `Fatal error in MPI_Init_thread … init called when another process
-  has exited without calling init`. Es un fallo transitorio de MPI, no de licencia: el reintento una hora
-  después arrancó en 32,6 s (arranque en frío con el .sim de 158 MB; en caliente 4,5–6 s).
-- 2026-10-23 · Vectores en un plano (`VectorDisplayer`): `getGlyphSettings().setRelativeToModelLength(x)`
-  es un porcentaje (1.0 = invisibles; 6.0 bien), `setSpacingMode(0)` = GEOMETRIC con
-  `getGeometricSpacing().setOnRatio(6)` (una flecha de cada 6 celdas); `setSpacingMode(1)` = UNIFORM.
-  `PartManager` no tiene `getParts()`: recorrer `getObjects()`. Receta `escena-plano-vectores.java`.
-- 2026-10-23 · Fronteras de interfaz (rotor/estator): `b instanceof DirectBoundaryInterfaceBoundary`, y su
-  nombre lleva `[int_…]`. Fuera de las escenas de malla y de la exportación de superficies (duplican
-  discos internos). Con todas las demás (`pattern "."`): 17 fronteras, 187 400 triángulos, 10,7 s.
-- 2026-10-23 · `_inject` escribe el stdout del cliente EN VIVO en `macros/<macro>.out` (antes lo
-  capturaba al final): la pestaña Salida de `ui/` muestra las iteraciones mientras corren; una macro
-  sigue en marcha mientras su `.out` no contiene `AGENT_END`. El log del servidor NO trae las iteraciones.
-- 2026-10-23 · Herramientas de Claude Code corren en serie: para observar la UI mientras el solver itera,
-  lanzar `iterate` con `python -c "import mcp_server…"` en segundo plano **sin sandbox** (el cliente
-  carga las DLL de STAR-CCM+) y sondear `/api/progress` o el navegador mientras tanto.
-- 2026-10-23 · `mcp_server.py --selftest` escribía en `sims/`, `macros/`, `agent.log` y borraba el `.server.json`
-  real (peligroso con un solver vivo de otra sesión; la Salida de la UI enseñaba el «FAKE server»). Ahora
-  redirige `SIMS`, `MACROS`, `STATE_FILE` y `AGENT_LOG` a un temporal; la UI filtra además `FAKE`,
-  `<fake>` y `starccm-selftest-` en logs y macros viejos.
-- 2026-10-23 · Bomba cursocfturbo a 580 iteraciones: H 78,77 m, M 192,50 N·m, η 0,8935, continuidad 8e-7;
-  aviso «Reversed flow on 55 faces on voluta: outlet» (reflujo en la salida del difusor, balance de masa
-  intacto). Escenas nuevas: `plano_vectores`, `malla`.
-- 2026-10-24 · Servidor Linux 2502 (`vm/SERVIDOR.md`): arranca en 16,6 s y la macro se inyecta en 5 s, pero el `scp` PC→servidor va a ≈0,24 MB/s (158 MB = 694 s): subir el .sim una vez y no recopiarlo por `server_start`. Git Bash no trae `bc`: medir con `$SECONDS`.
-- 2026-10-24 · Remoto: el servidor de la UI (lanzado por el preview) no tiene `HOME` y el `ssh` de Git busca la
-  llave en `$HOME/.ssh`: el SSH fallaba en silencio (BatchMode) y la UI daba el solver por muerto. `_ssh_env()`
-  pone `HOME=USERPROFILE` en cada ssh/scp.
-- 2026-10-24 · Remoto: la IA arma rutas como «…/cad/» + nombre; la subida automática sube los archivos de una
-  carpeta de `cases/` citada en la macro. Y el `.sim` remoto solo se pisa si el del PC es más nuevo.
-- 2026-10-24 · Si el cliente del chat (navegador) se desconecta, la UI mata la CLI, pero la macro en curso sigue
-  en el solver (p. ej. una malla): el solver queda vivo y cobrando. `server_start` de otro caso ahora se niega
-  si hay un .sim distinto cargado; apagar con server_stop().
+Agrupadas por tema; fecha 2026-10-23 salvo indicación.
 
+### Entorno, licencia y sandbox
+- El sandbox del tool Bash de Claude Code bloquea las DLL de STAR-CCM+ («Una directiva de Control de
+  aplicaciones bloqueó este archivo», `DynamicLoader: couldn't load StarProfile`). El solver solo arranca
+  fuera del sandbox: desde el MCP (que Claude Code lanza sin sandbox) o con el tool Bash sin sandbox. No es
+  una política de Windows.
+- Sin `-podkey`, `starccm+` pide `ccmpsuite` a `1999@flex.cd-adapco.com` y aborta (`Failed to get all
+  licenses`, rc 8, ~60 s). No hay ninguna clave guardada en el PC: va en `.env`.
+- `doc/api` de la instalación es la API de co-simulación (C), no el javadoc. El javadoc Java está en
+  `doc/client/html`. `StarMacro` y `Simulation` viven en `star/lib/java/platform/modules/ext/starbase.jar`;
+  `MeshOperationManager` en `meshing.jar`.
+- CPU i5-1245U: 2 núcleos P + 8 E. Con `-np 10` el solver avisa de sobresuscripción; `STARCCM_NP=4` en
+  `.env`. El selftest y el cilindro no notan la diferencia; medir en una bomba.
+- 2026-10-24 · Git Bash no trae `bc`: medir tiempos con `$SECONDS`.
+- Herramientas de Claude Code corren en serie: para observar la UI mientras el solver itera, lanzar
+  `iterate` con `python -c "import mcp_server…"` en segundo plano **sin sandbox** (el cliente carga las DLL
+  de STAR-CCM+) y sondear `/api/progress` o el navegador mientras tanto.
+
+### Macros Java y API
+- El cliente batch por defecto apaga el servidor al acabar la macro: siempre `-noexit`.
+- La precompilación con `javac` detecta nombres de API equivocados en 2 s sin licencia: usarla antes de
+  inyectar. Ejemplos cazados: `MonitorManager.export` necesita 3 argumentos; `ThreeDimensionalModel` vive
+  en `star.metrics` (ya en los imports por defecto).
+- `MonitorManager.export` falla en batch («StarUpdate unexpectedly missing»). Residuales: exportar el plot
+  `Residuals` (`sim.getPlotManager().getPlot("Residuals").export(csv, ",")`); valores de reportes:
+  `getReportMonitorValue()` directo. Así lo hace `iterate`.
+- Expresiones entre reportes: `${{nombreReport}}` (p.ej. `${{pt_outReport}}`).
+- `_inject` escribe el stdout del cliente EN VIVO en `macros/<macro>.out`: la pestaña Salida de `ui/`
+  muestra las iteraciones mientras corren; una macro sigue en marcha mientras su `.out` no contiene
+  `AGENT_END`. El log del servidor NO trae las iteraciones.
+
+### Geometría, regiones y malla
+- `newRegionsFromParts` crea solo un continuo «Physics 1»; crear otro deja dos. Reusarlo.
+- Autoguardado «batch» activo por defecto: deja `<sim>@meshed.sim` y `<sim>@00050.sim`. `server_start` lo apaga.
+- Export de CFturbo (3 STEP con caras coincidentes en las interfaces): una sola operación de malla con las
+  3 partes falla en el remallador («Surface intersects self» en r = D2/2). Cada parte por separado se
+  remalla limpia. Regla: **una operación de malla por parte** y añadir
+  `star.resurfacer.AutomaticSurfaceRepairAutoMesher` a la lista de malladores.
+- `importCadPart(ruta, "SharpEdges", 30.0, 2, 1e-5)` conserva los nombres de cara de CFturbo como
+  superficies de parte (`[Impeller_1]-Flow domain-BladePS`…); `newRegionsFromParts` con
+  `OneBoundaryPerPartSurface` las convierte en fronteras con el mismo nombre (renombrar por sufijo).
+- Fronteras de interfaz (rotor/estator): `b instanceof DirectBoundaryInterfaceBoundary`, y su nombre lleva
+  `[int_…]`. Fuera de las escenas de malla y de la exportación de superficies (duplican discos internos).
+  Con todas las demás (`pattern "."`): 17 fronteras, 187 400 triángulos, 10,7 s.
+
+### Física y marcos rotatorios
+- MRF en 2410: `ReferenceFrameManager.createReferenceFrame(RotatingReferenceFrame.class, n)` +
+  `getRotationRate().setValueAndUnits(rpm, "rpm")` + `getAxisDirection/Origin`; se asigna con
+  `region.getValues().get(MotionSpecification.class).setReferenceFrame(frame)`. `RotatingMotion` no expone
+  la velocidad directamente.
+
+### Escenas y superficies para el visor
+- `createScene("X")` deja la escena como «X 1». Para que el PNG no salga en blanco en batch: `PartDisplayer`
+  con las **fronteras** como entrada (no la región), `initialize()`,
+  `setRepresentation(getDefaultFvRepresentation())` y `resetCamera(true)`. Receta `escena-malla.java`.
+- Vectores en un plano (`VectorDisplayer`): `getGlyphSettings().setRelativeToModelLength(x)` es un porcentaje
+  (1.0 = invisibles; 6.0 bien), `setSpacingMode(0)` = GEOMETRIC con `getGeometricSpacing().setOnRatio(6)`
+  (una flecha de cada 6 celdas); `setSpacingMode(1)` = UNIFORM. `PartManager` no tiene `getParts()`:
+  recorrer `getObjects()`. Receta `escena-plano-vectores.java`.
+- Exportar superficies con campo: `ImportManager.export(String, Collection<Region>, Collection<Boundary>,
+  Collection<Part>, Collection<PartSurface>, Collection<FieldFunction>, boolean append, boolean dataAtVerts)`
+  con un `.case` escribe EnSight Gold (javadoc 2410; `docs_search` no lo encuentra porque indexa mal
+  `ImportManager`: grep en `doc/client/html/star/common/ImportManager.html`). Las constantes de opciones
+  viven en `AutoExport` (`OptionDataAtVerts`, `OptionTriangulatePoly`…). Vectores → `getMagnitudeFunction()`.
+  `ui/surfaces.py` lee ASCII y C Binary, `tria3/quad4/nsided`. Verificado con el solver real a las 12:21:
+  8 fronteras del impulsor, 107 189 triángulos, 4 campos en 13,5 s; conversión 0,3 s.
+- Trampas del EnSight de STAR-CCM+: el `.case` nombra las variables con asteriscos
+  (`superficies*****.Pressure` → índice `00000`) y los archivos de variables binarios NO llevan la cabecera
+  «C Binary» (su primera línea es la descripción): el formato lo fija la geometría.
+
+### Servidor, MCP y UI (operación)
+- `mcp_server.py --selftest` escribía en `sims/`, `macros/`, `agent.log` y borraba el `.server.json` real
+  (peligroso con un solver vivo de otra sesión; la Salida de la UI enseñaba el «FAKE server»). Ahora
+  redirige `SIMS`, `MACROS`, `STATE_FILE` y `AGENT_LOG` a un temporal, nunca apaga un solver registrado, y
+  la UI filtra además `FAKE`, `<fake>` y `starccm-selftest-` en logs y macros viejos. El selftest de la UI
+  fuerza modo local (antes leía «Servidor» de `.ui-settings.json` y lanzaba un solver real).
+- `server_start` falló justo después de que otra sesión apagara el servidor (12:23, stop sin guardar): el
+  log dice `Fatal error in MPI_Init_thread … init called when another process has exited without calling
+  init`. Es un fallo transitorio de MPI, no de licencia: el reintento una hora después arrancó en 32,6 s.
+- 2026-10-24 · Si el cliente del chat (navegador) se desconecta, la UI mata la CLI, pero la macro en curso
+  sigue en el solver (p. ej. una malla): el solver queda vivo y cobrando. `server_start` de otro caso se
+  niega si hay un .sim distinto cargado; apagar con `server_stop()`. (Desde f953f56 el chat corre en un
+  hilo y sobrevive a cerrar la pestaña; «Detener» sigue matando la CLI.)
+
+### Servidor Linux (remoto)
+- 2026-10-24 · Arranca en 16,6 s y la macro se inyecta en 5 s, pero el `scp` PC→servidor va a ≈0,24 MB/s
+  (158 MB = 694 s): subir el .sim una vez y no recopiarlo por `server_start`.
+- 2026-10-24 · El servidor de la UI (lanzado por el preview) no tiene `HOME` y el `ssh` de Git busca la
+  llave en `$HOME/.ssh`: el SSH fallaba en silencio (BatchMode) y la UI daba el solver por muerto.
+  `_ssh_env()` pone `HOME=USERPROFILE` en cada ssh/scp; y el ssh va con stdin vacío (sin consola colgaba).
+- 2026-10-24 · La IA arma rutas como «…/cad/» + nombre; la subida automática sube los archivos de una
+  carpeta de `cases/` citada en la macro. El `.sim` remoto solo se pisa si el del PC es más nuevo (la
+  primera versión comparaba solo el tamaño y pisó un .sim guardado en el servidor: 20 iteraciones perdidas).
+
+### Casos de referencia
+- `cursocfturbo` (bomba CFturbo, D2 270 mm, 250 m³/h, 2980 rpm): 370 k celdas, converge en 400 iteraciones
+  (82 s/100 con 4 procesos): H 78,8 m, M 192,5 N·m, η 89,4 %, balance de masa 0 %. A 580 iteraciones:
+  H 78,77 m, M 192,50 N·m, η 0,8935, continuidad 8e-7; aviso «Reversed flow on 55 faces on voluta: outlet»
+  (reflujo en la salida del difusor, balance de masa intacto). Guion `cases/cursocfturbo/pump.py`; recetas
+  `bomba-*.java`; escenas `plano_vectores`, `malla`.
+- `cilindro` (r 50 mm, L 0,5 m, 11 463 celdas poliédricas + prismas, agua 1 m/s, SST): 100 iteraciones,
+  residuales 1e-6, Q_in = −Q_out = 7,755 kg/s. `cases/cilindro/RESUMEN.md`.
