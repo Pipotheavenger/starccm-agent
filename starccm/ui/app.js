@@ -51,17 +51,27 @@ async function loadCases() {
   if (name) { sel.value = name; await openCase(name); }
 }
 $('case').onchange = () => openCase($('case').value);
+async function refreshCaseList() {  // un caso creado por Claude en el chat aparece sin F5
+  try {
+    const cs = await api('/api/cases'); if (cs.length === st.cases.length && cs.every((c, i) => c.name === st.cases[i].name)) return;
+    st.cases = cs; const sel = $('case');
+    sel.innerHTML = cs.map(c => `<option value="${esc(c.name)}">${esc(c.name)}</option>`).join('') || '<option value="">(sin casos)</option>';
+    sel.value = cs.some(c => c.name === st.case) ? st.case : (cs[0]?.name || '');
+  } catch {}
+}
+let openGen = 0;
 async function openCase(name) {
-  st.case = name; LS.set('scc_case', name);
-  try { st.data = await api('/api/cases/' + encodeURIComponent(name)); }
-  catch (e) { toast('No pude abrir el caso: ' + e.message, 'error'); return; }
-  const d = st.data;
+  const gen = ++openGen; let d;
+  try { d = await api('/api/cases/' + encodeURIComponent(name)); }
+  catch (e) { if (gen === openGen) { toast('No pude abrir el caso: ' + e.message, 'error'); $('case').value = st.case || ''; } return; }
+  if (gen !== openGen) return;  // llegó otra apertura después: esta respuesta ya no vale
+  st.case = name; LS.set('scc_case', name); st.data = d;
   $('simname').textContent = `${d.title || d.name} · sims/${d.name}.sim`;
   $('bconv').textContent = d.convergencia ? d.convergencia.rows.length : '';
   $('resumen').innerHTML = d.resumen ? md(d.resumen) : '<p class="mut">Este caso no tiene RESUMEN.md</p>';
   renderScenes(d); renderConv(d); fillParams(d);
   await loadDatasets();
-  loadTree(false);
+  if (gen === openGen) loadTree(false);
 }
 
 // ---------------------------------------------------------------- dónde corre la simulación: Local (este PC) o Servidor (Linux)
@@ -92,7 +102,7 @@ function whereRows() {  // filas del panel Solver
 
 // ---------------------------------------------------------------- visor 3D (three.js)
 const V = { renderer: null, scene: null, camera: null, controls: null, group: null, meshes: [], lights: null, raycaster: new THREE.Raycaster(),
-  axes: null, axesCam: null, hot: null, anim: null, spin: false, bbox: null, clip: null, needs: true, wire: false };
+  axes: null, axesCam: null, hot: null, anim: null, spin: false, bbox: null, clip: null, needs: true, wire: false, gen: 0 };
 function initViewer() {
   const canvas = $('gl');
   V.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true, powerPreference: 'high-performance' });
@@ -117,6 +127,8 @@ function initViewer() {
   V.axesCam = new THREE.PerspectiveCamera(40, 1, 0.1, 10); V.axesCam.up.set(0, 0, 1);
   new ResizeObserver(resize).observe($('viewer'));
   resize();
+  canvas.addEventListener('webglcontextlost', e => e.preventDefault());
+  canvas.addEventListener('webglcontextrestored', () => { V.needs = true; });
   canvas.addEventListener('pointermove', onHover);
   canvas.addEventListener('pointerleave', () => { $('vtip').hidden = true; setHot(null); });
   canvas.addEventListener('dblclick', e => { const hit = pick(e); if (hit) flyTo(hit.object.userData.part); });
@@ -142,7 +154,7 @@ function loop(t) {
   r.setViewport(8, 8, s, s); r.setScissor(8, 8, s, s); r.setScissorTest(true); r.autoClear = false; r.render(V.axes, V.axesCam); r.autoClear = true; r.setScissorTest(false);
 }
 function fit(ms = 600) {
-  if (!V.bbox) return;
+  if (!V.bbox || V.bbox.isEmpty()) return;
   const c = V.bbox.getCenter(new THREE.Vector3()), size = V.bbox.getSize(new THREE.Vector3()).length();
   const dir = V.camera.position.clone().sub(V.controls.target).normalize();
   if (!dir.length()) dir.set(0.6, -0.7, 0.5);
@@ -171,13 +183,17 @@ function pick(e) {
   const r = $('gl').getBoundingClientRect();
   const p = new THREE.Vector2(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
   V.raycaster.setFromCamera(p, V.camera);
-  const hits = V.raycaster.intersectObjects(V.meshes.filter(m => m.visible), false);
-  return hits[0] || null;
+  let hits = V.raycaster.intersectObjects(V.meshes.filter(m => m.visible), false);
+  if (V.clip && $('clipon').checked) hits = hits.filter(h => V.clip.distanceToPoint(h.point) >= 0);  // lo cortado no se ve
+  return hits.find(h => h.object.material.opacity >= 1) || hits[0] || null;  // lo opaco manda sobre la carcasa translúcida
 }
-let hoverT = 0;
-function onHover(e) {
-  if (st.view !== '3d' || !V.meshes.length) return;
-  const now = performance.now(); if (now - hoverT < 40) return; hoverT = now;
+let hoverE = null;
+function onHover(e) {  // un solo raycast por fotograma y ninguno mientras se orbita
+  if (st.view !== '3d' || !V.meshes.length || e.buttons) return;
+  const first = !hoverE; hoverE = e; if (first) requestAnimationFrame(doHover);
+}
+function doHover() {
+  const e = hoverE; hoverE = null; if (!e || !V.meshes.length) return;
   const hit = pick(e);
   const tip = $('vtip');
   if (!hit) { tip.hidden = true; setHot(null); return; }
@@ -219,7 +235,8 @@ function cmapColor(t, out) {
 async function loadDatasets() {
   if (!st.case) { clearDataset(); return; }
   const had = st.ds && st.ds.case === st.case ? { name: st.ds.name, mtime: st.ds.mtime } : null;
-  try { st.datasets = (await api('/api/surfaces?case=' + encodeURIComponent(st.case))).datasets; } catch (e) { st.datasets = []; }
+  try { st.datasets = (await api('/api/surfaces?case=' + encodeURIComponent(st.case))).datasets; }
+  catch (e) { toast('No pude listar las superficies: ' + e.message, 'error'); return; }
   const dsel = $('datasets');
   $('b-geo').textContent = st.datasets.length || '';
   if (!st.datasets.length) { clearDataset(); dsel.innerHTML = 'Sin superficies exportadas.'; syncOverlays(); return; }
@@ -230,7 +247,7 @@ async function loadDatasets() {
   $('dsel').value = pick.name; $('dsel').onchange = () => loadDataset(st.datasets.find(d => d.name === $('dsel').value));
   // tras un chat la página se refresca: si el dataset es el mismo (nombre y fecha) no se recarga ni se pierde el encuadre
   if (had && had.name === pick.name && had.mtime === pick.mtime) { syncOverlays(); return; }
-  await loadDataset(pick, !!had);
+  await loadDataset(pick, !!had && had.name === pick.name);
   if (had && had.name === pick.name) toast('Superficies actualizadas', 'ok');
 }
 function clearDataset() {
@@ -250,14 +267,17 @@ function syncOverlays() {
 // keep = mantener cámara, corte y visibilidad por nombre de parte (recarga tras un chat); si no, encuadrar
 async function loadDataset(d, keep = false) {
   const prev = keep && st.ds ? { pos: V.camera.position.clone(), tgt: V.controls.target.clone(), hidden: new Set(st.ds.parts.filter(p => !p.mesh.visible).map(p => p.name)) } : null;
-  clearDataset(); LS.set('scc_ds_' + st.case, d.name);
+  const gen = ++V.gen; clearDataset(); LS.set('scc_ds_' + st.case, d.name);
   $('vbusy').hidden = false; $('vbusytxt').textContent = `cargando ${d.name}…`; $('vempty').hidden = true;
   try {
     const man = d.manifest;
-    const [pos, idx] = await Promise.all([fetch(`${d.url}/positions.f32?v=${d.mtime}`).then(r => r.arrayBuffer()), fetch(`${d.url}/indices.u32?v=${d.mtime}`).then(r => r.arrayBuffer())]);
+    const buf = async u => { const r = await fetch(u); if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || 'HTTP ' + r.status); return r.arrayBuffer(); };
+    const [pos, idx] = await Promise.all([buf(`${d.url}/positions.f32?v=${d.mtime}`), buf(`${d.url}/indices.u32?v=${d.mtime}`)]);
     const P = new Float32Array(pos), I = new Uint32Array(idx);
+    if (P.length !== man.n_vertices * 3 || I.length !== man.n_triangles * 3) throw new Error('los archivos no coinciden con el manifest (¿se está reescribiendo?)');
     const scal = {};
-    await Promise.all(man.scalars.map(async s => { scal[s.name] = new Float32Array(await fetch(`${d.url}/${s.file}?v=${d.mtime}`).then(r => r.arrayBuffer())); }));
+    await Promise.all(man.scalars.map(async s => { scal[s.name] = new Float32Array(await buf(`${d.url}/${s.file}?v=${d.mtime}`)); }));
+    if (gen !== V.gen) return;  // otra carga empezó mientras tanto
     st.ds = { ...d, case: st.case, P, I, scal, parts: [] };
     V.bbox = new THREE.Box3();
     man.parts.forEach((p, k) => {
@@ -272,6 +292,7 @@ async function loadDataset(d, keep = false) {
       const mesh = new THREE.Mesh(g, mat); const part = { ...p, mesh, color: PART_COLORS[k % PART_COLORS.length], k };
       mesh.userData.part = part; V.group.add(mesh); V.meshes.push(mesh); st.ds.parts.push(part);
     });
+    if (!V.meshes.length) throw new Error('el dataset no tiene triángulos');
     $('scalar').innerHTML = '<option value="">(geometría)</option>' + man.scalars.map(s => `<option value="${esc(s.name)}">${esc(labelOf(s.name))}</option>`).join('');
     const ws = LS.get('scc_scalar'); st.scalar = man.scalars.some(s => s.name === ws) ? ws : (man.scalars[0]?.name || '');
     $('scalar').value = st.scalar; st.range = null;
@@ -280,7 +301,8 @@ async function loadDataset(d, keep = false) {
     else { fit(0); setView('iso'); }
     $('vstate').textContent = `${man.n_triangles.toLocaleString('es')} triángulos · ${man.parts.length} superficies${man.exported ? ' · ' + man.exported : ''}`;
     fadeIn();
-  } catch (e) { toast('No pude cargar las superficies: ' + e.message, 'error'); }
+  } catch (e) { if (gen !== V.gen) return; toast('No pude cargar las superficies: ' + e.message, 'error'); clearDataset(); }
+  if (gen !== V.gen) return;
   $('vbusy').hidden = true; syncOverlays();
 }
 function fadeIn() {  // las superficies aparecen suaves
@@ -332,7 +354,7 @@ function drawLegend(name, lo, hi) {
 }
 $('scalar').onchange = () => { st.scalar = $('scalar').value; LS.set('scc_scalar', st.scalar); st.range = null; applyColors(); };
 $('cmap').value = st.cmap; $('cmap').onchange = () => { st.cmap = $('cmap').value; LS.set('scc_cmap', st.cmap); applyColors(); };
-const setRange = () => { const a = parseFloat($('rmin').value), b = parseFloat($('rmax').value); if (Number.isFinite(a) && Number.isFinite(b) && b > a) { st.range = [a, b]; applyColors(); } };
+const setRange = () => { const a = parseFloat($('rmin').value), b = parseFloat($('rmax').value); if (Number.isFinite(a) && Number.isFinite(b) && b > a) { st.range = [a, b]; applyColors(); } else { toast('Máx debe ser mayor que Mín', 'warn'); applyColors(); } };
 $('rmin').onchange = setRange; $('rmax').onchange = setRange;
 $('rauto').onclick = () => { st.range = null; applyColors(); };
 for (const b of $('vactions').querySelectorAll('[data-view]')) b.onclick = () => setView(b.dataset.view);
@@ -439,17 +461,21 @@ function chart(x, y, label, unit) {
   const sx = v => L + (xmax === xmin ? 0.5 : (v - xmin) / (xmax - xmin)) * (W - L - R), sy = v => T + (1 - (v - ymin) / (ymax - ymin)) * (H - T - B);
   const dec = Math.abs(ymax - ymin) < 2 ? 3 : Math.abs(ymax - ymin) < 20 ? 2 : 1;
   const grid = [0, 1 / 3, 2 / 3, 1].map(t => ymin + (ymax - ymin) * t).map(v => `<line x1="${L}" x2="${W - R}" y1="${sy(v)}" y2="${sy(v)}" class="grid"/><text x="${L - 6}" y="${sy(v) + 4}" class="tick" text-anchor="end">${fmt(v, dec)}</text>`).join('');
-  const xt = xs.map(v => `<text x="${sx(v)}" y="${H - 10}" class="tick" text-anchor="middle">${v}</text>`).join('');
+  const xt = [0, 0.2, 0.4, 0.6, 0.8, 1].map(t => xmin + (xmax - xmin) * t).filter((v, i, a) => xmax !== xmin || i === 0).map(v => `<text x="${sx(v)}" y="${H - 10}" class="tick" text-anchor="middle">${Math.round(v)}</text>`).join('');
   const path = xs.map((v, i) => `${i ? 'L' : 'M'}${sx(v).toFixed(1)},${sy(ys[i]).toFixed(1)}`).join(' ');
-  const dots = xs.map((v, i) => `<circle cx="${sx(v)}" cy="${sy(ys[i])}" r="4" class="pt"><title>iter ${v}: ${label} = ${fmt(ys[i], dec)} ${unit}</title></circle>`).join('');
+  const dots = xs.length > 200 ? '' : xs.map((v, i) => `<circle cx="${sx(v)}" cy="${sy(ys[i])}" r="4" class="pt"><title>iter ${v}: ${label} = ${fmt(ys[i], dec)} ${unit}</title></circle>`).join('');
   const last = `<text x="${sx(xs[xs.length - 1]) - 6}" y="${sy(ys[ys.length - 1]) - 8}" class="lbl" text-anchor="end">${fmt(ys[ys.length - 1], dec)} ${unit}</text>`;
   return `<figure class="chart"><figcaption>${esc(label)} <span class="mut">(${esc(unit)}) frente a iteración</span></figcaption><svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(label)} frente a iteración">${grid}<line x1="${L}" x2="${W - R}" y1="${H - B}" y2="${H - B}" class="axis"/>${xt}<path d="${path}" class="line"/>${dots}${last}</svg></figure>`;
 }
 function renderConv(d) {
   const c = $('conv'), cv = d.convergencia;
   if (!cv || !cv.rows.length) { c.innerHTML = '<p class="mut">Sin reports/convergencia.csv. Pide a Claude que corra iteraciones y lo escriba.</p>'; return; }
-  const col = n => { const k = cv.columns.indexOf(n); return k < 0 ? null : cv.rows.map(r => r[k]); };
-  const it = col('iter') || cv.rows.map((_, i) => i + 1);
+  // un remallado reinicia el contador: se grafica y se juzga solo el último tramo (donde iter crece)
+  const ik = cv.columns.indexOf('iter'); const iter0 = cv.rows.map((r, i) => ik < 0 ? i + 1 : r[ik]);
+  let a0 = 0, segs = 1; for (let i = 1; i < iter0.length; i++) if (iter0[i] == null || iter0[i - 1] == null || iter0[i] <= iter0[i - 1]) { a0 = i; segs++; }
+  const rows = cv.rows.slice(a0);
+  const col = n => { const k = cv.columns.indexOf(n); return k < 0 ? null : rows.map(r => r[k]); };
+  const it = ik < 0 ? rows.map((_, i) => a0 + i + 1) : col('iter');
   const units = { H: 'm', M: 'N·m' };
   const charts = ['H', 'M'].map(k => col(k) ? chart(it, col(k), k, units[k]) : '').join('');
   // criterio de CLAUDE.md: variación de H y M < 0,5 % en 100 iteraciones -> se compara la última fila con la de ≥ 100 iteraciones antes
@@ -459,7 +485,9 @@ function renderConv(d) {
   const dH = delta('H'), dM = delta('M');
   const crit = dH != null ? `<p class="small">Últimas ${span} iteraciones (${it[j]} → ${last}): ΔH ${fmt(dH, 2)} % · ΔM ${fmt(dM, 2)} % ${dH < 0.5 && dM < 0.5 && span >= 100 ? '<span class="tag ok">convergido (&lt; 0,5 % en ≥ 100 iter)</span>' : span < 100 ? '<span class="tag warn">faltan iteraciones para juzgar (&lt; 100)</span>' : '<span class="tag warn">aún no (&gt; 0,5 %)</span>'}</p>` : '';
   const table = `<table class="data"><tr>${cv.columns.map(h => `<th>${esc(h)}</th>`).join('')}</tr>${cv.rows.map(r => '<tr>' + r.map((v, i) => `<td class="num">${v == null ? '–' : i === 0 ? v : sci(v)}</td>`).join('') + '</tr>').join('')}</table>`;
-  c.innerHTML = `<div class="charts">${charts}</div>${crit}<details><summary>${esc(cv.file)} · ${cv.rows.length} filas</summary>${table}</details>`;
+  const seg = segs > 1 ? `<p class="small mut">tramo ${segs} de ${segs} (reinicio del contador en la fila ${a0 + 1}: remallado)</p>` : '';
+  c.innerHTML = `<div class="charts">${charts}</div>${seg}${crit}<details><summary>${esc(cv.file)} · ${cv.rows.length} filas</summary><div id="convtable"></div></details>`;
+  c.querySelector('details').ontoggle = ev => { const t = $('convtable'); if (ev.target.open && t && !t.innerHTML) t.innerHTML = table; };
 }
 
 // salida (la «terminal»)
@@ -485,14 +513,16 @@ function renderStatus(s) {
   st.status = s;
   const dot = s.alive ? 'ok' : s.stale ? 'busy' : 'off';
   const txt = s.stopping ? 'apagando solver…' : s.alive ? `solver vivo · puerto ${s.port} · ${s.idle_min ?? '?'} min sin actividad` : s.stale ? 'solver caído (.server.json viejo)' : 'solver apagado';
-  $('solver').innerHTML = `<span class="dot ${dot}"></span><span>${esc(txt)}</span>` + ((s.chatting || st.chatting) ? ' <span class="dot chat"></span><span>Claude trabajando</span>' : '');
+  const sh = `<span class="dot ${dot}"></span><span>${esc(txt)}</span>` + ((s.chatting || st.chatting) ? ' <span class="dot chat"></span><span>Claude trabajando</span>' : '');
+  if (renderStatus.last !== sh) { renderStatus.last = sh; $('solver').innerHTML = sh; }
   $('stopsolver').hidden = !s.alive; $('stopsolver').disabled = !!s.stopping || !!s.chatting;
   const remote = st.where === 'server';
   $('opengui').disabled = !!s.alive || remote; $('opengui').title = remote ? 'Solo en local: la GUI abre el .sim de este PC' : s.alive ? 'Hay un servidor batch vivo: apágalo antes de abrir la GUI' : 'Abre este .sim en la GUI de STAR-CCM+ (la licencia PoD cobra por hora)';
   const ready = !!st.settings?.server?.ready;
   $('solvertag').innerHTML = (s.alive ? '<span class="tag ok">vivo</span>' : s.stale ? '<span class="tag warn">caído</span>' : '<span class="tag">apagado</span>') + (remote ? ` <span class="tag ${ready ? 'ok' : 'warn'}">${ready ? 'servidor' : 'servidor · no disponible todavía'}</span>` : '');
   const rows = (s.alive || s.stale ? [['pid', s.pid], ['puerto', s.port], ['sim', s.sim ? s.sim.split(/[\\/]/).pop() : '(nueva)'], ['procesos', s.np], ['arranque', s.started ? s.started.replace('T', ' ') : '–'], ['inactivo', s.idle_min != null ? `${fmt(s.idle_min, 0)} / ${s.idle_limit_min} min` : '–']] : [['apagado por inactividad', `${s.idle_limit_min} min`]]).map(r => [r, '']);
-  $('solverkv').querySelector('tbody').innerHTML = [...whereRows(), ...rows].map(([[k, v], cls]) => `<tr class="${cls}"><td class="mut">${esc(k)}</td><td class="mono" title="${esc(v)}">${esc(v)}</td></tr>`).join('');
+  const kv = [...whereRows(), ...rows].map(([[k, v], cls]) => `<tr class="${cls}"><td class="mut">${esc(k)}</td><td class="mono" title="${esc(v)}">${esc(v)}</td></tr>`).join('');
+  if (renderStatus.kv !== kv) { renderStatus.kv = kv; $('solverkv').querySelector('tbody').innerHTML = kv; }
 }
 async function poll() {
   try { renderStatus(await api('/api/status')); $('offline').hidden = true; }
@@ -529,6 +559,7 @@ function toolSummary(name, inp = {}) {
   const bits = [inp.name, inp.path, inp.query && `«${inp.query}»`, inp.n != null && `${inp.n} iter`, inp.sim_path && String(inp.sim_path).split(/[\\/]/).pop(), inp.body && `${String(inp.body).split('\n').length} líneas Java`].filter(Boolean);
   return [name, ...bits].join(' · ');
 }
+const setChatState = html => { if ($('chatstate').innerHTML !== html) $('chatstate').innerHTML = html; };
 function setChatting(on) { st.chatting = on; $('send').disabled = on; $('stopchat').disabled = !on; if (st.status.alive != null) renderStatus(st.status); }
 function onChatEvent(ev, ctx) {
   if (['result', 'error'].includes(ev.kind) && /No conversation found/i.test(ev.text || '')) { ctx.stale = true; return; }
@@ -537,7 +568,7 @@ function onChatEvent(ev, ctx) {
   else if (ev.kind === 'text') { addMsg('bot', md(ev.text)); ctx.tool = ''; $('chatstate').textContent = 'pensando…'; }
   else if (ev.kind === 'tool') {
     addMsg('tool', `<details><summary>Tool: ${esc(toolSummary(ev.name, ev.input || {}))}</summary>${esc(JSON.stringify(ev.input || {}, null, 1)).slice(0, 2000)}</details>`);
-    ctx.tool = ev.name; ctx.t0 = Date.now(); $('chatstate').textContent = `ejecutando ${ev.name}…`;
+    ctx.tool = ev.name; ctx.t0 = Date.now(); setChatState(`ejecutando ${esc(ev.name)}…<span id="chatsecs" aria-hidden="true"></span>`);
     if (/server_|export_scene|iterate|run_java|save/.test(ev.name)) ctx.refresh = true;
   }
   else if (ev.kind === 'tool_result') { if (ev.is_error) addMsg('tool bad', 'Error de tool: ' + esc(ev.text)); else if (/server_/.test(ctx.tool)) poll(); if (st.tab === 'out') loadProgress(); }
@@ -554,7 +585,7 @@ async function sendChat(retry = false) {
   $('chattext').value = ''; st.lastMsg = text; if (!retry) addMsg('user', esc(text));
   setChatting(true); $('chatstate').textContent = 'pensando…';
   const ctx = { t0: Date.now(), tool: '', login: false, done: false, refresh: false };
-  const clock = setInterval(() => { if (ctx.tool) $('chatstate').textContent = `ejecutando ${ctx.tool}… ${Math.round((Date.now() - ctx.t0) / 1000)} s`; }, 1000);
+  const clock = setInterval(() => { if (ctx.tool) { const secs = $('chatsecs'); if (secs) secs.textContent = ` ${Math.round((Date.now() - ctx.t0) / 1000)} s`; } }, 1000);
   try {
     const r = await fetch('/api/chat', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ message: text, session_id: st.session, case: st.case }) });
     if (!r.ok || !r.body) throw new Error('HTTP ' + r.status);
@@ -567,22 +598,25 @@ async function sendChat(retry = false) {
     d.querySelector('button').onclick = () => { $('chattext').value = text; sendChat(); }; $('chatstate').textContent = 'conexión perdida';
   }
   clearInterval(clock); setChatting(false); poll();
-  if (ctx.refresh && st.case) openCase(st.case);
+  if (ctx.refresh) refreshCaseList().then(() => { if (st.case) openCase(st.case); });
   if (ctx.stale && !retry) { st.session = null; LS.set('scc_session', null); addMsg('bot mut', 'La conversación anterior ya no existe; empiezo una nueva con tu mensaje.'); $('chattext').value = text; sendChat(true); }
 }
 $('send').onclick = () => sendChat();
 $('chattext').addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendChat(); } else if (e.key === 'ArrowUp' && !$('chattext').value && st.lastMsg) { e.preventDefault(); $('chattext').value = st.lastMsg; } });
 $('stopchat').onclick = () => { $('stopchat').disabled = true; $('chatstate').textContent = 'deteniendo…'; api('/api/chat/stop', {}).then(j => { if (!j.stopped) $('chatstate').textContent = 'no había nada que detener'; }).catch(e => { $('chatstate').textContent = 'no pude detener: ' + e.message; }); };
 $('newchat').onclick = () => {
+  if (busyChat()) return;
   if (!armed($('newchat'), '¿Seguro?', 4000)) return;
   st.session = null; LS.set('scc_session', null);
   for (const m of $('chatlog').querySelectorAll('.m')) m.remove(); placeQuick(); $('chatstate').textContent = 'nueva conversación'; };
-for (const b of $('quick').querySelectorAll('[data-q]')) b.onclick = () => { $('chattext').value = b.dataset.q.replace('<caso>', st.case || 'caso'); sendChat(); };
+const busyChat = () => { if (st.chatting) { toast('Claude está trabajando; espera o pulsa Detener', 'warn'); return true; } return false; };
+for (const b of $('quick').querySelectorAll('[data-q]')) b.onclick = () => { if (busyChat()) return; $('chattext').value = b.dataset.q.replace('<caso>', st.case || 'caso'); sendChat(); };
 st.session = LS.get('scc_session'); if (st.session) $('chatstate').textContent = `sesión ${st.session.slice(0, 8)} (continúa)`;
 
 // parámetros -> prompt (la página nunca edita el .sim)
 const PARAMS = [['p_rpm', v => `velocidad de giro del rotor a ${v} rpm (MRF)`], ['p_mdot', v => `caudal másico de entrada a ${v} kg/s`], ['p_base', v => `tamaño base de malla a ${v} mm (remallar las 3 operaciones)`], ['p_iter', v => `luego corre ${v} iteraciones (en bloques de 100 con iterate)`]];
 $('paskbtn').onclick = () => {
+  if (busyChat()) return;
   const parts = PARAMS.map(([id, f]) => { const v = $(id).value.trim(); return v ? f(v) : ''; }).filter(Boolean);
   if (!parts.length) { toast('Rellena al menos un parámetro', 'warn'); return; }
   $('chattext').value = `En la simulación sims/${st.case}.sim (server_start la reutiliza si está viva): cambia ${parts.join('; ')}. Precompila cada macro y usa las recetas bomba-*. Al terminar, añade las filas a cases/${st.case}/reports/convergencia.csv, vuelve a exportar las escenas de presión, velocidad e y+ a images/, exporta las superficies con campo (receta exportar-superficies-ensight) y dime H, M y eficiencia en una tabla frente a los valores anteriores.`;
@@ -603,9 +637,10 @@ $('params').ontoggle = () => LS.set('scc_params', $('params').open ? '1' : '0');
 const theme = LS.get('scc_theme', 'light'); document.documentElement.dataset.theme = theme;
 $('theme').onclick = () => { const nx = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark'; document.documentElement.dataset.theme = nx; LS.set('scc_theme', nx); };
 addEventListener('keydown', e => {
-  if (e.target.matches('input,textarea,select')) return;
+  if (e.key === 'Escape') { $('lightbox').hidden = true; return; }
+  if (e.ctrlKey || e.metaKey || e.altKey || e.target.matches('input,textarea,select')) return;
   if (e.key === 'f' || e.key === 'F') fit(); else if (e.key === '1') setView('iso'); else if (e.key === '2') setView('axial'); else if (e.key === '3') setView('lateral');
-  else if (e.key === '`') $('docktoggle').click(); else if (e.key === 'Escape') { $('lightbox').hidden = true; }
+  else if (e.key === '`') $('docktoggle').click();
 });
 
 // ---------------------------------------------------------------- arranque
