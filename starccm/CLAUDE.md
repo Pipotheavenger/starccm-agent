@@ -352,5 +352,14 @@ Las corridas grandes se hacen a mano: `vm/SERVIDOR.md`. Lecciones que dejó:
   H 78,77 m, M 192,50 N·m, η 0,8935, continuidad 8e-7; aviso «Reversed flow on 55 faces on voluta: outlet»
   (reflujo en la salida del difusor, balance de masa intacto). Guion `cases/cursocfturbo/pump.py`; recetas
   `bomba-*.java`; escenas `plano_vectores`, `malla`.
+- 2026-10-24 · Plantillas de Sebastián `NQ25Q159H91_Rev0/Rev2.sim` (Downloads; sin resolver, iteración 0). Leídas con
+  `informe-detalle`, 501 propiedades. Lo que traen y nuestro flujo no:
+  - Entrada de presión total 0 Pa y caudal en la salida (Mass Flow con el parámetro `${Flujo}`).
+  - Modelos de transición Gamma, gravedad y Cell Quality Remediation.
+  - Mallador trimmer en una sola operación (base 2 cm, 4 prismas de 2,5) con control «No prisms» en las interfaces.
+  - Reportes de triángulos de velocidad (U, Vu, Vr en puntos de entrada y salida del rodete), altura de Euler,
+    factor de deslizamiento y eficiencia CFD = H/H_Euler; TI de la entrada calculada por Re.
+  - Escenas en planos X/Y/Z con TotalHead, vectores y streamlines de `Cell Relative Velocity`.
+  - Rev2 es Rev0 con −3000 rpm y η = P_eje/P_hid (modo turbina) y 910 k celdas en vez de 988 k.
 - `cilindro` (r 50 mm, L 0,5 m, 11 463 celdas poliédricas + prismas, agua 1 m/s, SST): 100 iteraciones,
   residuales 1e-6, Q_in = −Q_out = 7,755 kg/s. `cases/cilindro/RESUMEN.md`.
