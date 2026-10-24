@@ -219,12 +219,21 @@ def run_where() -> str:
     return w if w in ("local", "server") else "local"
 
 
+def _ssh_env() -> dict:
+    """El ssh de Git busca la llave en $HOME/.ssh; los procesos lanzados por la UI o el MCP pueden no tener HOME
+    (solo USERPROFILE): sin esto la llave no aparece y el SSH falla en silencio (BatchMode)."""
+    env = dict(os.environ)
+    if not env.get("HOME") and env.get("USERPROFILE"):
+        env["HOME"] = env["USERPROFILE"]
+    return env
+
+
 def _ssh_cmd(remote_cmd: str) -> list[str]:
     return [shutil.which("ssh") or "ssh", *_SSH_OPTS, SSH_HOST, remote_cmd]
 
 
 def _ssh(remote_cmd: str, timeout: float = 60, input: str | None = None) -> subprocess.CompletedProcess:
-    return subprocess.run(_ssh_cmd(remote_cmd), capture_output=True, text=True, timeout=timeout, input=input,
+    return subprocess.run(_ssh_cmd(remote_cmd), capture_output=True, text=True, timeout=timeout, input=input, env=_ssh_env(),
                           encoding="utf-8", errors="replace")
 
 
@@ -282,7 +291,7 @@ def _pull_new(marker: str) -> list[str]:
     files = [f for f in r.stdout.splitlines() if f and ".." not in f]
     if not files:
         return []
-    p = subprocess.Popen(_ssh_cmd(f"cd {_qs(REMOTE_DIR)} && tar cf - " + " ".join(_qs(f) for f in files)), stdout=subprocess.PIPE)
+    p = subprocess.Popen(_ssh_cmd(f"cd {_qs(REMOTE_DIR)} && tar cf - " + " ".join(_qs(f) for f in files)), stdout=subprocess.PIPE, env=_ssh_env())
     got = []
     with tarfile.open(fileobj=p.stdout, mode="r|") as tf:
         for m in tf:
@@ -336,7 +345,7 @@ def _push_inputs(files: list[Path]) -> list[str]:
     with tarfile.open(fileobj=buf, mode="w") as tf:
         for f, rel in need:
             tf.add(str(f), arcname=rel)
-    up = subprocess.run(_ssh_cmd(f"mkdir -p {_qs(REMOTE_DIR)} && cd {_qs(REMOTE_DIR)} && tar xf -"), input=buf.getvalue(),
+    up = subprocess.run(_ssh_cmd(f"mkdir -p {_qs(REMOTE_DIR)} && cd {_qs(REMOTE_DIR)} && tar xf -"), input=buf.getvalue(), env=_ssh_env(),
                         capture_output=True, timeout=3600)
     if up.returncode != 0:
         raise RuntimeError(f"no pude subir entradas al servidor: {up.stderr.decode('utf-8', 'replace')[-300:]}")
@@ -365,7 +374,7 @@ def _inject_remote(st: dict, src: Path, tag: str, timeout: float) -> tuple[int, 
            f"rc=$?; rm -f {_qs(marker)}.done; exit $rc")
     killed = False
     with open(src.with_suffix(".out"), "w", encoding="utf-8", errors="replace") as fo:
-        p = subprocess.Popen(_ssh_cmd(run), stdout=fo, stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace")
+        p = subprocess.Popen(_ssh_cmd(run), stdout=fo, stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace", env=_ssh_env())
         try:
             _, err = p.communicate(timeout=timeout)
             rc = p.returncode
@@ -626,6 +635,11 @@ def server_start(sim_path: str = "", name: str = "", where: str = "") -> dict:
         _touch()
         st = _state()
         if st.get("pid") and alive(st):
+            want = (name or (Path(sim_path).stem if sim_path else "")).strip()
+            have = Path(st["sim"]).stem if st.get("sim") else ""
+            if want and want != have:  # otro caso cargado: no trabajar sobre la simulación equivocada
+                raise RuntimeError(f"Hay un servidor vivo con otro .sim cargado ({have or 'sin .sim'}, {st.get('where', 'local')}). "
+                                   f"Guarda y apágalo con server_stop() antes de abrir {want}.")
             return {"reused": True, **st}
         where = (where or run_where()).strip().lower()
         if where == "server":
@@ -725,7 +739,7 @@ def _server_start_remote(sim_path: str, name: str, old: dict) -> dict:
                 if rsize >= 0:
                     _ssh(f"cp -p {_qs(rsim)} {_qs(rsim + '.antes')}", timeout=600)  # copia del remoto por si acaso
                 t1 = time.time()
-                r = subprocess.run([shutil.which("scp") or "scp", *_SSH_OPTS, str(sim), f"{SSH_HOST}:{rsim}"],
+                r = subprocess.run([shutil.which("scp") or "scp", *_SSH_OPTS, str(sim), f"{SSH_HOST}:{rsim}"], env=_ssh_env(),
                                    capture_output=True, text=True, timeout=7200)
                 if r.returncode != 0:
                     raise RuntimeError(f"scp del .sim falló: {r.stderr.strip()[-300:]}")

@@ -279,3 +279,12 @@ Turbina: mismo flujo, cambia el signo del momento y el objetivo es potencia extr
   aviso «Reversed flow on 55 faces on voluta: outlet» (reflujo en la salida del difusor, balance de masa
   intacto). Escenas nuevas: `plano_vectores`, `malla`.
 - 2026-10-24 · Servidor Linux 2502 (`vm/SERVIDOR.md`): arranca en 16,6 s y la macro se inyecta en 5 s, pero el `scp` PC→servidor va a ≈0,24 MB/s (158 MB = 694 s): subir el .sim una vez y no recopiarlo por `server_start`. Git Bash no trae `bc`: medir con `$SECONDS`.
+- 2026-10-24 · Remoto: el servidor de la UI (lanzado por el preview) no tiene `HOME` y el `ssh` de Git busca la
+  llave en `$HOME/.ssh`: el SSH fallaba en silencio (BatchMode) y la UI daba el solver por muerto. `_ssh_env()`
+  pone `HOME=USERPROFILE` en cada ssh/scp.
+- 2026-10-24 · Remoto: la IA arma rutas como «…/cad/» + nombre; la subida automática sube los archivos de una
+  carpeta de `cases/` citada en la macro. Y el `.sim` remoto solo se pisa si el del PC es más nuevo.
+- 2026-10-24 · Si el cliente del chat (navegador) se desconecta, la UI mata la CLI, pero la macro en curso sigue
+  en el solver (p. ej. una malla): el solver queda vivo y cobrando. `server_start` de otro caso ahora se niega
+  si hay un .sim distinto cargado; apagar con server_stop().
+
