@@ -91,7 +91,7 @@ for (const b of $('where').querySelectorAll('[role=radio]')) b.onclick = async (
   catch (e) { toast('No pude guardar la elección: ' + e.message, 'error'); }
   renderWhere();
   const sv = st.settings?.server || {};
-  toast(st.where === 'server' ? `La simulación correrá en ${sv.label || 'el servidor Linux'} ${sv.host || ''}${sv.ready ? '' : ` · STAR-CCM+ ${sv.version} instalado; la ejecución remota aún no está implementada: Claude prepara y avisa`}` : 'La simulación corre en este PC (STAR-CCM+ 2410)', st.where === 'server' && !sv.ready ? 'warn' : 'ok');
+  toast(st.where === 'server' ? `La simulación correrá en ${sv.label || 'el servidor Linux'} ${sv.host || ''}${sv.ready ? '' : ` · STAR-CCM+ ${sv.version} instalado; la ejecución remota aún no está implementada: la IA prepara y avisa`}` : 'La simulación corre en este PC (STAR-CCM+ 2410)', st.where === 'server' && !sv.ready ? 'warn' : 'ok');
 };
 function whereRows() {  // filas del panel Solver
   const s = st.settings; if (!s) return [];
@@ -488,7 +488,7 @@ $('exportbtn').onclick = e => { e.preventDefault(); e.stopPropagation(); $('expd
 $('expcancel').onclick = () => $('expdlg').close();
 $('expform').onsubmit = async e => {
   e.preventDefault(); $('expdlg').close();
-  if (!st.status.alive) { toast('Hace falta un solver vivo: pide a Claude server_start con sims/' + st.case + '.sim', 'warn'); return; }
+  if (!st.status.alive) { toast('Hace falta un solver vivo: pide a la IA server_start con sims/' + st.case + '.sim', 'warn'); return; }
   const t0 = Date.now(); $('vbusy').hidden = false;
   const clock = setInterval(() => { $('vbusytxt').textContent = `exportando superficies del solver… ${Math.round((Date.now() - t0) / 1000)} s`; }, 500);
   try {
@@ -583,7 +583,7 @@ function chart(x, y, label, unit) {
 }
 function renderConv(d) {
   const c = $('conv'), cv = d.convergencia;
-  if (!cv || !cv.rows.length) { c.innerHTML = '<p class="mut">Sin reports/convergencia.csv. Pide a Claude que corra iteraciones y lo escriba.</p>'; return; }
+  if (!cv || !cv.rows.length) { c.innerHTML = '<p class="mut">Sin reports/convergencia.csv. Pide a la IA que corra iteraciones y lo escriba.</p>'; return; }
   // un remallado reinicia el contador: se grafica y se juzga solo el último tramo (donde iter crece)
   const ik = cv.columns.indexOf('iter'); const iter0 = cv.rows.map((r, i) => ik < 0 ? i + 1 : r[ik]);
   let a0 = 0, segs = 1; for (let i = 1; i < iter0.length; i++) if (iter0[i] == null || iter0[i - 1] == null || iter0[i] <= iter0[i - 1]) { a0 = i; segs++; }
@@ -627,7 +627,7 @@ function renderStatus(s) {
   st.status = s;
   const dot = s.alive ? 'ok' : s.stale ? 'busy' : 'off';
   const txt = s.stopping ? 'apagando solver…' : s.alive ? `solver vivo · puerto ${s.port} · ${s.idle_min ?? '?'} min sin actividad` : s.stale ? 'solver caído (.server.json viejo)' : 'solver apagado';
-  const sh = `<span class="dot ${dot}"></span><span>${esc(txt)}</span>` + ((s.chatting || st.chatting) ? ' <span class="dot chat"></span><span>Claude trabajando</span>' : '');
+  const sh = `<span class="dot ${dot}"></span><span>${esc(txt)}</span>` ;
   if (renderStatus.last !== sh) { renderStatus.last = sh; $('solver').innerHTML = sh; }
   $('stopsolver').hidden = !s.alive; $('stopsolver').disabled = !!s.stopping || !!s.chatting;
   const remote = st.where === 'server';
@@ -676,7 +676,7 @@ function toolSummary(name, inp = {}) {
   return [name, ...bits].join(' · ');
 }
 const setChatState = html => { if ($('chatstate').innerHTML !== html) $('chatstate').innerHTML = html; };
-function setChatting(on) { st.chatting = on; $('chatdot').hidden = !on; $('send').disabled = on; $('stopchat').disabled = !on; if (st.status.alive != null) renderStatus(st.status); }
+function setChatting(on) { st.chatting = on; $('chatdot').hidden = !on; document.documentElement.classList.toggle('chat-busy', on); $('send').disabled = on; $('stopchat').disabled = !on; if (st.status.alive != null) renderStatus(st.status); }
 function onChatEvent(ev, ctx) {
   if (['result', 'error'].includes(ev.kind) && /No conversation found/i.test(ev.text || '')) { ctx.stale = true; return; }
   if (ev.kind === 'result' && ev.turns === 0 && ev.subtype !== 'success' && !ev.text) return;
@@ -694,10 +694,11 @@ function onChatEvent(ev, ctx) {
   else if (ev.kind === 'result') { ctx.tool = ''; if (ev.text) addMsg('err', esc(ev.text)); $('chatstate').textContent = `listo · ${ev.turns ?? '?'} turnos · ${ev.seconds} s`; }
   else if (ev.kind === 'stopped') { addMsg('bot mut', 'Detenido por el usuario.'); ctx.tool = ''; $('chatstate').textContent = 'detenido'; }
   else if (ev.kind === 'done') { ctx.done = true; if (ev.rc && ev.rc !== 0 && !/listo|detenido/.test($('chatstate').textContent)) $('chatstate').textContent = `terminó con código ${ev.rc}`; }
-  if (!ctx.login && ['text', 'result', 'error'].includes(ev.kind) && /401|not logged in|OAuth|auth login/i.test(ev.text || '')) { ctx.login = true; addMsg('err', 'La CLI de Claude Code no tiene sesión. En una terminal ejecuta: <code>claude auth login</code>'); }
+  if (!ctx.login && ['text', 'result', 'error'].includes(ev.kind) && /401|not logged in|OAuth|auth login/i.test(ev.text || '')) { ctx.login = true; addMsg('err', 'La CLI de la IA no tiene sesión. En una terminal ejecuta: <code>claude auth login</code>'); }
 }
 async function sendChat(retry = false) {
   if (document.documentElement.classList.contains('chat-off')) setChatOpen(true);
+  if (NARROW.matches && st.tab !== 'chat') openTab('chat');  // los parámetros viven en Propiedades: al pedir, se muestra la conversación
   const text = $('chattext').value.trim(); if (!text || st.chatting) return;
   $('chattext').value = ''; st.lastMsg = text; if (!retry) addMsg('user', esc(text));
   setChatting(true); $('chatstate').textContent = 'pensando…';
@@ -726,7 +727,7 @@ $('newchat').onclick = () => {
   if (!armed($('newchat'), '¿Seguro?', 4000)) return;
   st.session = null; LS.set('scc_session', null);
   for (const m of $('chatlog').querySelectorAll('.m')) m.remove(); placeQuick(); $('chatstate').textContent = 'nueva conversación'; };
-const busyChat = () => { if (st.chatting) { toast('Claude está trabajando; espera o pulsa Detener', 'warn'); return true; } return false; };
+const busyChat = () => { if (st.chatting) { toast('La IA está trabajando; espera o pulsa Detener', 'warn'); return true; } return false; };
 for (const b of $('quick').querySelectorAll('[data-q]')) b.onclick = () => { if (busyChat()) return; $('chattext').value = b.dataset.q.replace('<caso>', st.case || 'caso'); sendChat(); };
 st.session = LS.get('scc_session'); if (st.session) $('chatstate').textContent = `sesión ${st.session.slice(0, 8)} (continúa)`;
 
@@ -766,21 +767,20 @@ function viewerCmd(c) {
 for (const b of $('chips').querySelectorAll('[data-vc]')) b.onclick = () => viewerCmd(b.dataset.vc);
 
 // ---------------------------------------------------------------- árbol de la simulación (desde datos en disco, sin solver) + propiedades
-const OUT_NODES = [['geo', 'Geometría'], ['phys', 'Física'], ['mesh', 'Malla'], ['solv', 'Solucionadores'], ['rep', 'Reportes'], ['mon', 'Monitores'], ['plots', 'Gráficos'], ['scn', 'Escenas']];
-let outSel = LS.get('scc_outnode', 'geo');
+const OUT_NODES = [['geo', 'Geometría'], ['phys', 'Física'], ['mesh', 'Malla'], ['solv', 'Solucionadores'], ['rep', 'Reportes'], ['mon', 'Monitores'], ['plots', 'Gráficos']];
+let outSel = LS.get('scc_outnode', 'geo'); if (outSel === 'scn') outSel = 'geo';
 const resLines = re => (st.data?.resumen || '').split('\n').map(l => l.replace(/[*`|#]/g, '').replace(/^\s*[-]\s*/, '').trim()).filter(l => l && re.test(l));
 function propsFor(id) {
   const d = st.data || {}, cv = d.convergencia, last = cv?.rows.length ? Object.fromEntries(cv.columns.map((c, i) => [c, cv.rows[cv.rows.length - 1][i]])) : null;
   const txt = (re, n = 8) => resLines(re).slice(0, n).map((l, i) => [i ? '' : 'RESUMEN.md', l]);
   if (id === 'geo') { const m = st.ds?.manifest; if (!m) return [['superficies', 'sin dataset 3D']]; const sz = V.bbox.getSize(new THREE.Vector3());
-    return [['dataset', st.ds.name], ['superficies', `${st.ds.parts.length}${st.ds.parts.length < m.parts.length ? ` (+${m.parts.length - st.ds.parts.length} vacías)` : ''}`], ['triángulos', m.n_triangles.toLocaleString('es')], ['vértices', m.n_vertices.toLocaleString('es')], ['campos', m.scalars.map(x => labelOf(x.name)).join(', ') || '–'], ['caja (m)', [sz.x, sz.y, sz.z].map(v => fmt(v, 3)).join(' × ')], ['exportado', m.exported || '–']]; }
+    return [['dataset', st.ds.name], ['vértices', m.n_vertices.toLocaleString('es')], ['campos', m.scalars.map(x => labelOf(x.name)).join(', ') || '–'], ['caja (m)', [sz.x, sz.y, sz.z].map(v => fmt(v, 3)).join(' × ')], ['exportado', m.exported || '–']]; }
   if (id === 'phys') return txt(/k-?\s?(ω|omega|w)|sst|turbul|MRF|estacion|agua|densidad|líquido|segregad/i);
   if (id === 'mesh') return txt(/celdas|malla|prism|poli|base/i);
   if (id === 'solv') return [['iteraciones', last?.iter != null ? String(last.iter) : '–'], ['filas de convergencia', cv ? String(cv.rows.length) : '0'], ...txt(/iteraci|residual|under|relaj/i, 4)];
   if (id === 'rep') return last ? Object.entries(last).filter(([k]) => k !== 'iter').map(([k, v]) => [k, sci(v)]) : [['reportes', 'sin convergencia.csv']];
   if (id === 'mon') return cv ? [['columnas', cv.columns.join(', ')], ['archivo', cv.file]] : [['monitores', 'sin convergencia.csv']];
   if (id === 'plots') return [['gráficos', 'H y M frente a iteración (pestaña Gráficos)'], ['filas', cv ? String(cv.rows.length) : '0']];
-  if (id === 'scn') return (d.images || []).map(im => [im.label, new Date(im.mtime * 1000).toLocaleString('es', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })]);
   return [];
 }
 // resultados de un vistazo (última fila de convergencia.csv), con el mismo formato que la leyenda y Reportes
@@ -798,7 +798,7 @@ function renderKpis() {
 function renderOutline() {
   renderKpis();
   const ul = $('outline'); if (!st.data) { ul.innerHTML = ''; return; }
-  const cnt = { geo: st.ds ? st.ds.parts.length : '', scn: st.data.images.length || '', rep: st.data.convergencia ? 'H M' : '', plots: st.data.convergencia?.rows.length || '' };
+  const cnt = { geo: st.ds ? st.ds.parts.length : '', rep: st.data.convergencia ? 'H M' : '', plots: st.data.convergencia?.rows.length || '' };
   ul.innerHTML = OUT_NODES.map(([id, n]) => `<li role="option" tabindex="0" data-n="${id}" aria-selected="${id === outSel}"><span>${n}</span><span class="c">${esc(cnt[id] ?? '')}</span></li>`).join('');
   for (const li of ul.querySelectorAll('li')) { li.onclick = () => selectNode(li.dataset.n); li.onkeydown = e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); selectNode(li.dataset.n); } }; }
   renderProps();
@@ -811,15 +811,27 @@ function selectNode(id) {
   outSel = id; LS.set('scc_outnode', id);
   for (const li of $('outline').querySelectorAll('li')) li.setAttribute('aria-selected', li.dataset.n === id);
   renderProps();
-  if (id === 'plots') openTab('plots'); else if (id === 'scn' && st.data.images[0]) showView(st.data.images[0].file); else if (id === 'geo') showView('3d');
+  if (id === 'plots') openTab('plots'); else if (id === 'geo') showView('3d');
 }
 
 // chat plegable (solo escritorio): el visor gana ancho; se abre solo al enviar un mensaje
 function setChatOpen(on) {
-  document.documentElement.classList.toggle('chat-off', !on); $('chattoggle').setAttribute('aria-pressed', on); LS.set('scc_chatopen', on ? '1' : '0'); V.needs = true;
+  document.documentElement.classList.toggle('chat-off', !on); $('chattoggle').setAttribute('aria-pressed', on); $('chattoggle').textContent = on ? '»' : '«'; LS.set('scc_chatopen', on ? '1' : '0'); setTimeout(() => { V.needs = true; }, 0);
 }
 $('chattoggle').onclick = () => setChatOpen(document.documentElement.classList.contains('chat-off'));
 setChatOpen(LS.get('scc_chatopen', '1') === '1');
+// ancho del panel de IA: arrastrar el borde izquierdo (o flechas con el foco), doble clic restablece; se recuerda
+(() => { const rs = $('chatresize'), root = document.documentElement, MIN = 260, DEF = 330;
+  const maxW = () => Math.max(MIN, Math.min(720, innerWidth * 0.55));
+  const set = (w, save) => { w = Math.round(Math.max(MIN, Math.min(maxW(), w))); root.style.setProperty('--chat-w', w + 'px'); rs.setAttribute('aria-valuenow', w); if (save) LS.set('scc_chatw', String(w)); V.needs = true; return w; };
+  set(parseInt(LS.get('scc_chatw', DEF), 10) || DEF, false);
+  rs.onpointerdown = e => { e.preventDefault(); rs.setPointerCapture(e.pointerId); const x0 = e.clientX, w0 = $('chatcol').getBoundingClientRect().width; root.classList.add('resizing');
+    rs.onpointermove = ev => set(w0 + (x0 - ev.clientX), false);
+    rs.onpointerup = rs.onpointercancel = ev => { rs.onpointermove = rs.onpointerup = rs.onpointercancel = null; root.classList.remove('resizing'); set(w0 + (x0 - ev.clientX), true); }; };
+  rs.ondblclick = () => set(DEF, true);
+  rs.onkeydown = e => { if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return; e.preventDefault(); set($('chatcol').getBoundingClientRect().width + (e.key === 'ArrowLeft' ? 24 : -24), true); };
+  addEventListener('resize', () => set($('chatcol').getBoundingClientRect().width || DEF, false));
+})();
 // ---------------------------------------------------------------- tema y teclado
 const theme = LS.get('scc_theme', 'light'); document.documentElement.dataset.theme = theme;
 $('theme').onclick = () => { const nx = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark'; document.documentElement.dataset.theme = nx; LS.set('scc_theme', nx); };

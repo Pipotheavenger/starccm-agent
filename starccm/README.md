@@ -83,10 +83,15 @@ mínimo arriba a la izquierda; por defecto `cursocfturbo`):
   última macro inyectada y su salida, `agent.log`, cada 3 s), *Gráficos* (`reports/convergencia.csv`:
   H y M frente a iteración, un gráfico por magnitud, tabla y criterio < 0,5 %) y *Resumen* (RESUMEN.md).
 - **Derecha, Claude** (bajo 1100 px el chat pasa a ser la pestaña *Claude* del dock; a 800 px ya no queda
-  fuera de pantalla): chips «Presión en álabes», «Velocidad», «Girar rotor» (acciones del visor en el
-  cliente, sin solver ni Claude; solo con superficies en una bomba); botón «Claude» de la barra (o tecla C) pliega la columna y se abre sola al enviar; chat (Claude Code CLI con cwd en `starccm/` y el MCP `starccm` del `.mcp.json`
+  fuera de pantalla): chips «Presión en álabes», «Velocidad» (acciones del visor en el
+  cliente, sin solver ni IA; solo con superficies en una bomba); chat (Claude Code CLI con cwd en `starccm/` y el MCP `starccm` del `.mcp.json`
   de la raíz) y *Parámetros* (solo en casos con `pump.py`; plegado por defecto; rpm, caudal, tamaño base de malla, iteraciones) que la página convierte
   en un prompt; la UI nunca edita el .sim. Planos, vectores y escenas nuevas se piden por el chat.
+- **Panel de IA modulable** (escritorio, ≥ 1100 px): el botón «»/««» de su cabecera (o la tecla C) lo pliega a una franja de 38 px con el
+  título vertical y un punto parpadeante mientras trabaja; se arrastra su borde izquierdo (o ←/→ con el foco, doble clic restablece 330 px;
+  260 px a 55 % de la ventana) para cambiar el ancho. Ancho y estado se guardan en localStorage (`scc_chatw`, `scc_chatopen`).
+  Bajo 1100 px sigue siendo la pestaña «IA» del dock. Sin duplicados: *Parámetros* viven bajo Propiedades (a la izquierda), los atajos de campo
+  junto a Campo/Paleta del visor, las escenas solo en el árbol (la pestaña del visor muestra la abierta) y los triángulos solo en la barra del visor.
 - **Arriba**: selector **Local · este PC / Servidor · Linux** (dónde corre la simulación), estado del
   solver (clic: popover con el detalle Local / Servidor), «Apagar solver», «Abrir en STAR-CCM+» (GUI con `sims/<caso>.sim`, solo sin servidor batch
   vivo y solo en local, avisando del coste PoD), tema claro/oscuro.
