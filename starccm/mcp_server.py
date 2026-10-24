@@ -233,7 +233,8 @@ def _ssh_cmd(remote_cmd: str) -> list[str]:
 
 
 def _ssh(remote_cmd: str, timeout: float = 60, input: str | None = None) -> subprocess.CompletedProcess:
-    return subprocess.run(_ssh_cmd(remote_cmd), capture_output=True, text=True, timeout=timeout, input=input, env=_ssh_env(),
+    # sin input: stdin vacío explícito (la UI corre sin consola y un stdin heredado inválido tumba al ssh de Windows)
+    return subprocess.run(_ssh_cmd(remote_cmd), capture_output=True, text=True, timeout=timeout, input=input if input is not None else "", env=_ssh_env(),
                           encoding="utf-8", errors="replace")
 
 
@@ -266,8 +267,11 @@ def _remote_alive(st: dict) -> bool:
     try:
         r = _ssh(f"kill -0 {int(st['pid'])} 2>/dev/null && (exec 3<>/dev/tcp/127.0.0.1/{int(st['port'])}) 2>/dev/null && echo VIVO", timeout=20)
         ok = "VIVO" in r.stdout
-    except Exception:  # noqa: BLE001
+        if not ok:
+            _alive_cache["error"] = (r.stderr or f"rc {r.returncode}").strip()[-300:]
+    except Exception as e:  # noqa: BLE001
         ok = False
+        _alive_cache["error"] = repr(e)[-300:]
     _alive_cache[key] = (time.time(), ok)
     return ok
 
@@ -291,7 +295,7 @@ def _pull_new(marker: str) -> list[str]:
     files = [f for f in r.stdout.splitlines() if f and ".." not in f]
     if not files:
         return []
-    p = subprocess.Popen(_ssh_cmd(f"cd {_qs(REMOTE_DIR)} && tar cf - " + " ".join(_qs(f) for f in files)), stdout=subprocess.PIPE, env=_ssh_env())
+    p = subprocess.Popen(_ssh_cmd(f"cd {_qs(REMOTE_DIR)} && tar cf - " + " ".join(_qs(f) for f in files)), stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, env=_ssh_env())
     got = []
     with tarfile.open(fileobj=p.stdout, mode="r|") as tf:
         for m in tf:
@@ -374,7 +378,7 @@ def _inject_remote(st: dict, src: Path, tag: str, timeout: float) -> tuple[int, 
            f"rc=$?; rm -f {_qs(marker)}.done; exit $rc")
     killed = False
     with open(src.with_suffix(".out"), "w", encoding="utf-8", errors="replace") as fo:
-        p = subprocess.Popen(_ssh_cmd(run), stdout=fo, stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace", env=_ssh_env())
+        p = subprocess.Popen(_ssh_cmd(run), stdin=subprocess.DEVNULL, stdout=fo, stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace", env=_ssh_env())
         try:
             _, err = p.communicate(timeout=timeout)
             rc = p.returncode
@@ -739,7 +743,7 @@ def _server_start_remote(sim_path: str, name: str, old: dict) -> dict:
                 if rsize >= 0:
                     _ssh(f"cp -p {_qs(rsim)} {_qs(rsim + '.antes')}", timeout=600)  # copia del remoto por si acaso
                 t1 = time.time()
-                r = subprocess.run([shutil.which("scp") or "scp", *_SSH_OPTS, str(sim), f"{SSH_HOST}:{rsim}"], env=_ssh_env(),
+                r = subprocess.run([shutil.which("scp") or "scp", *_SSH_OPTS, str(sim), f"{SSH_HOST}:{rsim}"], env=_ssh_env(), stdin=subprocess.DEVNULL,
                                    capture_output=True, text=True, timeout=7200)
                 if r.returncode != 0:
                     raise RuntimeError(f"scp del .sim falló: {r.stderr.strip()[-300:]}")
@@ -764,6 +768,12 @@ def _server_start_remote(sim_path: str, name: str, old: dict) -> dict:
     while time.time() < deadline:
         tail = _tail_log(st, 20000)
         if "Server::start" in tail:
+            # si el puerto pedido seguía ocupado (un servidor recién apagado), STAR-CCM+ abre el siguiente: usar el real
+            mp = re.findall(r"Server::start -host [^:\s]+:(\d+)", tail)
+            if mp and int(mp[-1]) != st["port"]:
+                _log(f"remoto: pedí el puerto {st['port']} y STAR-CCM+ abrió {mp[-1]}")
+                st["port"] = int(mp[-1])
+                _write_state(st)
             break
         if not _ssh(f"kill -0 {st['pid']} 2>/dev/null && echo SI", timeout=20).stdout.strip():
             STATE_FILE.unlink(missing_ok=True)

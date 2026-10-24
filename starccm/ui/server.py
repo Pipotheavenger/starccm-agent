@@ -767,6 +767,7 @@ def status() -> dict:
     last = _last_activity()
     return {"alive": alive, "pid": pid, "port": st.get("port"), "host": st.get("host"), "sim": st.get("sim"),
             "where": st.get("where", "local") if pid else None, "rsim": st.get("rsim"),
+            **({"remote_error": scc._alive_cache.get("error")} if st.get("where") == "server" and not alive else {}),
             "started": st.get("started"), "np": st.get("np"), "startup_seconds": st.get("startup_seconds"),
             "idle_min": round((time.time() - last) / 60, 1) if (alive and last) else None,
             "idle_limit_min": scc.IDLE_MIN, "stale": bool(pid) and not alive,
@@ -1043,8 +1044,8 @@ def _selftest() -> int:
     check(c == 404, "POST /api/open_gui con caso inexistente -> 404")
     c, st = get("/api/status")
     check(c == 200 and "alive" in st and "log" in st and "idle_limit_min" in st, f"GET /api/status (alive={st.get('alive')})")
-    if st.get("alive"):
-        print("  skip server/stop: hay un solver vivo de verdad; no lo toco")
+    if st.get("alive") or st.get("pid"):  # cualquier solver registrado (aunque el chequeo falle): nunca apagarlo
+        print("  skip server/stop: hay un solver registrado en .server.json; no lo toco")
     else:
         c, r = post("/api/server/stop", {"save": True})
         check(c == 200 and r.get("stopped") is False, "POST /api/server/stop sin servidor -> stopped=false")

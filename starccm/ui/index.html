@@ -17,8 +17,9 @@
   <span class="lbl-ejec">Ejecutar en</span>
   <div class="seg" id="where" role="radiogroup" aria-label="Dónde corre la simulación">
     <button role="radio" data-where="local" aria-checked="true" title="Local: STAR-CCM+ 2410 en este PC (Windows); la IA usa el solver de aquí">Local · este PC</button>
-    <button role="radio" data-where="server" aria-checked="false" title="Servidor Linux (vm/SERVIDOR.md): 16 núcleos, STAR-CCM+ 2502 instalado en /opt/Siemens; la ejecución remota aún no está implementada">Servidor · Linux</button>
+    <button role="radio" data-where="server" aria-checked="false" title="Servidor Linux (vm/SERVIDOR.md): 14 procesos, STAR-CCM+ 2502; el MCP lo lanza por SSH, sube el CAD y trae resultados (unas 2× más rápido que este PC)">Servidor · Linux</button>
   </div>
+  <button class="sm" id="newcase" title="Caso nuevo desde una geometría (STEP, Parasolid, IGES, STL…)">＋ Caso nuevo</button>
   <span class="sp"></span>
   <button id="solverbtn" aria-expanded="false" aria-controls="solverpop" title="Detalle del solver (Local / Servidor)"><span id="solver" role="status" aria-live="polite"><span class="dot"></span><span>Conectando…</span></span> <span class="mut" aria-hidden="true">▾</span></button>
   <button class="sm danger" id="stopsolver" hidden title="Guarda el .sim y apaga el servidor de STAR-CCM+ (server_stop)">Apagar solver</button>
@@ -34,7 +35,7 @@
 <main class="app" id="app">
   <!-- Panel izquierdo: el árbol de la simulación, como en STAR-CCM+ -->
   <aside class="simtree" aria-label="Simulación">
-    <div class="tree-head"><button class="sm icon" id="treetoggle" aria-pressed="true" title="Plegar o desplegar el panel de la simulación (tecla T)" aria-label="Plegar panel de la simulación">«</button><span class="sec-h">Simulación</span><span class="sp"></span><select id="case" aria-label="Caso" title="Caso (carpeta en cases/)"></select><button class="sm icon" id="newcase" title="Caso nuevo desde una geometría (STEP, Parasolid, IGES, STL…)" aria-label="Caso nuevo">＋</button></div>
+    <div class="tree-head"><button class="sm icon" id="treetoggle" aria-pressed="true" title="Plegar o desplegar el panel de la simulación (tecla T)" aria-label="Plegar panel de la simulación">«</button><span class="sec-h">Simulación</span><span class="sp"></span><select id="case" aria-label="Caso" title="Caso (carpeta en cases/)"></select></div>
     <div class="tree" id="tree">
       <details open id="n-out"><summary>Simulación <span class="badge" id="b-out"></span></summary><ul id="outline"></ul></details>
       <details open id="n-geo"><summary>Superficies 3D <span class="badge" id="b-geo"></span><button class="sm mini" id="exportbtn" title="Exportar fronteras con campo desde el solver vivo (EnSight → visor)">↓ solver</button></summary>
