@@ -142,13 +142,33 @@ def _pid_alive(pid: int) -> bool:
     if not pid:
         return False
     if os.name == "nt":
-        out = subprocess.run(["tasklist", "/FI", f"PID eq {pid}", "/NH"], capture_output=True, text=True).stdout
-        return str(pid) in out
+        # OpenProcess + WaitForSingleObject: microsegundos (tasklist costaba ~0,19 s por sondeo de la UI)
+        import ctypes
+        k32 = ctypes.windll.kernel32
+        k32.OpenProcess.restype = ctypes.c_void_p
+        k32.WaitForSingleObject.argtypes = [ctypes.c_void_p, ctypes.c_uint32]
+        k32.CloseHandle.argtypes = [ctypes.c_void_p]
+        h = k32.OpenProcess(0x00100000, False, int(pid))  # SYNCHRONIZE
+        if not h:
+            return False
+        try:
+            return k32.WaitForSingleObject(h, 0) == 0x102  # WAIT_TIMEOUT: sigue corriendo
+        finally:
+            k32.CloseHandle(h)
     try:
         os.kill(pid, 0)
         return True
     except OSError:
         return False
+
+
+def _pid_is_ours(pid: int) -> bool:
+    """Evita matar un proceso ajeno si Windows reasignó el PID guardado (el PID es el del .bat/starccm+)."""
+    if os.name != "nt":
+        return True
+    out = subprocess.run(["tasklist", "/FI", f"PID eq {pid}", "/FO", "CSV", "/NH"], capture_output=True, text=True).stdout
+    m = re.match(r'"([^"]+)"', out.strip())
+    return bool(m) and re.search(r"cmd|star|java|python|mpi|ccm|hydra|smpd", m.group(1), re.I) is not None
 
 
 def _port_open(port: int, host: str = "127.0.0.1") -> bool:
@@ -170,20 +190,61 @@ def _kill_tree(pid: int) -> None:
 
 
 def _touch() -> None:
+    """Marca actividad en memoria y en disco (mtime de .server.json): el watchdog de cualquier proceso la ve."""
     global _last_tool
     _last_tool = time.time()
+    try:
+        os.utime(STATE_FILE, None)
+    except OSError:
+        pass
+
+
+def last_activity() -> float | None:
+    """Última actividad medida en DISCO (la ven todos los procesos: MCP de Claude Code, MCP del chat de la UI, UI):
+    la macro más reciente (.java o su .out, que crece en vivo mientras itera) o .server.json."""
+    ts = []
+    if MACROS.is_dir():
+        ts += [p.stat().st_mtime for p in MACROS.glob("Agent_*") if p.is_file()]
+    if STATE_FILE.is_file():
+        ts.append(STATE_FILE.stat().st_mtime)
+    return max(ts) if ts else None
+
+
+def idle_seconds() -> float:
+    last = last_activity()
+    return time.time() - max(last or 0, _last_tool)
+
+
+def _idle_stop() -> None:
+    st = _state()
+    if not (st.get("pid") and idle_seconds() > IDLE_MIN * 60 and _pid_alive(st["pid"])):
+        return
+    with _lock:  # si una tool de este proceso tenía el candado, se reevalúa al liberarse
+        if idle_seconds() <= IDLE_MIN * 60:
+            return
+        r = server_stop(save=True)
+        if r.get("save_error"):
+            _log(f"watchdog: guardado falló, no apago: {r['save_error']}")
 
 
 def _idle_watchdog() -> None:
-    """Apagado por inactividad: PoD cobra por hora de sesión."""
+    """Apagado por inactividad: PoD cobra por hora de sesión. Lo corren el MCP y la UI (proceso de larga vida)."""
     while True:
         time.sleep(60)
-        st = _state()
-        if st.get("pid") and (time.time() - _last_tool) > IDLE_MIN * 60 and _pid_alive(st["pid"]):
-            try:
-                server_stop(save=True)
-            except Exception as e:  # noqa: BLE001
-                _log(f"watchdog: {e}")
+        try:
+            _idle_stop()
+        except Exception as e:  # noqa: BLE001
+            _log(f"watchdog: {e}")
+
+
+_wd_started = False
+
+
+def start_watchdog() -> None:
+    global _wd_started
+    if not _wd_started:
+        _wd_started = True
+        threading.Thread(target=_idle_watchdog, daemon=True).start()
 
 
 def _log(msg: str) -> None:
@@ -256,8 +317,11 @@ def _inject(body: str, imports: str = "", timeout: float = 3600) -> dict:
     src = MACROS / f"Agent_{tag}.java"
     src.write_text(_wrap(body, imports, tag), encoding="utf-8")
     t0 = time.time()
+    killed = False
     err_c = _precompile(src)
     if err_c:
+        # el .out marca la macro como terminada (la pestaña Salida de ui/ no la da por «en marcha»)
+        src.with_suffix(".out").write_text(_redact(f"javac: no compila\n{err_c}\n--- stderr\n"), encoding="utf-8")
         _touch()
         return {"ok": False, "stdout": "", "stderr": "", "exception": "javac: no compila",
                 "trace": err_c, "seconds": round(time.time() - t0, 2), "macro": str(src), "returncode": 1}
@@ -266,12 +330,20 @@ def _inject(body: str, imports: str = "", timeout: float = 3600) -> dict:
     # una macro está en marcha mientras su .out no contiene AGENT_END. La UI enmascara la clave al leerlo.
     out_file = src.with_suffix(".out")
     with open(out_file, "w", encoding="utf-8", errors="replace") as fo:
+        p = subprocess.Popen(cmd, stdout=fo, stderr=subprocess.PIPE, text=True, cwd=str(MACROS),
+                             encoding="utf-8", errors="replace")
         try:
-            r = subprocess.run(cmd, stdout=fo, stderr=subprocess.PIPE, text=True, timeout=timeout, cwd=str(MACROS),
-                               encoding="utf-8", errors="replace")
-            rc, err = r.returncode, r.stderr
-        except subprocess.TimeoutExpired as e:
-            rc, err = -1, f"timeout {timeout}s"
+            _, err = p.communicate(timeout=timeout)
+            rc = p.returncode
+        except subprocess.TimeoutExpired:
+            # subprocess.run solo mataba cmd.exe y esperaba al java hijo: se mata el árbol entero
+            _kill_tree(p.pid)
+            try:
+                _, e2 = p.communicate(timeout=15)
+            except Exception:  # noqa: BLE001
+                e2 = ""
+            rc, err = -1, f"timeout {timeout}s: cliente batch (pid {p.pid}) matado; la salida puede estar incompleta. {e2 or ''}"
+            killed = True
     out = out_file.read_text(encoding="utf-8", errors="replace")
     secs = round(time.time() - t0, 2)
     # Salida de la macro: entre marcadores, del stdout del cliente; si no, del log del servidor.
@@ -291,6 +363,7 @@ def _inject(body: str, imports: str = "", timeout: float = 3600) -> dict:
         "seconds": secs,
         "macro": str(src),
         "returncode": rc,
+        **({"client_killed": True} if killed else {}),
     }
 
 
@@ -404,13 +477,22 @@ def server_stop(save: bool = True) -> dict:
             return {"stopped": False, "reason": "no había servidor"}
         result = {"stopped": True, "saved": None}
         if _pid_alive(st["pid"]) and _port_open(st["port"]):
-            body = ""
             if save and st.get("sim"):
-                body += f'sim.saveState("{_jpath(st["sim"])}");\nsim.println("SAVED {_jpath(st["sim"])}");\n'
+                # el guardado va en su propia macro: si falla, el servidor sigue vivo y el trabajo no se pierde
+                sp = _jstr(_jpath(st["sim"]))
+                try:
+                    r = _inject(f'sim.saveState("{sp}");\nsim.println("SAVED " + "{sp}");\n', timeout=1800)
+                    ok = r["ok"] and "SAVED" in (r["stdout"] or "")
+                    err = r.get("exception") or r.get("stderr") or r.get("stdout")
+                except Exception as e:  # noqa: BLE001
+                    ok, err = False, str(e)
+                if not ok:
+                    _log(f"server_stop: guardado falló, servidor sigue vivo: {err}")
+                    return {"stopped": False, "saved": None, "save_error": str(err)[:500],
+                            "reason": "no se pudo guardar; el servidor sigue vivo (save=False apaga sin guardar)"}
                 result["saved"] = st["sim"]
-            body += "sim.kill();\n"
             try:
-                r = _inject(body, timeout=1800)
+                r = _inject("sim.kill();\n", timeout=1800)
                 result["stdout"] = r["stdout"]
             except Exception as e:  # noqa: BLE001
                 result["kill_error"] = str(e)
@@ -419,8 +501,11 @@ def server_stop(save: bool = True) -> dict:
                     break
                 time.sleep(1)
         if _pid_alive(st["pid"]):
-            _kill_tree(st["pid"])
-            result["forced"] = True
+            if _pid_is_ours(st["pid"]):
+                _kill_tree(st["pid"])
+                result["forced"] = True
+            else:  # PID reasignado a otro proceso: no se toca, solo se limpia el estado
+                result["pid_reused"] = True
         STATE_FILE.unlink(missing_ok=True)
         _log(f"servidor {st['pid']} apagado {result}")
         return result
@@ -436,6 +521,11 @@ def server_status() -> dict:
 
 def _jpath(p: str | os.PathLike) -> str:
     return str(p).replace("\\", "/")
+
+
+def _jstr(s: str) -> str:
+    """Escapa texto para un literal Java entre comillas (no se puede cerrar el string ni meter saltos)."""
+    return str(s).replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n").replace("\r", "\\r")
 
 
 @mcp.tool()
@@ -585,18 +675,19 @@ def export_scene(name: str, path: str = "", width: int = 1600, height: int = 100
     """Exporta la escena `name` a PNG. path vacío = cases/_scenes/<name>.png."""
     out = Path(path) if path else CASES / "_scenes" / f"{_safe(name)}.png"
     out.parent.mkdir(parents=True, exist_ok=True)
+    nm, outp = _jstr(name), _jstr(_jpath(out))
     # createScene("X") puede dejar la escena como "X 1": se acepta nombre exacto o prefijo.
     body = f"""
 Scene sc = null;
 for (Scene s : sim.getSceneManager().getScenes())
-  if (s.getPresentationName().equals("{name}")) sc = s;
+  if (s.getPresentationName().equals("{nm}")) sc = s;
 if (sc == null)
   for (Scene s : sim.getSceneManager().getScenes())
-    if (s.getPresentationName().startsWith("{name}")) {{ sc = s; break; }}
-if (sc == null) throw new RuntimeException("No hay escena '{name}'");
+    if (s.getPresentationName().startsWith("{nm}")) {{ sc = s; break; }}
+if (sc == null) throw new RuntimeException("No hay escena '{nm}'");
 sim.println("SCENE " + sc.getPresentationName());
-sc.printAndWait(resolvePath("{_jpath(out)}"), 1, {int(width)}, {int(height)}, true, false);
-sim.println("PNG {_jpath(out)}");
+sc.printAndWait(resolvePath("{outp}"), 1, {int(width)}, {int(height)}, true, false);
+sim.println("PNG " + "{outp}");
 """
     with _lock:
         r = _inject(body)
@@ -614,7 +705,8 @@ def save(path: str = "") -> dict:
     if not target.is_absolute():
         target = SIMS / target
     target.parent.mkdir(parents=True, exist_ok=True)
-    body = f'sim.saveState("{_jpath(target)}");\nsim.println("SAVED {_jpath(target)}");\n'
+    tj = _jstr(_jpath(target))
+    body = f'sim.saveState("{tj}");\nsim.println("SAVED " + "{tj}");\n'
     with _lock:
         r = _inject(body, timeout=1800)
         if r["ok"]:
@@ -680,6 +772,22 @@ def _docs() -> list[tuple[str, Path]]:
     return _doc_index
 
 
+_member_idx: dict[str, list[str]] | None = None
+
+
+def _members() -> dict[str, list[str]]:
+    """clase calificada -> miembros, de member-search-index.js (0,1 s; sustituye al rastreo de las 22 k páginas)."""
+    global _member_idx
+    if _member_idx is None:
+        _member_idx = {}
+        f = DOC_DIR / "member-search-index.js" if DOC_DIR else None
+        if f and f.is_file():
+            txt = f.read_text(encoding="utf-8", errors="replace")
+            for m in json.loads(txt[txt.index("["):txt.rindex("]") + 1]):
+                _member_idx.setdefault(f"{m['p']}.{m['c']}", []).append(m["l"])
+    return _member_idx
+
+
 def _html_text(p: Path) -> str:
     t = p.read_text(encoding="utf-8", errors="replace")
     t = re.sub(r"<(script|style)[^>]*>.*?</\1>", " ", t, flags=re.S | re.I)
@@ -722,16 +830,17 @@ def docs_search(query: str, max_classes: int = 5) -> dict:
                     sigs.append(l)
         result["classes"].append({"class": fq, "file": str(p), "matches": sigs[:25]})
     if not result["classes"]:
-        hits = []
-        for fq, p in docs[:4000]:
-            try:
-                if all(t in p.read_text(encoding="utf-8", errors="replace").lower() for t in low):
-                    hits.append(fq)
-            except OSError:
-                pass
-            if len(hits) >= max_classes:
-                break
-        result["content_hits"] = hits
+        # ningún nombre de clase coincide: se busca entre los 146 k miembros del índice del javadoc
+        hits, members = [], {}
+        for fq, ms in _members().items():
+            joined = " ".join(ms).lower()
+            if all(t in joined for t in low):
+                exact = [m for m in ms if all(t in m.lower() for t in low)]
+                hits.append((0 if exact else 1, fq))
+                members[fq] = (exact or ms)[:5]
+        hits.sort()
+        result["content_hits"] = [fq for _, fq in hits[:max_classes]]
+        result["members"] = {fq: members[fq] for fq in result["content_hits"]}
     return result
 
 
@@ -742,7 +851,9 @@ def _selftest() -> int:
     fake = HERE / "tests" / "fake_starccm.py"
     os.environ["STARCCM_EXE"] = str(fake)
     EXE = str(fake)
-    PORT = 47999
+    with socket.socket() as sk:  # puerto libre: dos selftests a la vez no se pisan
+        sk.bind(("127.0.0.1", 0))
+        PORT = sk.getsockname()[1]
     tmp = Path(tempfile.mkdtemp(prefix="starccm-selftest-"))
     # Todo lo que escribe el falso va al temporal: ni sims/, ni macros/, ni el .server.json reales
     # (antes la pestaña Salida de ui/ enseñaba el «FAKE server» como última macro, y un selftest
@@ -784,6 +895,21 @@ def _selftest() -> int:
         check(any(c["class"].endswith("Simulation") for c in d.get("classes", [])), "docs_search encuentra star.common.Simulation")
     r = save(str(tmp / "prueba.sim"))
     check(r["ok"], "save")
+    if DOC_DIR and DOC_DIR.is_dir() and (DOC_DIR / "member-search-index.js").is_file():
+        d2 = docs_search("setRelativeToModelLength")
+        check(any(c.endswith("GlyphSettings") for c in d2.get("content_hits", [])), "docs_search encuentra un método por el índice de miembros")
+    check(_jstr('a"b' + chr(92) + 'c' + chr(10) + 'd') == 'a' + chr(92) + '"b' + chr(92) * 2 + 'c' + chr(92) + 'nd',
+          "_jstr escapa comillas, barras y saltos")
+    r = export_scene('x"); System.exit(0); //')
+    macs = sorted(MACROS.glob("Agent_*.java"), key=lambda q: q.stat().st_mtime)
+    check('equals("x\\"); System.exit(0); //")' in macs[-1].read_text(encoding="utf-8"), "export_scene escapa el nombre en el Java")
+    check(idle_seconds() < 60, "last_activity en disco ve la actividad reciente")
+    # guardado que falla: el servidor sigue vivo y no se da por guardado
+    real_sim = _state().get("sim")
+    _write_state({**_state(), "sim": str(tmp / "AGENT_FAKE_FAIL.sim")})
+    r = server_stop(save=True)
+    check(r["stopped"] is False and r.get("save_error") and _port_open(PORT), "server_stop con guardado fallido no apaga ni dice «saved»")
+    _write_state({**_state(), "sim": real_sim})
     sstat = server_status()
     check(sstat["alive"], "server_status vivo")
     r = server_stop(save=True)
@@ -803,5 +929,5 @@ def _selftest() -> int:
 if __name__ == "__main__":
     if "--selftest" in sys.argv:
         sys.exit(_selftest())
-    threading.Thread(target=_idle_watchdog, daemon=True).start()
+    start_watchdog()
     mcp.run()

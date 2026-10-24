@@ -100,6 +100,8 @@ def _clean_env() -> dict[str, str]:
 
 
 def _kill_tree(p: subprocess.Popen) -> None:
+    if p.poll() is not None:  # ya terminó: su PID pudo reasignarse, no tocar nada
+        return
     if os.name == "nt":
         subprocess.run(["taskkill", "/PID", str(p.pid), "/T", "/F"], capture_output=True)
     if p.poll() is None:
@@ -108,6 +110,7 @@ def _kill_tree(p: subprocess.Popen) -> None:
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
+    scc.start_watchdog()  # el apagado por inactividad no depende de que siga vivo el MCP que arrancó el solver
     yield
     p = CHAT_PROC.get("p")
     if p and p.poll() is None:
@@ -352,7 +355,7 @@ def _solver_busy_409() -> None:
 
 
 class SceneReq(BaseModel):
-    name: str = Field(min_length=1, max_length=100)
+    name: str = Field(min_length=1, max_length=100, pattern=r"^[\w .\-()]+$")  # va a un literal Java
     case: str | None = Field(None, max_length=100)
     width: int = Field(1600, ge=200, le=4000)
     height: int = Field(1000, ge=200, le=4000)
@@ -564,7 +567,7 @@ class SurfaceReq(BaseModel):
     case: str = Field(min_length=1, max_length=100)
     name: str = Field("superficies", min_length=1, max_length=60, pattern=r"^[A-Za-z0-9_\-]+$")
     pattern: str = Field("blade|hub|shroud|volute|wall|casing", max_length=300)   # regex sobre "region/frontera"
-    funcs: str = Field("Pressure,TotalPressure,Velocity,WallYplus", max_length=300)  # field functions internas
+    funcs: str = Field("Pressure,TotalPressure,Velocity,WallYplus", max_length=300, pattern=r"^[\w ,.\-\[\]()]+$")  # field functions internas
 
 
 @app.post("/api/surface")
@@ -579,8 +582,8 @@ def api_surface(req: SurfaceReq) -> dict:
         raw.mkdir(parents=True, exist_ok=True)
         case_file = raw / f"{req.name}.case"
         body = (RECIPE_ENSIGHT.read_text(encoding="utf-8")
-                .replace("PATTERN", req.pattern.replace("\\", "\\\\").replace('"', '\\"'))
-                .replace("FUNCS", req.funcs.replace('"', ""))
+                .replace("PATTERN", scc._jstr(req.pattern))
+                .replace("FUNCS", scc._jstr(req.funcs))
                 .replace("OUT", scc._jpath(case_file)))
         t0 = time.time()
         r = scc.run_java(body, timeout_s=3600)
@@ -601,17 +604,8 @@ def api_surface(req: SurfaceReq) -> dict:
 
 # ---------------------------------------------------------------- estado del solver
 def _last_activity() -> float | None:
-    """Última macro inyectada (macros/Agent_*.java) o el arranque del servidor. El MCP mide la inactividad
-    en su propio proceso; aquí se estima por el disco."""
-    ts = []
-    macros = ROOT / "macros"
-    if macros.is_dir():
-        files = sorted(macros.glob("Agent_*.java"), key=lambda p: p.stat().st_mtime)
-        if files:
-            ts.append(files[-1].stat().st_mtime)
-    if scc.STATE_FILE.is_file():
-        ts.append(scc.STATE_FILE.stat().st_mtime)
-    return max(ts) if ts else None
+    """Última macro (.java/.out) o .server.json: la misma medida en disco que usa el watchdog del MCP."""
+    return scc.last_activity()
 
 
 def _log_tail(n: int = 12) -> list[str]:
@@ -691,7 +685,7 @@ def _chat_events(req: ChatReq):
         cmd = [CLAUDE_BIN, "-p", prompt, "--output-format", "stream-json", "--verbose",
                "--mcp-config", str(REPO / ".mcp.json"), "--strict-mcp-config",
                "--allowedTools", "mcp__starccm__*,Read,Glob,Grep",
-               "--disallowedTools", "Bash,Write,Edit,NotebookEdit,WebFetch,WebSearch",
+               "--disallowedTools", "Bash,Write,Edit,NotebookEdit,WebFetch,WebSearch,Read(**/.env*),Read(**/.starccm-agent.env)",
                "--append-system-prompt", CHAT_SYSTEM, "--max-turns", "40"]
         if req.session_id:
             cmd += ["--resume", req.session_id]
@@ -735,13 +729,13 @@ def _chat_events(req: ChatReq):
             elif t == "assistant":
                 for b in o.get("message", {}).get("content", []):
                     if b.get("type") == "text" and b.get("text"):
-                        yield _sse({"kind": "text", "text": b["text"]})
+                        yield _sse({"kind": "text", "text": scc._redact(b["text"])})
                     elif b.get("type") == "tool_use":
                         name = b.get("name", "")
                         if not name.startswith("mcp__starccm__"):
                             hidden.add(b.get("id", ""))
                             continue
-                        yield _sse({"kind": "tool", "name": name.replace("mcp__starccm__", ""), "input": b.get("input")})
+                        yield _sse({"kind": "tool", "name": name.replace("mcp__starccm__", ""), "input": json.loads(scc._redact(json.dumps(b.get("input"))))})
             elif t == "user":
                 for b in o.get("message", {}).get("content", []):
                     if isinstance(b, dict) and b.get("type") == "tool_result" and b.get("tool_use_id") not in hidden:
@@ -892,6 +886,10 @@ def _selftest() -> int:
         check(c == 200 and r.get("stopped") is False, "POST /api/server/stop sin servidor -> stopped=false")
         c, r = post("/api/scene", {"name": "presion"})
         check(c == 409 and "solver" in r.get("detail", ""), "POST /api/scene sin servidor -> 409")
+        c, _ = post("/api/scene", {"name": "x\"); System.exit(0); //"})
+        check(c == 422, "POST /api/scene con comillas en el nombre -> 422 (no llega al Java)")
+        c, _ = post("/api/surface", {"case": "cursocfturbo", "funcs": "P\"); //"})
+        check(c == 422, "POST /api/surface con comillas en funcs -> 422")
         c, r = get("/api/tree?refresh=1")
         check(c == 409, "GET /api/tree?refresh=1 sin servidor -> 409")
         c, r = post("/api/surface", {"case": names[0] if names else "x"})

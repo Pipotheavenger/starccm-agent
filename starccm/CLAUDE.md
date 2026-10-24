@@ -98,7 +98,7 @@ public class Agent_<timestamp> extends StarMacro {
 ```
 
 Reglas del servidor:
-- Apagado por inactividad: 30 min sin tools → `save` + `server_stop`. PoD cobra por hora de sesión.
+- Apagado por inactividad: 30 min sin actividad medida en disco (mtime de macros/`.out` y `.server.json`) → `save` + `server_stop`; lo vigilan el MCP y la UI. Si el guardado falla no se apaga. PoD cobra por hora de sesión.
 - Un solo servidor a la vez. Barridos se encadenan en la misma sesión, no se abren varias.
 - `server_start` registra PID, puerto, sim y log en `.server.json`. Si el proceso murió, limpia y relanza.
 - Siempre trabajar sobre una copia en `sims/`, nunca sobre el .sim original del usuario.
