@@ -186,6 +186,33 @@ for (Report rep : sim.getReportManager().getObjects()) {
 for (Monitor mo : sim.getMonitorManager().getObjects()) d.p("monitores", mo.getPresentationName(), "tipo", mo.getClass().getSimpleName());
 for (Object f : sim.getFieldFunctionManager().getObjects())
   if (f instanceof UserFieldFunction) d.p("funciones", d.name(f), "definición", ((UserFieldFunction) f).getDefinition());
-for (Object p : sim.getPartManager().getObjects()) d.p("derivadas", d.name(p), "tipo", p.getClass().getSimpleName());
-for (Scene sc : sim.getSceneManager().getScenes()) d.p("escenas", sc.getPresentationName(), "displayers", sc.getDisplayerManager().getObjects().size());
+for (Object p : sim.getPartManager().getObjects()) {  // planos, streamlines, isosuperficies…: qué son y dónde están
+  String pn = d.name(p);
+  d.p("derivadas", pn, "tipo", p.getClass().getSimpleName());
+  d.some("derivadas", pn, p, "getOrigin", "getOrientation", "getNormal", "getCoordinateSystem", "getSeedPart", "getMaximumPropagation", "getDirection");
+  Object inp = d.call(d.call(p, "getInputParts"), "getObjects");
+  if (inp instanceof Collection) { StringBuilder b = new StringBuilder(); for (Object o : (Collection) inp) b.append(b.length() > 0 ? ", " : "").append(d.name(o)); d.p("derivadas", pn, "entrada", b); }
+  Object fv = d.call(d.call(p, "getFieldFunction"), "getPresentationName");
+  if (fv != null) d.p("derivadas", pn, "campo", fv);
+  Object vf = d.call(p, "getVectorField");
+  if (vf != null) d.p("derivadas", pn, "campo vectorial", d.name(vf));
+}
+for (Scene sc : sim.getSceneManager().getScenes()) {  // cada escena con sus displayers: tipo, partes y campo que pinta
+  String sn = sc.getPresentationName();
+  d.p("escenas", sn, "displayers", sc.getDisplayerManager().getObjects().size());
+  for (Object dp : sc.getDisplayerManager().getObjects()) {
+    String dn = sn + " · " + d.name(dp);
+    d.p("escenas", dn, "tipo", dp.getClass().getSimpleName());
+    Object parts = d.call(d.call(dp, "getInputParts"), "getObjects");
+    if (parts instanceof Collection) { StringBuilder b = new StringBuilder(); int n = 0;
+      for (Object o : (Collection) parts) { if (n++ < 12) b.append(b.length() > 0 ? ", " : "").append(d.name(o)); }
+      d.p("escenas", dn, "partes (" + n + ")", b); }
+    for (String q : new String[] {"getScalarDisplayQuantity", "getVectorDisplayQuantity"}) {
+      Object dq = d.call(dp, q); Object ff = d.call(dq, "getFieldFunction");
+      if (ff != null) d.p("escenas", dn, q.contains("Scalar") ? "campo escalar" : "campo vectorial", d.name(ff));
+      Object rng = d.call(dq, "getRange"); if (rng != null) d.p("escenas", dn, "rango", d.vec(rng) != null ? d.vec(rng) : String.valueOf(rng));
+    }
+    d.some("escenas", dn, dp, "getOpacity", "getRepresentation", "getDisplayMode", "getVisibilityOverrideMode");
+  }
+}
 for (Object pl : sim.getPlotManager().getObjects()) d.p("graficos", d.name(pl), "tipo", pl.getClass().getSimpleName());

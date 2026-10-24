@@ -105,7 +105,9 @@ CHAT_SYSTEM = (
     "yplus, plano_vectores y malla a cases/<caso>/images/ (recetas bomba-escenas, escena-plano-vectores, "
     "escena-malla-rotor y export_scene con path), superficies con campo con la receta exportar-superficies-ensight "
     "(PATTERN «.», FUNCS «Pressure,TotalPressure,Velocity,WallYplus», OUT cases/<caso>/surfaces/_raw/superficies/"
-    "superficies.case): el visor las convierte solo; y escribe cases/<caso>/RESUMEN.md (geometría, malla, física, "
+    "superficies.case, y PLANOS con dos cortes del FLUIDO: uno perpendicular al eje por la mitad de los álabes y uno "
+    "meridional que contenga el eje, formato «medio:nx,ny,nz,ox,oy,oz;meridional:…» en m): el visor las convierte solo "
+    "(en las paredes la velocidad es la de la pared: el flujo se ve en los planos); y escribe cases/<caso>/RESUMEN.md (geometría, malla, física, "
     "resultados y tiempos en tablas, como cases/cursocfturbo/RESUMEN.md). Si algo falla dos veces, para y explica. "
     "GEOMETRÍA EN 3D YA: justo después de importar el CAD (antes de regiones y malla) y otra vez tras separar caras, "
     "ejecuta la receta exportar-geometria-stl con OUT cases/<caso>/surfaces/_raw/geometria (son segundos): el visor "
@@ -1023,6 +1025,7 @@ class SurfaceReq(BaseModel):
     name: str = Field("superficies", min_length=1, max_length=60, pattern=r"^[A-Za-z0-9_\-]+$")
     pattern: str = Field("blade|hub|shroud|volute|wall|casing", max_length=300)   # regex sobre "region/frontera"
     funcs: str = Field("Pressure,TotalPressure,Velocity,WallYplus", max_length=300, pattern=r"^[\w ,.\-\[\]()]+$")  # field functions internas
+    planos: str = Field("", max_length=400, pattern=r"^[\w .,:;\-+eE]*$")  # cortes del fluido «nombre:nx,ny,nz,ox,oy,oz;…»
 
 
 @app.post("/api/surface")
@@ -1038,6 +1041,7 @@ def api_surface(req: SurfaceReq) -> dict:
         case_file = raw / f"{req.name}.case"
         body = (RECIPE_ENSIGHT.read_text(encoding="utf-8")
                 .replace("PATTERN", scc._jstr(req.pattern))
+                .replace('String planos = "PLANOS"', f'String planos = "{scc._jstr(req.planos)}"' if req.planos else 'String planos = "PLANOS"')
                 .replace("FUNCS", scc._jstr(req.funcs))
                 .replace("OUT", scc._jpath(case_file)))
         t0 = time.time()
