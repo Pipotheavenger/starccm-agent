@@ -166,7 +166,7 @@ def _pid_is_ours(pid: int) -> bool:
     """Evita matar un proceso ajeno si Windows reasignó el PID guardado (el PID es el del .bat/starccm+)."""
     if os.name != "nt":
         return True
-    out = subprocess.run(["tasklist", "/FI", f"PID eq {pid}", "/FO", "CSV", "/NH"], capture_output=True, text=True).stdout
+    out = subprocess.run(["tasklist", "/FI", f"PID eq {pid}", "/FO", "CSV", "/NH"], capture_output=True, text=True, timeout=30).stdout
     m = re.match(r'"([^"]+)"', out.strip())
     return bool(m) and re.search(r"cmd|star|java|python|mpi|ccm|hydra|smpd", m.group(1), re.I) is not None
 
@@ -181,7 +181,7 @@ def _port_open(port: int, host: str = "127.0.0.1") -> bool:
 
 def _kill_tree(pid: int) -> None:
     if os.name == "nt":
-        subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"], capture_output=True)
+        subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"], capture_output=True, timeout=30)
     else:
         try:
             os.kill(pid, 9)
@@ -238,17 +238,37 @@ def _ssh(remote_cmd: str, timeout: float = 60, input: str | None = None) -> subp
                           encoding="utf-8", errors="replace")
 
 
+def _ssh_quiet(remote_cmd: str, timeout: float = 30) -> None:
+    """ssh de limpieza (rm, pkill): si falla o tarda se anota en agent.log y no tumba lo que ya terminó."""
+    try:
+        _ssh(remote_cmd, timeout=timeout)
+    except Exception as e:  # noqa: BLE001
+        _log(f"ssh de limpieza falló ({remote_cmd[:60]}): {e!r}")
+
+
+def _remote_pid_up(pid: int) -> bool:
+    return bool(_ssh(f"kill -0 {int(pid)} 2>/dev/null && echo SI", timeout=20).stdout.strip())
+
+
 def _rpath(p: str | os.PathLike) -> str:
     """Ruta local dentro de starccm/ -> ruta en el servidor (misma estructura bajo REMOTE_DIR)."""
     rel = Path(p).resolve().relative_to(HERE.resolve())
     return REMOTE_DIR + "/" + rel.as_posix()
 
 
+def _fwd(p: str) -> str:
+    """Barras invertidas o repetidas -> una barra normal."""
+    return re.sub(r"[/\\]+", "/", p)
+
+
+def _local_rx() -> re.Pattern:
+    """Rutas de starccm/ dentro de un Java (barra o barra invertida, cualquier caja de la unidad); el grupo 1 es lo que sigue."""
+    return re.compile(re.escape(_jpath(HERE.resolve())).replace("/", r"[/\\]+") + r"""([^"'\s]*)""", re.I)
+
+
 def _translate(body: str) -> str:
-    """Reescribe en el Java las rutas de starccm/ (con barra o barra invertida, en cualquier caja de letra de unidad) a REMOTE_DIR."""
-    loc = _jpath(HERE.resolve())
-    rx = re.escape(loc).replace("/", r"[/\\]+") + r"""([^"'\s]*)"""
-    return re.sub(rx, lambda m: REMOTE_DIR + re.sub(r"[/\\]+", "/", m.group(1)), body, flags=re.I)
+    """Reescribe en el Java las rutas de starccm/ a REMOTE_DIR."""
+    return _local_rx().sub(lambda m: REMOTE_DIR + _fwd(m.group(1)), body)
 
 
 def _qs(s: str) -> str:
@@ -297,27 +317,30 @@ def _pull_new(marker: str) -> list[str]:
         return []
     p = subprocess.Popen(_ssh_cmd(f"cd {_qs(REMOTE_DIR)} && tar cf - " + " ".join(_qs(f) for f in files)), stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, env=_ssh_env())
     got = []
-    with tarfile.open(fileobj=p.stdout, mode="r|") as tf:
-        for m in tf:
-            dst = (HERE / m.name).resolve()
-            if not m.isfile() or HERE.resolve() not in dst.parents:
-                continue
-            dst.parent.mkdir(parents=True, exist_ok=True)
-            with tf.extractfile(m) as fi, open(dst, "wb") as fo:
-                shutil.copyfileobj(fi, fo)
-            got.append(m.name)
-    p.wait(timeout=60)
+    try:
+        with tarfile.open(fileobj=p.stdout, mode="r|") as tf:
+            for m in tf:
+                dst = (HERE / m.name).resolve()
+                if not m.isfile() or HERE.resolve() not in dst.parents:
+                    continue
+                dst.parent.mkdir(parents=True, exist_ok=True)
+                with tf.extractfile(m) as fi, open(dst, "wb") as fo:
+                    shutil.copyfileobj(fi, fo)
+                got.append(m.name)
+        p.wait(timeout=60)
+    finally:
+        if p.poll() is None:  # tar roto o ssh colgado: no dejar el proceso huérfano
+            p.kill()
+        p.stdout.close()
     return got
 
 
 def _local_inputs(body: str) -> list[Path]:
     """Archivos de starccm/ que la macro menciona y existen en este PC (CAD de cases/<caso>/cad, CSV de entrada…).
     El .sim no: lo gestiona server_start."""
-    loc = _jpath(HERE.resolve())
-    rx = re.escape(loc).replace("/", r"[/\\]+") + r"""([^"'\s]*)"""
     out = []
-    for m in re.finditer(rx, body, flags=re.I):
-        rel = re.sub(r"[/\\]+", "/", m.group(1)).lstrip("/")
+    for m in _local_rx().finditer(body):
+        rel = _fwd(m.group(1)).lstrip("/")
         f = (HERE / rel).resolve()
         if not rel or HERE.resolve() not in f.parents:
             continue
@@ -383,14 +406,15 @@ def _inject_remote(st: dict, src: Path, tag: str, timeout: float) -> tuple[int, 
             _, err = p.communicate(timeout=timeout)
             rc = p.returncode
         except subprocess.TimeoutExpired:
-            _ssh(f"pkill -f {_qs(src.name)}", timeout=30)  # el cliente batch remoto de ESTA macro
+            _ssh_quiet(f"pkill -f {_qs(src.name)}")  # el cliente batch remoto de ESTA macro
             p.kill()
+            p.communicate()  # recoge el proceso y cierra sus tuberías
             rc, err, killed = -1, f"timeout {timeout}s: cliente batch remoto matado; la salida puede estar incompleta", True
     try:
         pulled = _pull_new(marker)
     except Exception as e:  # noqa: BLE001
         pulled, err = [], (err or "") + f"\n[pull] {e}"
-    _ssh(f"rm -f {_qs(marker)}", timeout=30)
+    _ssh_quiet(f"rm -f {_qs(marker)}")
     return rc, err or "", killed, pulled
 
 
@@ -629,6 +653,41 @@ except ImportError:  # mcp 2.x
 mcp = FastMCP("starccm")
 
 
+_INIT_AUTOSAVE = ("AutoSave as = sim.getSimulationIterator().getAutoSave();\n"
+                  "as.setAutoSaveBatch(false); as.setAutoSaveMesh(false);\n"
+                  'sim.println("INIT autosave off");\n')
+
+
+def _run_init(st: dict) -> None:
+    """Primera macro tras arrancar: apaga el autoguardado en batch (en 2410 viene activo y deja <sim>@meshed.sim y
+    @NNNNN.sim, gigas en una bomba). Su resultado queda en st["init"]; no tumba el arranque."""
+    try:
+        st["init"] = _inject(_INIT_AUTOSAVE, timeout=600)["stdout"][-200:]
+    except Exception as e:  # noqa: BLE001
+        st["init"] = f"init falló: {e}"
+    _write_state(st)
+
+
+def _save_macro(sp: str) -> str:
+    """Java que guarda el .sim en `sp` (ya escapado con _jstr) y lo anuncia."""
+    return f'sim.saveState("{sp}");\nsim.println("SAVED " + "{sp}");\n'
+
+
+def _try_save(sp: str) -> tuple[bool, str | None]:
+    """El guardado va en su propia macro: si falla, el servidor sigue vivo y el trabajo no se pierde."""
+    try:
+        r = _inject(_save_macro(sp), timeout=1800)
+        return bool(r["ok"] and "SAVED" in (r["stdout"] or "")), r.get("exception") or r.get("stderr") or r.get("stdout")
+    except Exception as e:  # noqa: BLE001
+        return False, str(e)
+
+
+def _save_failed(err, where: str) -> dict:
+    _log(f"server_stop{where}: guardado falló, servidor sigue vivo: {err}")
+    return {"stopped": False, "saved": None, "save_error": str(err)[:500],
+            "reason": "no se pudo guardar; el servidor sigue vivo (save=False apaga sin guardar)"}
+
+
 @mcp.tool()
 def server_start(sim_path: str = "", name: str = "", where: str = "") -> dict:
     """Levanta el servidor de STAR-CCM+ (o reutiliza el vivo). sim_path: .sim a abrir; se copia a
@@ -670,10 +729,10 @@ def server_start(sim_path: str = "", name: str = "", where: str = "") -> dict:
         if sim and sim.is_file():
             cmd += ["-load", str(sim)]
         t0 = time.time()
-        logf = open(log, "ab")
         flags = subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0
         global _proc
-        _proc = subprocess.Popen(cmd, stdout=logf, stderr=subprocess.STDOUT, cwd=str(SIMS), creationflags=flags)
+        with open(log, "ab") as logf:  # el hijo hereda el manejador: aquí se puede cerrar
+            _proc = subprocess.Popen(cmd, stdout=logf, stderr=subprocess.STDOUT, cwd=str(SIMS), creationflags=flags)
         st = {"pid": _proc.pid, "port": PORT, "host": "localhost", "sim": str(sim) if sim else None,
               "log": str(log), "started": datetime.now().isoformat(timespec="seconds"), "np": NP,
               "cmd": _redact(" ".join(cmd))}
@@ -694,16 +753,7 @@ def server_start(sim_path: str = "", name: str = "", where: str = "") -> dict:
             raise RuntimeError("El servidor no abrió el puerto en 600 s")
         st["startup_seconds"] = round(time.time() - t0, 1)
         _write_state(st)
-        # Autoguardado en batch apagado: en 2410 viene activo y deja <sim>@meshed.sim y @NNNNN.sim
-        # (gigas en una bomba). (Simulation no tiene setPresentationName: el nombre lo da save().)
-        init = ("AutoSave as = sim.getSimulationIterator().getAutoSave();\n"
-                "as.setAutoSaveBatch(false); as.setAutoSaveMesh(false);\n"
-                'sim.println("INIT autosave off");\n')
-        try:
-            st["init"] = _inject(init, timeout=600)["stdout"][-200:]
-        except Exception as e:  # noqa: BLE001
-            st["init"] = f"init falló: {e}"
-        _write_state(st)
+        _run_init(st)  # (Simulation no tiene setPresentationName: el nombre lo da save())
         _log(f"servidor pid={st['pid']} puerto={PORT} sim={sim} en {st['startup_seconds']}s; {st['init']}")
         return st
 
@@ -775,25 +825,18 @@ def _server_start_remote(sim_path: str, name: str, old: dict) -> dict:
                 st["port"] = int(mp[-1])
                 _write_state(st)
             break
-        if not _ssh(f"kill -0 {st['pid']} 2>/dev/null && echo SI", timeout=20).stdout.strip():
+        if not _remote_pid_up(st["pid"]):
             STATE_FILE.unlink(missing_ok=True)
             raise RuntimeError(f"starccm+ remoto terminó al arrancar. Cola del log:\n{_redact(tail)[-3000:]}")
         time.sleep(2)
     else:
-        _ssh(f"kill {st['pid']}", timeout=20)
+        _ssh_quiet(f"kill {st['pid']}", timeout=20)
         STATE_FILE.unlink(missing_ok=True)
         raise RuntimeError("El servidor remoto no arrancó en 600 s")
     st["startup_seconds"] = round(time.time() - t0, 1)
     _write_state(st)
     _alive_cache.clear()
-    init = ("AutoSave as = sim.getSimulationIterator().getAutoSave();\n"
-            "as.setAutoSaveBatch(false); as.setAutoSaveMesh(false);\n"
-            'sim.println("INIT autosave off");\n')
-    try:
-        st["init"] = _inject(init, timeout=600)["stdout"][-200:]
-    except Exception as e:  # noqa: BLE001
-        st["init"] = f"init falló: {e}"
-    _write_state(st)
+    _run_init(st)
     _log(f"servidor REMOTO {SSH_HOST} pid={st['pid']} puerto={PORT} np={np_} sim={rsim} en {st['startup_seconds']}s"
          f"{f' (subida del .sim {uploaded}s)' if uploaded is not None else ''}; {st['init']}")
     return st
@@ -803,27 +846,20 @@ def _server_stop_remote(st: dict, save: bool, result: dict) -> dict:
     """server_stop en el servidor Linux: guarda allí (el .sim no se baja: tarda; queda en REMOTE_DIR/sims)."""
     if alive(st):
         if save and st.get("rsim"):
-            sp = _jstr(st["rsim"])
-            try:
-                r = _inject(f'sim.saveState("{sp}");\nsim.println("SAVED " + "{sp}");\n', timeout=1800)
-                ok, err = r["ok"] and "SAVED" in (r["stdout"] or ""), r.get("exception") or r.get("stderr") or r.get("stdout")
-            except Exception as e:  # noqa: BLE001
-                ok, err = False, str(e)
+            ok, err = _try_save(_jstr(st["rsim"]))
             if not ok:
-                _log(f"server_stop remoto: guardado falló, servidor sigue vivo: {err}")
-                return {"stopped": False, "saved": None, "save_error": str(err)[:500],
-                        "reason": "no se pudo guardar; el servidor sigue vivo (save=False apaga sin guardar)"}
+                return _save_failed(err, " remoto")
             result["saved"] = st["rsim"]
         try:
             result["stdout"] = _inject("sim.kill();\n", timeout=1800)["stdout"]
         except Exception as e:  # noqa: BLE001
             result["kill_error"] = str(e)
     for _ in range(30):
-        if not _ssh(f"kill -0 {int(st['pid'])} 2>/dev/null && echo SI", timeout=20).stdout.strip():
+        if not _remote_pid_up(st["pid"]):
             break
         time.sleep(2)
     else:
-        _ssh(f"pkill -TERM -P {int(st['pid'])}; kill -TERM {int(st['pid'])}", timeout=20)
+        _ssh_quiet(f"pkill -TERM -P {int(st['pid'])}; kill -TERM {int(st['pid'])}", timeout=20)
         result["forced"] = True
     _alive_cache.clear()
     _tail_log(st)  # copia final del log remoto para la pestaña Salida
@@ -846,18 +882,9 @@ def server_stop(save: bool = True) -> dict:
             return _server_stop_remote(st, save, result)
         if _pid_alive(st["pid"]) and _port_open(st["port"]):
             if save and st.get("sim"):
-                # el guardado va en su propia macro: si falla, el servidor sigue vivo y el trabajo no se pierde
-                sp = _jstr(_jpath(st["sim"]))
-                try:
-                    r = _inject(f'sim.saveState("{sp}");\nsim.println("SAVED " + "{sp}");\n', timeout=1800)
-                    ok = r["ok"] and "SAVED" in (r["stdout"] or "")
-                    err = r.get("exception") or r.get("stderr") or r.get("stdout")
-                except Exception as e:  # noqa: BLE001
-                    ok, err = False, str(e)
+                ok, err = _try_save(_jstr(_jpath(st["sim"])))
                 if not ok:
-                    _log(f"server_stop: guardado falló, servidor sigue vivo: {err}")
-                    return {"stopped": False, "saved": None, "save_error": str(err)[:500],
-                            "reason": "no se pudo guardar; el servidor sigue vivo (save=False apaga sin guardar)"}
+                    return _save_failed(err, "")
                 result["saved"] = st["sim"]
             try:
                 r = _inject("sim.kill();\n", timeout=1800)
@@ -1072,10 +1099,8 @@ def save(path: str = "") -> dict:
     if not target.is_absolute():
         target = SIMS / target
     target.parent.mkdir(parents=True, exist_ok=True)
-    tj = _jstr(_jpath(target))
-    body = f'sim.saveState("{tj}");\nsim.println("SAVED " + "{tj}");\n'
     with _lock:
-        r = _inject(body, timeout=1800)
+        r = _inject(_save_macro(_jstr(_jpath(target))), timeout=1800)
         if r["ok"]:
             st["sim"] = str(target)
             if st.get("where") == "server":

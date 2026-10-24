@@ -144,7 +144,6 @@ table.kv tr.where td{white-space:normal;font-weight:600} table.kv tr.srv td{colo
 .vtabs::-webkit-scrollbar{display:none}
 .vtabs [role=tab]{background:transparent;border:0;border-bottom:2px solid transparent;border-radius:0;min-height:0;padding:0 var(--s3);color:var(--mut);font-size:12px;font-weight:600;gap:4px}
 .vtabs [role=tab][aria-selected="true"]{color:var(--fg);border-bottom-color:var(--acc)}
-.vtabs [role=tab] .x{opacity:.5;font-size:10px} .vtabs [role=tab]:hover .x{opacity:1}
 #vstate{align-self:center;padding-right:var(--s2);white-space:nowrap;flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis}
 #scenetabs{display:contents} #scenetabs [role=tab][aria-selected="false"]{display:none}
 #viewer{position:relative;overflow:clip;min-height:0;background:radial-gradient(ellipse at 50% 40%,color-mix(in srgb,var(--viewer-bg) 70%,#fff) 0%,var(--viewer-bg) 70%)}
@@ -174,7 +173,6 @@ table.kv tr.where td{white-space:normal;font-weight:600} table.kv tr.srv td{colo
 .vbusy{position:absolute;left:50%;top:44px;transform:translateX(-50%);z-index:3;display:flex;align-items:center;gap:8px;background:var(--panel);border:1px solid var(--line);border-radius:999px;padding:4px 12px;font-size:12px}
 .spinner{width:12px;height:12px;border:2px solid var(--line);border-top-color:var(--acc);border-radius:50%;animation:spin .8s linear infinite}
 @keyframes spin{to{transform:rotate(360deg)}}
-#axes{position:absolute;left:var(--s2);bottom:var(--s2);width:70px;height:70px;z-index:2;pointer-events:none}
 
 /* dock */
 .dock{display:grid;grid-template-rows:var(--tabs-h) minmax(0,1fr);min-height:0;background:var(--panel);border-top:1px solid var(--line);position:relative}
@@ -225,7 +223,7 @@ table.data td,table.data th{white-space:nowrap}
 .m.bot{align-self:flex-start;background:var(--panel-2);border:1px solid var(--line);white-space:normal}
 .m.bot p{margin:4px 0} .m.bot ul{margin:4px 0;padding-left:18px} .m.bot h2,.m.bot h3,.m.bot h4{font-size:13px;margin:6px 0 2px}
 .m.tool{align-self:flex-start;background:transparent;border:1px dashed var(--line);color:var(--mut);font-family:var(--mono);font-size:11px;padding:3px 8px}
-.m.tool summary{cursor:pointer} .m.tool details{white-space:pre-wrap} .m.tool.bad{border-color:var(--err);color:var(--err)}
+.m.tool.bad{border-color:var(--err);color:var(--err)}
 .m.err{align-self:stretch;background:var(--err-bg);color:var(--fg);font-size:12px}
 .m.mut{color:var(--mut)} .m table{display:block;overflow-x:auto} .m .actions{display:flex;gap:6px;margin-top:6px}
 .quick{display:flex;gap:6px;flex-wrap:wrap;padding:0 var(--s3) 6px}

@@ -36,13 +36,13 @@
   <!-- Panel izquierdo: el árbol de la simulación, como en STAR-CCM+ -->
   <aside class="simtree" aria-label="Simulación">
     <div class="tree-head"><button class="sm icon" id="treetoggle" aria-pressed="true" title="Plegar o desplegar el panel de la simulación (tecla T)" aria-label="Plegar panel de la simulación">«</button><span class="sec-h">Simulación</span><span class="sp"></span><select id="case" aria-label="Caso" title="Caso (carpeta en cases/)"></select></div>
-    <div class="tree" id="tree">
-      <details open id="n-out"><summary>Simulación <span class="badge" id="b-out"></span></summary><ul id="outline"></ul></details>
-      <details open id="n-geo"><summary>Superficies 3D <span class="badge" id="b-geo"></span><button class="sm mini" id="exportbtn" title="Exportar fronteras con campo desde el solver vivo (EnSight → visor)">↓ solver</button></summary>
+    <div class="tree">
+      <details open><summary>Simulación</summary><ul id="outline"></ul></details>
+      <details open><summary>Superficies 3D <span class="badge" id="b-geo"></span><button class="sm mini" id="exportbtn" title="Exportar fronteras con campo desde el solver vivo (EnSight → visor)">↓ solver</button></summary>
         <div id="datasets" class="mut small">Sin superficies exportadas.</div>
         <ul id="parts" class="parts"></ul>
       </details>
-      <details open id="n-scenes"><summary>Escenas <span class="badge" id="b-scenes"></span></summary><ul id="scenes" class="items"></ul></details>
+      <details open><summary>Escenas <span class="badge" id="b-scenes"></span></summary><ul id="scenes" class="items"></ul></details>
       <details id="n-sim"><summary>Árbol del .sim <span class="badge" id="b-sim"></span><button class="sm mini" id="treerefresh" title="Leer del solver vivo (inspect tree, ~10 s)">↻</button></summary>
         <div id="treestate" class="mut small"></div>
         <div id="simtree"></div>
@@ -100,7 +100,7 @@
       <div id="vempty" class="vempty"><div><b>Sin superficies 3D todavía.</b><br>Con el solver vivo pulsa «↓ solver» en el árbol para exportar las fronteras con campo, o pídeselo a la IA en el chat.</div></div>
       <div id="vbusy" class="vbusy" hidden><span class="spinner"></span><span id="vbusytxt">cargando…</span></div>
     </div>
-    <div class="dock" id="dock">
+    <div class="dock">
       <div class="dock-resize" id="dockresize" title="Arrastra para cambiar la altura"></div>
       <div class="dock-tabs" role="tablist">
         <button role="tab" data-tab="out" aria-selected="true">Salida <span class="dot" id="progdot" hidden></span></button>

@@ -43,10 +43,10 @@ function md(s) {  // markdown mínimo: títulos, tablas, negrita, código, viñe
 }
 
 // ---------------------------------------------------------------- caso (una simulación)
+const fillCaseSelect = cs => { $('case').innerHTML = cs.map(c => `<option value="${esc(c.name)}">${esc(c.name)}</option>`).join('') || '<option value="">(sin casos)</option>'; };
 async function loadCases() {
   st.cases = await api('/api/cases');
-  const sel = $('case');
-  sel.innerHTML = st.cases.map(c => `<option value="${esc(c.name)}">${esc(c.name)}</option>`).join('') || '<option value="">(sin casos)</option>';
+  const sel = $('case'); fillCaseSelect(st.cases);
   const want = LS.get('scc_case');
   const name = st.cases.some(c => c.name === want) ? want : st.cases[0]?.name;
   if (name) { sel.value = name; await openCase(name); }
@@ -111,8 +111,7 @@ $('ncform').onsubmit = async e => {
 async function refreshCaseList() {  // un caso creado por Claude en el chat aparece sin F5
   try {
     const cs = await api('/api/cases'); if (cs.length === st.cases.length && cs.every((c, i) => c.name === st.cases[i].name)) return;
-    st.cases = cs; const sel = $('case');
-    sel.innerHTML = cs.map(c => `<option value="${esc(c.name)}">${esc(c.name)}</option>`).join('') || '<option value="">(sin casos)</option>';
+    st.cases = cs; const sel = $('case'); fillCaseSelect(cs);
     sel.value = cs.some(c => c.name === st.case) ? st.case : (cs[0]?.name || '');
   } catch {}
 }
@@ -148,19 +147,19 @@ for (const b of $('where').querySelectorAll('[role=radio]')) b.onclick = async (
   catch (e) { toast('No pude guardar la elección: ' + e.message, 'error'); }
   renderWhere();
   const sv = st.settings?.server || {};
-  toast(st.where === 'server' ? `La simulación correrá en ${sv.label || 'el servidor Linux'} ${sv.host || ''}${sv.ready ? '' : ` · STAR-CCM+ ${sv.version} instalado; la ejecución remota aún no está implementada: la IA prepara y avisa`}` : 'La simulación corre en este PC (STAR-CCM+ 2410)', st.where === 'server' && !sv.ready ? 'warn' : 'ok');
+  toast(st.where === 'server' ? `La simulación correrá en ${sv.label || 'el servidor Linux'} ${sv.host || ''}` : 'La simulación corre en este PC (STAR-CCM+ 2410)', 'ok');
 };
 function whereRows() {  // filas del panel Solver
   const s = st.settings; if (!s) return [];
   if (st.where !== 'server') return [[['corre en', `Local (este PC) · STAR-CCM+ ${s.local.version} · np ${s.local.np}`], 'where']];
   const sv = s.server;
-  return [[['corre en', `${sv.label}${sv.host ? ' ' + sv.host : ''} · STAR-CCM+ ${sv.version} · ${sv.ready ? 'remoto listo' : 'instalado · remoto aún no implementado'}`], 'where'],
+  return [[['corre en', `${sv.label}${sv.host ? ' ' + sv.host : ''} · STAR-CCM+ ${sv.version} · remoto listo`], 'where'],
     ...sv.rows.map(r => [r, 'srv'])];
 }
 
 // ---------------------------------------------------------------- visor 3D (three.js)
-const V = { renderer: null, scene: null, camera: null, controls: null, group: null, meshes: [], lights: null, raycaster: new THREE.Raycaster(),
-  axes: null, axesCam: null, hot: null, anim: null, spin: false, bbox: null, clip: null, needs: true, wire: false, gen: 0 };
+const V = { renderer: null, scene: null, camera: null, controls: null, group: null, meshes: [], raycaster: new THREE.Raycaster(),
+  axes: null, axesCam: null, hot: null, anim: null, spin: false, bbox: null, clip: null, needs: true, wire: false, gen: 0, rolesMode: false };
 function initViewer() {
   const canvas = $('gl');
   V.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true, powerPreference: 'high-performance' });
@@ -214,7 +213,7 @@ function loop(t) {
       for (const m of rig.meshes) { m.quaternion.copy(q); m.position.copy(off); }
     }
     V.needs = true; }
-  if (V.spin) { V.controls.autoRotate = true; V.needs = true; } else V.controls.autoRotate = false;
+  V.controls.autoRotate = V.spin; if (V.spin) V.needs = true;
   V.controls.update();
   if (!V.needs) return;
   V.needs = false;
@@ -227,13 +226,13 @@ function loop(t) {
   const s = 76; V.axesCam.position.copy(V.camera.position).sub(V.controls.target).normalize().multiplyScalar(3); V.axesCam.up.copy(V.camera.up); V.axesCam.lookAt(0, 0, 0);
   r.setViewport(8, 8, s, s); r.setScissor(8, 8, s, s); r.setScissorTest(true); r.autoClear = false; r.render(V.axes, V.axesCam); r.autoClear = true; r.setScissorTest(false);
 }
+const fitDist = (size, k) => size / (2 * Math.tan(V.camera.fov * Math.PI / 360)) * k;  // distancia a la que `size` llena el cuadro
 function fit(ms = 600) {
   if (!V.bbox || V.bbox.isEmpty()) return;
   const c = V.bbox.getCenter(new THREE.Vector3()), size = V.bbox.getSize(new THREE.Vector3()).length();
   const dir = V.camera.position.clone().sub(V.controls.target).normalize();
   if (!dir.length()) dir.set(0.55, 0.45, 0.7);
-  const dist = size / (2 * Math.tan(V.camera.fov * Math.PI / 360)) * 1.15;
-  tween(c.clone().add(dir.multiplyScalar(dist)), c, ms);
+  tween(c.clone().add(dir.multiplyScalar(fitDist(size, 1.15))), c, ms);
   V.camera.near = size / 500; V.camera.far = size * 20; V.camera.updateProjectionMatrix();
 }
 function tween(p1, c1, ms = 600) {
@@ -242,7 +241,7 @@ function tween(p1, c1, ms = 600) {
 function setView(name) {
   if (!V.bbox) return;
   const c = V.bbox.getCenter(new THREE.Vector3()), size = V.bbox.getSize(new THREE.Vector3()).length();
-  const dist = size / (2 * Math.tan(V.camera.fov * Math.PI / 360)) * 1.15;
+  const dist = fitDist(size, 1.15);
   const dir = { iso: [0.55, 0.45, 0.7], axial: [0, 0, 1], lateral: [1, 0, 0] }[name];
   V.camera.up.set(0, 1, 0);  // las vistas fijas reponen el «arriba» (el orbitado libre no lo cambia)
   tween(c.clone().add(new THREE.Vector3(...dir).normalize().multiplyScalar(dist)), c);
@@ -257,7 +256,7 @@ function flyTo(part) {
   const m = part.mesh; m.geometry.computeBoundingBox(); const b = m.geometry.boundingBox.clone().applyMatrix4(m.matrixWorld);
   const c = b.getCenter(new THREE.Vector3()), size = Math.max(b.getSize(new THREE.Vector3()).length(), V.bbox.getSize(new THREE.Vector3()).length() / 8);
   const dir = V.camera.position.clone().sub(V.controls.target).normalize();
-  tween(c.clone().add(dir.multiplyScalar(size / (2 * Math.tan(V.camera.fov * Math.PI / 360)) * 1.3)), c, 700);
+  tween(c.clone().add(dir.multiplyScalar(fitDist(size, 1.3))), c, 700);
 }
 function pick(e) {
   const r = $('gl').getBoundingClientRect();
@@ -344,7 +343,7 @@ function syncOverlays() {
   // sin superficies (caso vacío) la barra del visor se apaga: nada de valores del caso anterior
   for (const id of ['vtools', 'vactions']) { $(id).classList.toggle('off', !st.ds); for (const c of $(id).querySelectorAll('button,select,input')) c.disabled = !st.ds; }
   if (st.ds && !st.scalar) for (const id of ['rmin', 'rmax', 'cmap', 'rauto']) $(id).disabled = true;
-  $('legend').hidden = !is3d || !st.ds || !st.scalar;
+  $('legend').hidden = !is3d || !st.ds || !st.scalar || V.rolesMode;  // en modo Fronteras los colores son papeles, no campo
   $('chips').hidden = !st.ds || !st.data?.pump;  // sugerencias del visor: sin superficies no aplican
   $('vempty').hidden = !is3d || !!st.ds || !$('vbusy').hidden;
   if (!is3d) { $('vtip').hidden = true; setHot(null); }
@@ -445,16 +444,14 @@ function renderParts() {
   }
 }
 function renderPart(p, ul) {
-  {
-    const li = document.createElement('li'); p.li = li; li.tabIndex = 0; li.setAttribute('role', 'option'); li.title = `${p.name} · clic o Enter: volar a la superficie`;
-    li.innerHTML = `<input type="checkbox" checked aria-label="ver ${esc(p.name)}"><span class="sw" style="background:#${p.color.toString(16).padStart(6, '0')}"></span><span class="n">${esc(p.name)}</span><span class="rb"></span><span class="c">${(p.ni / 3).toLocaleString('es')}</span>`;
-    paintRoleBadge(p);
-    li.querySelector('input').onchange = e => { p.mesh.visible = e.target.checked; if (p.group) syncGroup(p.group); V.needs = true; };
-    li.onclick = e => { if (e.target.tagName !== 'INPUT') flyTo(p); };
-    li.onkeydown = e => { if (e.key === 'Enter') flyTo(p); else if (e.key === ' ') { e.preventDefault(); const c = li.querySelector('input'); c.checked = !c.checked; c.onchange({ target: c }); } };
-    li.onmouseenter = () => setHot(p); li.onmouseleave = () => setHot(null);
-    ul.appendChild(li);
-  }
+  const li = document.createElement('li'); p.li = li; li.tabIndex = 0; li.setAttribute('role', 'option'); li.title = `${p.name} · clic o Enter: volar a la superficie`;
+  li.innerHTML = `<input type="checkbox" checked aria-label="ver ${esc(p.name)}"><span class="sw" style="background:#${p.color.toString(16).padStart(6, '0')}"></span><span class="n">${esc(p.name)}</span><span class="rb"></span><span class="c">${(p.ni / 3).toLocaleString('es')}</span>`;
+  paintRoleBadge(p);
+  li.querySelector('input').onchange = e => { p.mesh.visible = e.target.checked; if (p.group) syncGroup(p.group); V.needs = true; };
+  li.onclick = e => { if (e.target.tagName !== 'INPUT') flyTo(p); };
+  li.onkeydown = e => { if (e.key === 'Enter') flyTo(p); else if (e.key === ' ') { e.preventDefault(); const c = li.querySelector('input'); c.checked = !c.checked; c.onchange({ target: c }); } };
+  li.onmouseenter = () => setHot(p); li.onmouseleave = () => setHot(null);
+  ul.appendChild(li);
 }
 function applyColors(anim = false) {
   if (!st.ds) return;
@@ -468,8 +465,7 @@ function applyColors(anim = false) {
   const c = [0, 0, 0];
   for (const p of st.ds.parts) {
     const col = p.mesh.geometry.getAttribute('color'); const arr = col.array;
-    if (V.rolesMode) { const base = new THREE.Color(ROLE_COLOR[roleOf(p)] ?? 0xc9d1da); for (let i = 0; i < p.nv; i++) { arr[3 * i] = base.r; arr[3 * i + 1] = base.g; arr[3 * i + 2] = base.b; } }
-    else if (!a) { const base = new THREE.Color(p.color); for (let i = 0; i < p.nv; i++) { arr[3 * i] = base.r; arr[3 * i + 1] = base.g; arr[3 * i + 2] = base.b; } }
+    if (V.rolesMode || !a) { const base = new THREE.Color(V.rolesMode ? (ROLE_COLOR[roleOf(p)] ?? 0xc9d1da) : p.color); for (let i = 0; i < p.nv; i++) { arr[3 * i] = base.r; arr[3 * i + 1] = base.g; arr[3 * i + 2] = base.b; } }
     else for (let i = 0; i < p.nv; i++) { const v = a[p.v0 + i]; if (!Number.isFinite(v)) { arr[3 * i] = arr[3 * i + 1] = arr[3 * i + 2] = 0.6; continue; } cmapColor((v - lo) / ((hi - lo) || 1), c); arr[3 * i] = c[0]; arr[3 * i + 1] = c[1]; arr[3 * i + 2] = c[2]; }
     col.needsUpdate = true;
   }
@@ -600,7 +596,7 @@ function updateClip() {
   V.needs = true;
 }
 $('clipon').onchange = updateClip; $('clipax').onchange = updateClip; $('clipv').oninput = updateClip;
-$('help').onclick = () => toast('Atajos: F encuadrar · 1 iso · 2 axial · 3 lateral · doble clic vuela a la superficie · ` pliega el dock · T pliega la simulación · C pliega la IA · Esc cierra la imagen');
+$('help').onclick = () => toast('Atajos: F encuadrar · 1 iso · 2 axial · 3 lateral · doble clic vuela a la superficie · ` pliega el dock · T pliega la simulación · C pliega la IA · B marca las fronteras · Esc cierra la imagen');
 // en pantallas estrechas (apilado) la rueda debe desplazar la página, no hacer zoom: el zoom se activa al tocar el modelo
 function narrowZoom() { V.controls.enableZoom = !NARROW.matches || !!V.zoomOn; syncOverlays(); }
 $('gl').addEventListener('pointerdown', () => { if (NARROW.matches && !V.zoomOn) { V.zoomOn = true; narrowZoom(); } });
@@ -751,7 +747,7 @@ setInterval(() => { if ((st.tab === 'out' && !$('stage').classList.contains('doc
 // STAR-CCM+ imprime en cada iteración una fila con residuales y reportes bajo la cabecera «Iteration Continuity …».
 // Se acumulan las filas de la macro en marcha (la salida llega en vivo al .out) y se pintan: residuales en escala
 // logarítmica y las magnitudes de ingeniería (H, M, eta…) cada una en su gráfico.
-const LIVE = { file: null, cols: null, rows: new Map(), running: false, last: 0 };
+const LIVE = { file: null, cols: null, rows: new Map(), running: false };
 const LIVE_RES = /^(Continuity|X-momentum|Y-momentum|Z-momentum|Tke|Sdr|Energy)$/;
 function liveIngest(m) {
   if (!m || !m.out) return;
@@ -765,7 +761,7 @@ function liveIngest(m) {
     const v = l.trim().split(/\s+/).map(Number); if (v.length !== LIVE.cols.length || !v.every(Number.isFinite)) continue;
     LIVE.rows.set(v[0], v);
   }
-  LIVE.running = !!m.running; LIVE.last = Date.now(); renderLive();
+  LIVE.running = !!m.running; renderLive();
 }
 function svgLines(series, { log = false, label = '', unit = '' } = {}) {  // varias series en un eje; log10 si se pide
   const W = 420, H = 190, L = 54, R = 10, T = 14, B = 28, PAL = ['#0b63b4', '#d1495b', '#2a9d3f', '#e09f3e', '#7b2cbf', '#3a86ff', '#6c757d'];
@@ -786,8 +782,10 @@ function renderLive() {
   const box = $('live'); if (!box) return;
   const rows = [...LIVE.rows.values()].sort((a, b) => a[0] - b[0]);
   $('livedot').hidden = !LIVE.running;
-  if (!LIVE.cols || rows.length < 2) { box.hidden = true; return; }
-  box.hidden = false;
+  if (!LIVE.cols || rows.length < 2) { box.hidden = true; renderLive.sig = ''; return; }
+  const sig = `${LIVE.file}|${rows.length}|${rows[rows.length - 1][0]}|${LIVE.running}`;
+  if (sig === renderLive.sig && !box.hidden) return;  // mismas filas: los gráficos ya están pintados
+  renderLive.sig = sig; box.hidden = false;
   const col = i => rows.map(r => [r[0], r[i]]);
   const res = LIVE.cols.map((c, i) => [c, i]).filter(([c]) => LIVE_RES.test(c)).map(([c, i]) => ({ name: c, xy: col(i) }));
   const eng = LIVE.cols.map((c, i) => [c, i]).filter(([c, i]) => i > 0 && !LIVE_RES.test(c) && /^(H|M|eta|Q_out|pt_out|P_eje)\b/.test(c));
@@ -810,8 +808,7 @@ function renderStatus(s) {
   $('stopsolver').hidden = !s.alive; $('stopsolver').disabled = !!s.stopping || !!s.chatting;
   const remote = st.where === 'server';
   $('opengui').disabled = !!s.alive || remote; $('opengui').title = remote ? 'Solo en local: la GUI abre el .sim de este PC' : s.alive ? 'Hay un servidor batch vivo: apágalo antes de abrir la GUI' : 'Abre este .sim en la GUI de STAR-CCM+ (la licencia PoD cobra por hora)';
-  const ready = !!st.settings?.server?.ready;
-  $('solvertag').innerHTML = (s.alive ? '<span class="tag ok">vivo</span>' : s.stale ? '<span class="tag warn">caído</span>' : '<span class="tag">apagado</span>') + (remote ? ` <span class="tag ${ready ? 'ok' : 'warn'}">${ready ? 'servidor' : 'servidor · remoto no implementado'}</span>` : '');
+  $('solvertag').innerHTML = (s.alive ? '<span class="tag ok">vivo</span>' : s.stale ? '<span class="tag warn">caído</span>' : '<span class="tag">apagado</span>') + (remote ? ' <span class="tag ok">servidor</span>' : '');
   const rows = (s.alive || s.stale ? [['pid', s.pid], ['puerto', s.port], ['sim', s.sim ? s.sim.split(/[\\/]/).pop() : '(nueva)'], ['procesos', s.np], ['arranque', s.started ? s.started.replace('T', ' ') : '–'], ['inactivo', s.idle_min != null ? `${fmt(s.idle_min, 0)} / ${s.idle_limit_min} min` : '–']] : [['apagado por inactividad', `${s.idle_limit_min} min`]]).map(r => [r, '']);
   const kv = [...whereRows(), ...rows].map(([[k, v], cls]) => `<tr class="${cls}"><td class="mut">${esc(k)}</td><td class="mono" title="${esc(v)}">${esc(v)}</td></tr>`).join('');
   if (renderStatus.kv !== kv) { renderStatus.kv = kv; $('solverkv').querySelector('tbody').innerHTML = kv; }
@@ -878,6 +875,7 @@ function onChatEvent(ev, ctx) {
   else if (ev.kind === 'done') { ctx.done = true; if (ev.rc && ev.rc !== 0 && !/listo|detenido/.test($('chatstate').textContent)) $('chatstate').textContent = `terminó con código ${ev.rc}`; }
   if (!ctx.login && ['text', 'result', 'error'].includes(ev.kind) && /401|not logged in|OAuth|auth login/i.test(ev.text || '')) { ctx.login = true; addMsg('err', 'La CLI de la IA no tiene sesión. En una terminal ejecuta: <code>claude auth login</code>'); }
 }
+const chatClock = ctx => setInterval(() => { if (ctx.tool) { const secs = $('chatsecs'); if (secs) secs.textContent = ` ${Math.round((Date.now() - ctx.t0) / 1000)} s`; } }, 1000);  // segundos de la herramienta en curso
 async function readSSE(r, ctx) {  // cuenta los eventos (ctx.n) para poder reengancharse desde ahí
   const reader = r.body.getReader(), dec = new TextDecoder(); let buf = '';
   while (true) { const { value, done } = await reader.read(); if (done) break; buf += dec.decode(value, { stream: true });
@@ -900,7 +898,7 @@ async function resumeChat() {
   addMsg('user', esc(cur.message || '(mensaje)'));
   setChatting(true); $('chatstate').textContent = 'retomando la conversación en curso…';
   const ctx = { t0: Date.now(), tool: '', login: false, done: false, refresh: true, rid: cur.id, n: 0, replay: true };
-  const clock = setInterval(() => { if (ctx.tool) { const secs = $('chatsecs'); if (secs) secs.textContent = ` ${Math.round((Date.now() - ctx.t0) / 1000)} s`; } }, 1000);
+  const clock = chatClock(ctx);
   try {
     const r = await fetch(`/api/chat/stream?id=${cur.id}&frm=0`);
     if (r.ok && r.body) { setTimeout(() => { ctx.replay = false; }, 1500); await readSSE(r, ctx); }
@@ -916,7 +914,7 @@ async function sendChat(retry = false) {
   $('chattext').value = ''; st.lastMsg = text; if (!retry) addMsg('user', esc(text));
   setChatting(true); $('chatstate').textContent = 'pensando…';
   const ctx = { t0: Date.now(), tool: '', login: false, done: false, refresh: false, n: 0 };
-  const clock = setInterval(() => { if (ctx.tool) { const secs = $('chatsecs'); if (secs) secs.textContent = ` ${Math.round((Date.now() - ctx.t0) / 1000)} s`; } }, 1000);
+  const clock = chatClock(ctx);
   try {
     const r = await fetch('/api/chat', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ message: text, session_id: st.session, case: st.case }) });
     if (!r.ok || !r.body) throw new Error('HTTP ' + r.status);

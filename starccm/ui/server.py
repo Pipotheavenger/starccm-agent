@@ -20,6 +20,11 @@ Qué hace:
   - GET/POST /api/settings              -> dónde corre la simulación (run_where: local | server), persistido en
                                            starccm/.ui-settings.json (ignorado por git); el chat lo lleva en el prompt
   - GET  /api/tree[?refresh=1&case=]    -> árbol del .sim; cada lectura se guarda en cases/<caso>/tree.json
+  - GET  /api/surfaces, POST /api/surface -> datasets 3D del visor (GET convierte los _raw nuevos; POST exporta del solver)
+  - POST /api/scene, GET /api/scenes    -> exportar una escena a PNG / listar las del .sim
+  - POST /api/cases/new, PUT .../cad/{f} -> caso nuevo y subida de geometría; GET/POST .../roles = fronteras.json
+  - GET  /api/progress, /api/live       -> salida del solver y de la última macro; PNG exportados
+  - POST /api/open_gui                  -> abre la GUI de STAR-CCM+ con sims/<caso>.sim (sin solver batch vivo)
 Errores: siempre JSON {"detail": "texto"}. Un chat a la vez; un apagado a la vez.
 La UI nunca lanza el solver: eso lo hace Claude desde el chat (server_start del MCP).
 """
@@ -118,7 +123,7 @@ def _kill_tree(p: subprocess.Popen) -> None:
     if p.poll() is not None:  # ya terminó: su PID pudo reasignarse, no tocar nada
         return
     if os.name == "nt":
-        subprocess.run(["taskkill", "/PID", str(p.pid), "/T", "/F"], capture_output=True)
+        subprocess.run(["taskkill", "/PID", str(p.pid), "/T", "/F"], capture_output=True, timeout=30)
     if p.poll() is None:
         p.kill()
 
@@ -227,8 +232,7 @@ def _where_text() -> str:
     s = _settings()
     if s["run_where"] == "server":
         sv = s["server"]
-        tail = "remoto disponible: server_start lo lanza allí por SSH" if sv["ready"] else "remoto aún no disponible: no arranques nada allí, prepara y avisa"
-        return f"ejecución elegida: {sv['label']} {sv['host'] or ''} · STAR-CCM+ {sv['version']} · {tail}".replace("  ", " ")
+        return f"ejecución elegida: {sv['label']} {sv['host'] or ''} · STAR-CCM+ {sv['version']} · remoto disponible: server_start lo lanza allí por SSH".replace("  ", " ")
     return f"ejecución: Local (este PC, STAR-CCM+ {s['local']['version']}, np {s['local']['np']})"
 
 
@@ -237,6 +241,12 @@ def _safe(name: str) -> str:
     if not name or len(name) > 100 or not re.fullmatch(r"[A-Za-z0-9_\-.]+", name) or ".." in name:
         raise HTTPException(400, "nombre inválido")
     return name
+
+
+def _png_name(fname: str) -> str:
+    if not re.fullmatch(r"[A-Za-z0-9_\-.]+\.png", fname) or ".." in fname:
+        raise HTTPException(400, "archivo inválido")
+    return fname
 
 
 def _case_dir(name: str) -> Path:
@@ -346,13 +356,18 @@ async def api_case_cad(name: str, fname: str, request: Request) -> dict:
     d.mkdir(exist_ok=True)
     tmp = d / (fname + ".part")
     n = 0
-    with open(tmp, "wb") as f:
-        async for chunk in request.stream():
-            n += len(chunk)
-            if n > CAD_MAX:
-                f.close(); tmp.unlink(missing_ok=True)
-                raise HTTPException(413, "archivo de más de 2 GB")
-            f.write(chunk)
+    done = False
+    try:
+        with open(tmp, "wb") as f:
+            async for chunk in request.stream():
+                n += len(chunk)
+                if n > CAD_MAX:
+                    raise HTTPException(413, "archivo de más de 2 GB")
+                f.write(chunk)
+        done = True
+    finally:
+        if not done:  # corte del cliente o archivo enorme: no dejar el .part a medias
+            tmp.unlink(missing_ok=True)
     tmp.replace(d / fname)
     log.info("CAD subido: cases/%s/cad/%s (%d bytes)", name, fname, n)
     return {"file": f"cases/{name}/cad/{fname}", "bytes": n}
@@ -397,9 +412,7 @@ def api_roles_set(name: str, req: RolesReq) -> dict:
 @app.get("/files/{name}/images/{fname}")
 def image(name: str, fname: str) -> FileResponse:
     d = _case_dir(name)
-    if not re.fullmatch(r"[A-Za-z0-9_\-.]+\.png", fname) or ".." in fname:
-        raise HTTPException(400, "archivo inválido")
-    f = d / "images" / fname
+    f = d / "images" / _png_name(fname)
     if not f.is_file():
         raise HTTPException(404, "no existe la escena")
     return FileResponse(f, media_type="image/png", headers={"Cache-Control": "private, max-age=60"})
@@ -430,9 +443,7 @@ def live(case: str | None = None) -> dict:
 
 @app.get("/scenes/{fname}")
 def scene_png(fname: str) -> FileResponse:
-    if not re.fullmatch(r"[A-Za-z0-9_\-.]+\.png", fname) or ".." in fname:
-        raise HTTPException(400, "archivo inválido")
-    f = SCENES_DIR / fname
+    f = SCENES_DIR / _png_name(fname)
     if not f.is_file():
         raise HTTPException(404, "no existe la escena")
     return FileResponse(f, media_type="image/png", headers={"Cache-Control": "no-cache"})
@@ -587,8 +598,8 @@ def _tree_derived(case: str | None) -> dict:
         try:
             m = json.loads(f.read_text(encoding="utf-8"))
             data["boundary"] = [{"name": p["name"], "type": f"{p['ni'] // 3:,} triáng.".replace(",", ".")} for p in m.get("parts", []) if p.get("ni")]
-        except (ValueError, KeyError, TypeError):
-            pass
+        except (ValueError, KeyError, TypeError) as e:
+            log.warning("manifest ilegible %s: %s", f, e)
     conv = _convergencia(d)
     if conv:
         rep = [c for c in conv["columns"] if c not in ("iter", "seconds")]
@@ -719,7 +730,8 @@ def api_surfaces(case: str) -> dict:
     for m in sorted(d.glob("*/manifest.json"), key=lambda p: p.stat().st_mtime, reverse=True) if d.is_dir() else []:
         try:
             man = json.loads(m.read_text(encoding="utf-8"))
-        except ValueError:
+        except ValueError as e:
+            log.warning("manifest ilegible %s: %s", m, e)
             continue
         out.append({"name": m.parent.name, "mtime": int(m.stat().st_mtime), "manifest": man,
                     "url": f"/surfaces/{case}/{m.parent.name}"})
@@ -777,11 +789,6 @@ def api_surface(req: SurfaceReq) -> dict:
 
 
 # ---------------------------------------------------------------- estado del solver
-def _last_activity() -> float | None:
-    """Última macro (.java/.out) o .server.json: la misma medida en disco que usa el watchdog del MCP."""
-    return scc.last_activity()
-
-
 def _log_tail(n: int = 12) -> list[str]:
     if not AGENT_LOG.is_file():
         return []
@@ -797,7 +804,7 @@ def status() -> dict:
     st = scc._state()
     pid = st.get("pid")
     alive = scc.alive(st)
-    last = _last_activity()
+    last = scc.last_activity()  # última macro (.java/.out) o .server.json: la misma medida en disco que usa el watchdog del MCP
     return {"alive": alive, "pid": pid, "port": st.get("port"), "host": st.get("host"), "sim": st.get("sim"),
             "where": st.get("where", "local") if pid else None, "rsim": st.get("rsim"),
             **({"remote_error": scc._alive_cache.get("error")} if st.get("where") == "server" and not alive else {}),

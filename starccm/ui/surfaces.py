@@ -82,6 +82,13 @@ def _fan(poly: list[int]) -> list[int]:
     return out
 
 
+def _add_surface_elem(tris: array.array, per_elem: list[list[int]], et: str, poly: list[int]) -> None:
+    """Triangula un elemento de superficie (abanico; tria6 y quad8 solo con sus vértices de esquina) y apunta sus triángulos."""
+    t = _fan(poly[:3] if et == "tria6" else poly[:4] if et == "quad8" else poly)
+    per_elem.append(list(range(len(tris) // 3, len(tris) // 3 + len(t) // 3)))
+    tris.extend(t)
+
+
 # ---------------------------------------------------------------- EnSight Gold: .case
 def read_case(case_file: Path) -> dict:
     """{'geometry': Path, 'scalars': [{'name', 'file', 'per': 'node'|'element'}], 'vectors': [...]}"""
@@ -140,23 +147,20 @@ class _Bin:
         if n < 0 or self.pos + n > len(self.b):
             raise ValueError(f"EnSight truncado en el byte {self.pos} (faltan {self.pos + n - len(self.b)} bytes)")
 
-    def ints(self, n: int) -> array.array:
+    def _arr(self, code: str, n: int) -> array.array:
         self._need(4 * n)
-        a = array.array("i")
+        a = array.array(code)
         a.frombytes(bytes(self.b[self.pos:self.pos + 4 * n]))
         self.pos += 4 * n
         if (self.e == "<") != (sys.byteorder == "little"):
             a.byteswap()
         return a
 
+    def ints(self, n: int) -> array.array:
+        return self._arr("i", n)
+
     def floats(self, n: int) -> array.array:
-        self._need(4 * n)
-        a = array.array("f")
-        a.frombytes(bytes(self.b[self.pos:self.pos + 4 * n]))
-        self.pos += 4 * n
-        if (self.e == "<") != (sys.byteorder == "little"):
-            a.byteswap()
-        return a
+        return self._arr("f", n)
 
     def peek_s80(self) -> str:
         p = self.pos
@@ -230,11 +234,8 @@ def _read_geo_ascii(geo: Path) -> tuple[Dataset, dict]:
                 counts = [int(tok(k + i)) for i in range(ne)]
                 k += ne
                 for c in counts:
-                    poly = [int(x) - 1 for x in lines[k].split()]
+                    _add_surface_elem(tris, per_elem, et, [int(x) - 1 for x in lines[k].split()])
                     k += 1
-                    t = _fan(poly)
-                    per_elem.append(list(range(len(tris) // 3, len(tris) // 3 + len(t) // 3)))
-                    tris.extend(t)
             elif et == "nfaced":  # volumen: saltar
                 nf = [int(tok(k + i)) for i in range(ne)]
                 k += ne
@@ -248,9 +249,7 @@ def _read_geo_ascii(geo: Path) -> tuple[Dataset, dict]:
                     poly = [int(x) - 1 for x in lines[k].split()[:nn]]
                     k += 1
                     if et in SURFACE_ELEMS:
-                        t = _fan(poly[:3] if et == "tria6" else poly[:4] if et == "quad8" else poly)
-                        per_elem.append(list(range(len(tris) // 3, len(tris) // 3 + len(t) // 3)))
-                        tris.extend(t)
+                        _add_surface_elem(tris, per_elem, et, poly)
                     else:
                         per_elem.append([])
             elems.append((et, ne, per_elem))
@@ -264,7 +263,6 @@ def _read_geo_binary(geo: Path) -> tuple[Dataset, dict]:
     ds, emap = Dataset(), {}
     r.s80()  # C Binary
     r.s80(); r.s80()  # descripciones
-    node_id_given = element_id_given = False
     s = r.s80()
     node_id_given = "given" in s or "ignore" in s
     s = r.s80()
@@ -306,11 +304,8 @@ def _read_geo_binary(geo: Path) -> tuple[Dataset, dict]:
                 nodes = r.ints(sum(counts))
                 pos = 0
                 for c in counts:
-                    poly = [x - 1 for x in nodes[pos:pos + c]]
+                    _add_surface_elem(tris, per_elem, et, [x - 1 for x in nodes[pos:pos + c]])
                     pos += c
-                    t = _fan(poly)
-                    per_elem.append(list(range(len(tris) // 3, len(tris) // 3 + len(t) // 3)))
-                    tris.extend(t)
             elif et == "nfaced":
                 nf = r.ints(ne)
                 npf = r.ints(sum(nf))
@@ -322,9 +317,7 @@ def _read_geo_binary(geo: Path) -> tuple[Dataset, dict]:
                 for e in range(ne):
                     poly = [x - 1 for x in conn[e * nn:(e + 1) * nn]]
                     if et in SURFACE_ELEMS:
-                        t = _fan(poly[:3] if et == "tria6" else poly[:4] if et == "quad8" else poly)
-                        per_elem.append(list(range(len(tris) // 3, len(tris) // 3 + len(t) // 3)))
-                        tris.extend(t)
+                        _add_surface_elem(tris, per_elem, et, poly)
                     else:
                         per_elem.append([])
             elems.append((et, ne, per_elem))
