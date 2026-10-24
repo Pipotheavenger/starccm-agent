@@ -102,7 +102,9 @@ $('ncform').onsubmit = async e => {
     $('chattext').value = `Caso nuevo cases/${name}: ${tipo}, geometría en cases/${name}/cad/ (${lista}). ` +
       `Datos: ${rpm} rpm sobre ${eje}, caudal másico ${mdot} kg/s de ${fluido}, máximo ${Number.isFinite(iters) ? iters : 1000} iteraciones. ` +
       `Prepara y corre la simulación completa siguiendo el flujo estándar (server_start(name="${name}") sin where; importar, nombrar fronteras, regiones e interfaces, malla por parte, física, MRF, fronteras, reportes), ` +
-      `itera hasta el criterio de parada escribiendo reports/convergencia.csv, y al terminar deja las escenas, las superficies con campo para el visor y RESUMEN.md, y guarda.` +
+      `Por etapas: prepara el caso; si dudas de qué cara es entrada o salida, o de algún modelo, pregúntame con opciones y enséñamelo en el visor; ` +
+      `luego corre 100 iteraciones de prueba y tráeme resultados (escenas, superficies con campo, tabla de reportes, convergencia y RESUMEN.md provisional), ` +
+      `y pregúntame antes de seguir hasta el criterio de parada. Guarda al terminar cada etapa.` +
       (notas ? ` Notas: ${notas}` : '');
     sendChat();
   } catch (err) { $('nc_prog').textContent = 'No se pudo: ' + err.message; }
@@ -856,7 +858,11 @@ function onChatEvent(ev, ctx) {
   if (['result', 'error'].includes(ev.kind) && /No conversation found/i.test(ev.text || '')) { ctx.stale = true; return; }
   if (ev.kind === 'result' && ev.turns === 0 && ev.subtype !== 'success' && !ev.text) return;
   if (ev.kind === 'init') { st.session = ev.session_id; LS.set('scc_session', st.session); $('chatstate').textContent = `sesión ${st.session.slice(0, 8)} · ${ev.model || ''}`; }
-  else if (ev.kind === 'text') { addMsg('bot', md(ev.text)); ctx.tool = ''; $('chatstate').textContent = 'pensando…'; }
+  else if (ev.kind === 'text') {
+    const q = parseQuestion(ev.text);
+    if (q.rest.trim()) addMsg('bot', md(q.rest));
+    if (q.q) showQuestion(q.q, ctx);
+    ctx.tool = ''; $('chatstate').textContent = q.q ? 'esperando tu respuesta' : 'pensando…'; }
   else if (ev.kind === 'tool') {
     const lab = ev.label || toolSummary(ev.name, ev.input || {});
     ctx.step = addMsg('step', `<span class="ic">▶</span><span class="lab">${esc(lab)}</span><span class="dur"></span><details><summary>detalle</summary>${esc(JSON.stringify(ev.input || {}, null, 1)).slice(0, 2000)}</details>`);
@@ -876,6 +882,52 @@ function onChatEvent(ev, ctx) {
   if (!ctx.login && ['text', 'result', 'error'].includes(ev.kind) && /401|not logged in|OAuth|auth login/i.test(ev.text || '')) { ctx.login = true; addMsg('err', 'La CLI de la IA no tiene sesión. En una terminal ejecuta: <code>claude auth login</code>'); }
 }
 const chatClock = ctx => setInterval(() => { if (ctx.tool) { const secs = $('chatsecs'); if (secs) secs.textContent = ` ${Math.round((Date.now() - ctx.t0) / 1000)} s`; } }, 1000);  // segundos de la herramienta en curso
+// ---------------------------------------------------------------- preguntas de la IA con opciones (bloque ```pregunta {json}```)
+function parseQuestion(text) {
+  const m = /```\s*pregunta\s*\n?([\s\S]*?)```/i.exec(text || '');
+  if (!m) return { rest: text || '', q: null };
+  let q = null; try { q = JSON.parse(m[1].trim()); } catch { return { rest: text, q: null }; }
+  if (!q || typeof q.pregunta !== 'string') return { rest: text, q: null };
+  q.opciones = Array.isArray(q.opciones) ? q.opciones.map(String).slice(0, 8) : [];
+  return { rest: text.replace(m[0], ''), q };
+}
+function showQuestion(q, ctx) {
+  const multi = !!q.multiple;
+  const d = addMsg('ask', `<div class="q-t">${esc(q.pregunta)}</div><div class="q-opts">${q.opciones.map((o, i) =>
+    `<button class="sm q-o" data-i="${i}" aria-pressed="false">${esc(o)}</button>`).join('')}</div>
+    <div class="q-row"><input class="q-other" placeholder="u otra respuesta…" aria-label="Otra respuesta">${multi ? '<button class="sm pri q-send">Responder</button>' : '<button class="sm q-send">Enviar</button>'}</div>`);
+  const answer = txt => {
+    if (!txt || st.chatting) { if (st.chatting) toast('La IA aún está terminando; espera un momento', 'warn'); return; }
+    for (const b of d.querySelectorAll('button,input')) b.disabled = true; d.classList.add('done');
+    $('chattext').value = txt; sendChat();
+  };
+  d.querySelectorAll('.q-o').forEach(b => b.onclick = () => {
+    if (!multi) return answer(q.opciones[+b.dataset.i]);
+    b.setAttribute('aria-pressed', b.getAttribute('aria-pressed') !== 'true');
+  });
+  const send = () => { const other = d.querySelector('.q-other').value.trim();
+    const sel = [...d.querySelectorAll('.q-o[aria-pressed="true"]')].map(b => q.opciones[+b.dataset.i]);
+    answer([...sel, other].filter(Boolean).join('; ')); };
+  d.querySelector('.q-send').onclick = send;
+  d.querySelector('.q-other').onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); send(); } };
+  if (!ctx?.replay) showWhat(q);
+}
+// «ver»: la IA enseña lo que no tiene claro (fronteras dudosas, una escena, el visor o la convergencia)
+function showWhat(q) {
+  const v = String(q.ver || '').trim(); if (!v) return;
+  if (v === 'graficos') { openTab('plots'); return; }
+  if (v.startsWith('escena:')) { const f = v.slice(7).trim(); refreshCaseList().then(() => openCase(st.case)).then(() => showView(f)); return; }
+  showView('3d');
+  if (v === 'fronteras') {
+    const go = () => { if (!st.ds) return; setRolesMode(true);
+      const keys = new Set((q.caras || []).map(String));
+      const dud = st.ds.parts.filter(p => keys.has(`${p.group?.name || ''}/${p.name}`));
+      for (const p of dud) { p.li?.classList.add('doubt'); if (p.group) { const det = p.li?.closest('details'); if (det) det.open = true; } }
+      if (dud.length) flyTo(dud[0]);
+      toast(dud.length ? `La IA duda de ${dud.length} cara(s), marcadas en el árbol: haz clic en cada una y elige su papel` : 'Marca en el 3D qué cara es entrada y cuál salida', 'ok'); };
+    st.ds ? go() : loadDatasets().then(go);
+  }
+}
 async function readSSE(r, ctx) {  // cuenta los eventos (ctx.n) para poder reengancharse desde ahí
   const reader = r.body.getReader(), dec = new TextDecoder(); let buf = '';
   while (true) { const { value, done } = await reader.read(); if (done) break; buf += dec.decode(value, { stream: true });

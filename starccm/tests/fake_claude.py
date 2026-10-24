@@ -12,6 +12,14 @@ def out(o):
 
 
 out({"type": "system", "subtype": "init", "session_id": "fake-0001", "model": "fake", "mcp_servers": []})
+prompt = sys.argv[sys.argv.index("-p") + 1] if "-p" in sys.argv else ""
+if "PREGUNTA_PRUEBA" in prompt:  # la página debe pintar una tarjeta con opciones y abrir Fronteras con dos caras dudosas
+    q = {"pregunta": "¿Cuál es la entrada de la bomba?", "opciones": ["estator/inlet (recomendado)", "rotor/Inflow", "voluta/outlet"],
+         "multiple": False, "ver": "fronteras", "caras": ["estator/inlet", "rotor/Inflow"]}
+    txt = "No tengo clara la entrada: hay dos caras candidatas.\n```pregunta\n" + json.dumps(q, ensure_ascii=False) + "\n```"
+    out({"type": "assistant", "message": {"content": [{"type": "text", "text": txt}]}})
+    out({"type": "result", "subtype": "success", "session_id": "fake-0001", "num_turns": 1})
+    sys.exit(0)
 out({"type": "assistant", "message": {"content": [{"type": "text", "text": "Importo la geometría."}]}})
 time.sleep(pause)
 out({"type": "assistant", "message": {"content": [{"type": "tool_use", "id": "t1", "name": "mcp__starccm__run_java",

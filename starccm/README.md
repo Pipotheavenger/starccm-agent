@@ -71,7 +71,14 @@ macros mientras el chat trabaja; un solo chat a la vez. Las confirmaciones van d
 4. **Encargo a la IA**: máquina, fluido, rpm (el signo es el sentido), caudal másico, eje de giro, iteraciones máximas y notas libres. Con la casilla marcada la IA prepara y corre la simulación completa.
 5. **Caras sin nombre**: si la geometría trae las caras agrupadas o con nombres genéricos, la IA las separa por ángulo, exporta la geometría al visor y **se detiene** pidiendo que marques entrada y salida.
 6. **Marcar en Fronteras** (tecla B): clic en cada cara → entrada, salida, pared, interfaz o simetría. Mínimo una entrada y una salida.
-7. **«Aplicar con la IA»**: pone esos tipos tal cual, reinicia la solución e itera.
+7. **«Aplicar con la IA»**: pone esos tipos tal cual y reinicia la solución.
+   **Preguntas de la IA**: cuando duda (qué cara es entrada o salida, modelo de turbulencia, fluido, condiciones,
+   si seguir) no adivina. Muestra en el chat una **tarjeta con opciones** (su recomendación primero) y una casilla
+   para otra respuesta, y te **enseña lo que no tiene claro**: abre Fronteras con las caras dudosas marcadas en el
+   árbol, una escena PNG, el visor o los gráficos. Un clic responde y la conversación sigue.
+   **Por etapas**: tras montar el caso corre **100 iteraciones de prueba** y entrega resultados completos (escenas,
+   superficies con campo, tabla de reportes, convergencia, `RESUMEN.md` provisional). Luego **pregunta** si seguir
+   hasta el criterio de parada, cambiar algo o parar; solo sigue si lo confirmas.
 8. **Seguir la convergencia en vivo**: dock → *Gráficos* (residuales y H, M, η por iteración) y *Salida*. Si aparece el aviso de divergencia, detener el chat y revisar fronteras y malla.
 9. **Resultados**: franja de resultados sobre el visor, campos en superficies (el visor convierte solo las superficies nuevas), escenas PNG, *Resumen* con `RESUMEN.md`; «Apagar solver» guarda el .sim y libera la licencia.
 

@@ -306,3 +306,13 @@ dialog label.check{flex-direction:row;align-items:center;gap:6px;color:var(--fg)
 .chip-r{display:inline-flex;align-items:center;font-size:11px;color:var(--mut)}
 ul.parts .rb{font-size:10px;padding:0 6px;border-radius:999px;color:#fff;flex:none}
 ul.parts .rb:empty{display:none}
+
+/* pregunta de la IA con opciones */
+.m.ask{align-self:stretch;background:var(--acc-bg);border:1px solid var(--acc);white-space:normal;padding:8px 10px}
+.m.ask .q-t{font-weight:600;margin-bottom:6px}
+.m.ask .q-opts{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:6px}
+.m.ask .q-o{background:var(--panel);border-color:var(--acc);color:var(--acc);white-space:normal;text-align:left}
+.m.ask .q-o[aria-pressed="true"]{background:var(--acc);color:var(--acc-ink)}
+.m.ask .q-row{display:flex;gap:6px} .m.ask .q-other{min-height:24px;font-size:12px}
+.m.ask.done{opacity:.6}
+ul.parts li.doubt{outline:2px dashed var(--warn);outline-offset:-2px}

@@ -185,6 +185,12 @@ Reglas:
 
 ## Flujo estándar: bomba centrífuga, estado estacionario
 
+Preguntar en vez de adivinar: ante una duda (fronteras, modelos, fluido, condiciones, seguir o no) terminar la
+respuesta con UN bloque ` ```pregunta ` con JSON `{"pregunta", "opciones": [...], "multiple", "ver", "caras"}`
+(recomendación primero) y detenerse. `ver` = `fronteras` (con `caras` dudosas «región/frontera»), `escena:<png>`,
+`3d` o `graficos`: la página lo enseña y pinta las opciones como botones. Caso nuevo por etapas: preparar → 100
+iteraciones de prueba con resultados completos → preguntar antes de seguir hasta el criterio de parada.
+
 0. Geometría nueva: importar y mirar los nombres de cara. Si vienen agrupadas o genéricas, separar por
    ángulo y pedir al usuario que marque entrada y salida en el modo Fronteras (`fronteras.json`).
 1. Importar CAD (STEP/Parasolid) como parte de geometría. Listar superficies y renombrar:
