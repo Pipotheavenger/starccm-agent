@@ -415,40 +415,59 @@ def convert_case(case_file: Path, out: Path, extra: dict | None = None) -> dict:
 
 
 # ---------------------------------------------------------------- STL (geometría sin campo)
-def read_stl(p: Path) -> tuple[array.array, array.array]:
-    """(xyz, tris) con vértices fusionados por coordenadas (para que el sombreado sea suave)."""
+def read_stl_solids(p: Path) -> list[tuple[str, array.array, array.array]]:
+    """[(nombre, xyz, tris)] por «solid» (STL ASCII multi-sólido: STAR-CCM+ escribe uno por superficie de la parte);
+    un STL binario es un solo sólido sin nombre. Vértices fusionados por coordenadas (sombreado suave)."""
     data = p.read_bytes()
-    verts: dict[tuple, int] = {}
-    xyz = array.array("f")
-    tris = array.array("I")
+    out = []
 
-    def vid(x: float, y: float, z: float) -> int:
-        key = (round(x, 6), round(y, 6), round(z, 6))
-        i = verts.get(key)
-        if i is None:
-            i = len(xyz) // 3
-            verts[key] = i
-            xyz.extend((x, y, z))
-        return i
+    def new():
+        verts: dict[tuple, int] = {}
+        xyz, tris = array.array("f"), array.array("I")
 
-    if data[:5].lower() == b"solid" and b"facet" in data[:400]:
-        nums = re.findall(rb"vertex\s+([-+0-9.eE]+)\s+([-+0-9.eE]+)\s+([-+0-9.eE]+)", data)
-        for k in range(0, len(nums) - 2, 3):
-            tris.extend(vid(*map(float, nums[k + j])) for j in range(3))
+        def vid(x: float, y: float, z: float) -> int:
+            key = (round(x, 7), round(y, 7), round(z, 7))
+            i = verts.get(key)
+            if i is None:
+                i = len(xyz) // 3
+                verts[key] = i
+                xyz.extend((x, y, z))
+            return i
+        return xyz, tris, vid
+
+    if data[:5].lower() == b"solid" and b"facet" in data[:2000]:
+        for m in re.finditer(rb"solid[ \t]*([^\r\n]*)\r?\n(.*?)endsolid", data, re.S):
+            xyz, tris, vid = new()
+            nums = re.findall(rb"vertex\s+([-+0-9.eE]+)\s+([-+0-9.eE]+)\s+([-+0-9.eE]+)", m.group(2))
+            for k in range(0, len(nums) - 2, 3):
+                tris.extend(vid(*map(float, nums[k + j])) for j in range(3))
+            if len(tris):
+                out.append((m.group(1).decode("utf-8", "replace").strip(), xyz, tris))
     else:
+        xyz, tris, vid = new()
         n = struct.unpack_from("<I", data, 80)[0]
         for k in range(n):
-            o = 84 + k * 50
-            f = struct.unpack_from("<12f", data, o)
+            f = struct.unpack_from("<12f", data, 84 + k * 50)
             tris.extend((vid(f[3], f[4], f[5]), vid(f[6], f[7], f[8]), vid(f[9], f[10], f[11])))
-    return xyz, tris
+        out.append(("", xyz, tris))
+    return out
 
 
-def convert_stls(files: list[Path], out: Path, extra: dict | None = None) -> dict:
+def read_stl(p: Path) -> tuple[array.array, array.array]:
+    """(xyz, tris) del primer sólido."""
+    s = read_stl_solids(p)
+    return (s[0][1], s[0][2]) if s else (array.array("f"), array.array("I"))
+
+
+def convert_stls(files: list[Path], out: Path, extra: dict | None = None, names: dict[str, str] | None = None) -> dict:
+    """Un STL por parte (names: archivo -> nombre de la parte); cada sólido se llama «parte/cara» como las fronteras."""
     ds = Dataset()
     for f in files:
-        xyz, tris = read_stl(f)
-        ds.add_part(f.stem, xyz, tris)
+        part = (names or {}).get(f.name) or f.stem
+        solids = read_stl_solids(f)
+        for sname, xyz, tris in solids:
+            sname = sname.rsplit("-", 1)[-1] if sname.startswith(("[", part)) else sname  # «[Impeller_1]-Flow domain-Hub» -> «Hub»
+            ds.add_part(f"{part}/{sname}" if sname and sname != part else part, xyz, tris)
     return ds.write(out, {"source": "stl", **(extra or {})})
 
 

@@ -179,7 +179,7 @@ respuesta con UN bloque ` ```pregunta ` con JSON `{"pregunta", "opciones": [...]
 `3d` o `graficos`: la página lo enseña y pinta las opciones como botones. Caso nuevo por etapas: preparar → 100
 iteraciones de prueba con resultados completos → preguntar antes de seguir hasta el criterio de parada.
 
-0. Geometría nueva: importar y mirar los nombres de cara. Si vienen agrupadas o genéricas, separar por
+0. Geometría nueva: importar, exportarla al visor en seguida (receta `exportar-geometria-stl.java`, segundos) y mirar los nombres de cara. Si vienen agrupadas o genéricas, separar por
    ángulo y pedir al usuario que marque entrada y salida en el modo Fronteras (`fronteras.json`).
 1. Importar CAD (STEP/Parasolid) como parte de geometría. Listar superficies y renombrar:
    `inlet`, `outlet`, `blades`, `hub`, `shroud`, `volute`, `walls`.
@@ -292,6 +292,15 @@ Agrupadas por tema; fecha 2026-10-23 salvo indicación.
   `getIterationUpdateFrequency().setIterations(N)`. Deja `vivo@00600.case` con datos `vivo@0060000000.*`.
   La exportación siguiente puede llegar mientras se convierte la anterior: el visor decide por la `iteration`
   del manifest, no por mtime (con mtime se quedaba en la 600).
+- 2026-10-24 · Antes de mallar, `ImportManager.export` (EnSight) falla con «There is no volume mesh», aunque solo
+  se pidan superficies de parte. La geometría recién importada sale con `MeshPart.exportStlPart(archivo, false)`
+  (ASCII, un `solid` por superficie). Receta `exportar-geometria-stl.java`; el visor la convierte en el dataset
+  «geometria» con caras «parte/cara». Compila; falta verificarla con el solver.
+- 2026-10-24 · Un servidor viejo de la UI (puerto 8767, lanzado el día anterior) seguía vivo con el watchdog antiguo,
+  que no detectaba las macros largas en marcha. A los 7 min de una malla (2,7 M celdas) guardó y mató el solver de
+  otra sesión con una macro `saveState` + `kill`. Regla: una sola instancia de la UI. Antes de probar, mirar
+  `Get-CimInstance Win32_Process | ? CommandLine -match 'ui.server'` y parar las viejas. Además, el selftest de la
+  UI usa ahora un `.server.json` temporal, y `_state()` reintenta si el archivo existe pero no se puede leer.
 - 2026-10-24 · Edge `--headless=new --print-to-pdf` puede salir con código 0 antes de escribir el PDF. Pasa sobre
   todo lanzado desde el servidor de la UI. `informe.to_pdf` espera a que el archivo exista y deje de crecer. Además,
   un `·` de `json.dumps` dentro de una variable CSS sale tal cual en el pie de página: no usar JSON para CSS.

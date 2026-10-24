@@ -126,10 +126,16 @@ _proc: subprocess.Popen | None = None
 
 
 def _state() -> dict:
-    try:
-        return json.loads(STATE_FILE.read_text(encoding="utf-8"))
-    except Exception:
-        return {}
+    """.server.json o {} si no existe. Si existe pero no se puede leer (OneDrive o una escritura a medias lo bloquean
+    un instante), reintenta: un {} falso hace creer que no hay solver (así el selftest de la UI apagó uno real)."""
+    for i in range(20):
+        try:
+            return json.loads(STATE_FILE.read_text(encoding="utf-8"))
+        except FileNotFoundError:
+            return {}
+        except Exception:  # noqa: BLE001
+            time.sleep(0.05 * (i + 1))
+    return {}
 
 
 def _write_state(d: dict) -> None:

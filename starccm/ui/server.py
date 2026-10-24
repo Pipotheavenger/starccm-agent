@@ -107,7 +107,11 @@ CHAT_SYSTEM = (
     "(PATTERN «.», FUNCS «Pressure,TotalPressure,Velocity,WallYplus», OUT cases/<caso>/surfaces/_raw/superficies/"
     "superficies.case): el visor las convierte solo; y escribe cases/<caso>/RESUMEN.md (geometría, malla, física, "
     "resultados y tiempos en tablas, como cases/cursocfturbo/RESUMEN.md). Si algo falla dos veces, para y explica. "
-    "FRONTERAS: si existe cases/<caso>/fronteras.json es la asignación que hizo el usuario en el visor («región/frontera» → inlet | outlet | wall | interface | symmetry): úsala tal cual para los tipos de frontera, sin adivinar (inlet = mass flow inlet con el caudal pedido, outlet = pressure outlet 0 Pa). Si la geometría trae caras agrupadas o con nombres genéricos (Default, Faces, Surface…) y NO hay fronteras.json: separa las caras (receta separar-caras-por-angulo, ANGULO 89), exporta la geometría sin campos (receta exportar-superficies-ensight con PATTERN «.», FUNCS vacío y OUT cases/<caso>/surfaces/_raw/geometria/geometria.case) y PARA: pide al usuario que marque entrada y salida en el visor con el botón «Fronteras». Si la solución diverge (continuidad > 1 o creciendo), no sigas iterando: revisa fronteras y física. "
+    "GEOMETRÍA EN 3D YA: justo después de importar el CAD (antes de regiones y malla) y otra vez tras separar caras, "
+    "ejecuta la receta exportar-geometria-stl con OUT cases/<caso>/surfaces/_raw/geometria (son segundos): el visor "
+    "enseña la geometría al usuario mientras sigues. Antes de mallar NO uses exportar-superficies-ensight ni "
+    "ImportManager.export (fallan con «There is no volume mesh»). "
+    "FRONTERAS: si existe cases/<caso>/fronteras.json es la asignación que hizo el usuario en el visor («región/frontera» → inlet | outlet | wall | interface | symmetry): úsala tal cual para los tipos de frontera, sin adivinar (inlet = mass flow inlet con el caudal pedido, outlet = pressure outlet 0 Pa). Si la geometría trae caras agrupadas o con nombres genéricos (Default, Faces, Surface…) y NO hay fronteras.json: separa las caras (receta separar-caras-por-angulo, ANGULO 89), exporta la geometría (receta exportar-geometria-stl, OUT cases/<caso>/surfaces/_raw/geometria; en el visor cada cara se llama «parte/cara», y así llegan las claves de fronteras.json mientras no haya regiones) y PARA: pide al usuario que marque entrada y salida en el visor con el botón «Fronteras». Si la solución diverge (continuidad > 1 o creciendo), no sigas iterando: revisa fronteras y física. "
     "3D EN VIVO: antes de iterar (100 de prueba o la corrida larga) activa la exportación automática con la "
     "receta activar-autoexport (CADA 25 en la prueba de 100 iteraciones, 50 en corridas largas; FUNCS "
     "«Pressure,TotalPressure,Velocity,WallYplus»; OUT cases/<caso>/surfaces/_raw/vivo): el visor muestra el campo "
@@ -956,6 +960,29 @@ def _sync_raw(case: str) -> list[str]:
         except Exception as e:  # noqa: BLE001
             _RAW_FAILED[str(cf)] = newest
             log.warning("no pude convertir %s: %s", cf, e)
+    # geometría recién importada, sin malla (receta exportar-geometria-stl): un .stl por parte en _raw/<nombre>/
+    for sd in (p for p in (d / "_raw").iterdir() if p.is_dir()) if (d / "_raw").is_dir() else []:
+        stls = sorted(sd.glob("*.stl"))
+        if not stls or any(sd.glob("*.case")) or not re.fullmatch(r"[A-Za-z0-9_\-]+", sd.name):
+            continue
+        newest = max(q.stat().st_mtime for q in sd.iterdir() if q.is_file())
+        man = d / sd.name / "manifest.json"
+        if time.time() - newest < 3 or _RAW_FAILED.get(str(sd)) == newest or (man.is_file() and man.stat().st_mtime >= newest):
+            continue
+        meta = sd / f"{sd.name}.meta"
+        names, rotation = {}, []
+        if meta.is_file():
+            txt = meta.read_text(encoding="utf-8", errors="replace")
+            names = {f[1]: f[2] for f in (ln.split("\t") for ln in txt.splitlines()) if f[0] == "STLPART" and len(f) >= 3}
+            rotation = _meta_lines(txt)[1]
+        try:
+            m = surf.convert_stls(stls, d / sd.name, {"geometry_only": True, "rotation": rotation, "exported": time.strftime(
+                "%Y-%m-%d %H:%M:%S", time.localtime(newest)), "source_meta": meta.is_file()}, names)
+            done.append(sd.name)
+            log.info("geometría %s/%s convertida desde STL (%d caras, %d triángulos)", case, sd.name, len(m["parts"]), m["n_triangles"])
+        except Exception as e:  # noqa: BLE001
+            _RAW_FAILED[str(sd)] = newest
+            log.warning("no pude convertir los STL de %s: %s", sd, e)
     return done
 
 
@@ -1347,8 +1374,12 @@ def _selftest() -> int:
     import urllib.parse
     import urllib.request
 
+    import tempfile
     import uvicorn
 
+    # NUNCA el .server.json real: el 2026-10-24 una lectura fallida de él hizo que este selftest apagara un solver
+    # real a mitad de malla (la prueba de «apagar sin servidor»). Con uno temporal vacío no hay nada que apagar.
+    scc.STATE_FILE = Path(tempfile.mkdtemp(prefix="starccm-ui-state-")) / ".server.json"
     with socket.socket() as s:
         s.bind(("127.0.0.1", 0))
         port = s.getsockname()[1]
@@ -1487,6 +1518,19 @@ def _selftest() -> int:
         c, _ = get(f"/files/{nombre}/reports/{r.get('pdf')}")
         check(c == 200, "GET /files/<caso>/reports/<pdf>")
     shutil.rmtree(tdir, ignore_errors=True)
+    # geometría sin malla: STL ASCII multi-sólido (exportar-geometria-stl) -> dataset con una cara por «solid»
+    g = CASES / nombre / "surfaces" / "_raw" / "geometria"
+    g.mkdir(parents=True, exist_ok=True)
+    tri = "facet normal 0 0 1\n outer loop\n  vertex 0 0 0\n  vertex 1 0 0\n  vertex 0 1 0\n endloop\nendfacet\n"
+    (g / "00_Impeller_2.stl").write_text(f"solid [Impeller 2]-Hub\n{tri}endsolid\nsolid [Impeller 2]-Blade\n{tri}{tri}endsolid\n", encoding="utf-8")
+    (g / "geometria.meta").write_text("STLPART\t00_Impeller_2.stl\tImpeller 2\n", encoding="utf-8")
+    old = time.time() - 10
+    for q in g.iterdir():
+        os.utime(q, (old, old))  # «ya terminó de escribirse»
+    c, r = get(f"/api/surfaces?case={nombre}")
+    gm = next((x["manifest"] for x in r.get("datasets", []) if x["name"] == "geometria"), {})
+    check(c == 200 and [p["name"] for p in gm.get("parts", [])] == ["Impeller 2/Hub", "Impeller 2/Blade"] and gm.get("geometry_only"),
+          "geometría STL sin malla -> dataset «geometria» con una cara por solid («parte/cara»)")
     shutil.rmtree(CASES / nombre, ignore_errors=True)
     c, _ = get("/api/cases/no_existe")
     check(c == 404, "caso inexistente -> 404")
@@ -1530,11 +1574,12 @@ def _selftest() -> int:
     check(c == 200 and "alive" in st and "log" in st and "idle_limit_min" in st and "starting" in st, f"GET /api/status (alive={st.get('alive')})")
     long_ev = json.loads(_sse({"kind": "x", "v": _clip({"body": "A" * 50000, "n": 3})})[6:])
     check(len(long_ev["v"]["body"]) < 3100 and long_ev["v"]["n"] == 3, "_clip recorta los textos enormes de los eventos")
-    if st.get("alive") or st.get("pid"):  # cualquier solver registrado (aunque el chequeo falle): nunca apagarlo
+    if st.get("alive") or st.get("pid") or scc._state():  # doble seguro: con el .server.json temporal nunca hay solver
         print("  skip server/stop: hay un solver registrado en .server.json; no lo toco")
     else:
         c, r = post("/api/server/stop", {"save": True})
-        check(c == 200 and r.get("stopped") is False, "POST /api/server/stop sin servidor -> stopped=false")
+        check(c == 200 and r.get("stopped") is False or c == 409 and scc.macro_running(),
+              "POST /api/server/stop sin servidor -> stopped=false (409 si hay una macro real en marcha)")
         c, r = post("/api/scene", {"name": "presion"})
         check(c == 409 and "solver" in r.get("detail", ""), "POST /api/scene sin servidor -> 409")
         c, _ = post("/api/scene", {"name": "x\"); System.exit(0); //"})
