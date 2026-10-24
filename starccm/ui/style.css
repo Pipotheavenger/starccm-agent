@@ -296,3 +296,15 @@ dialog label.check{flex-direction:row;align-items:center;gap:6px;color:var(--fg)
 .lg-inline{display:flex;flex-wrap:wrap;gap:4px 10px;font-size:10px;color:var(--mut);margin-top:2px}
 .lg-inline i{display:inline-block;width:10px;height:3px;border-radius:2px;margin-right:4px;vertical-align:middle}
 #livedot{background:var(--ok);animation:pulse 1.2s infinite;margin-left:4px}
+
+/* modo Fronteras */
+.rolemenu{position:fixed;z-index:40;display:flex;flex-direction:column;min-width:170px;background:var(--panel);border:1px solid var(--line);border-radius:var(--r);box-shadow:0 8px 24px #0003;padding:4px}
+.rolemenu .rm-name{font-size:11px;color:var(--mut);padding:4px 8px;max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.rolemenu button{justify-content:flex-start;border:0;background:transparent;min-height:26px;font-size:12px}
+.rolemenu button:hover,.rolemenu button:focus-visible{background:var(--sel-bg)}
+.rolemenu i,.chip-r i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:6px}
+.r-inlet{background:#1d6fd1}.r-outlet{background:#d1495b}.r-wall{background:#8d99ae}.r-interface{background:#e0a800}.r-symmetry{background:#2a9d3f}
+.rolesbar{position:absolute;left:var(--s2);right:var(--s2);top:var(--s2);z-index:3;display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:6px 10px;font-size:12px;background:color-mix(in srgb,var(--panel) 94%,transparent);border:1px solid var(--acc);border-radius:var(--r)}
+.chip-r{display:inline-flex;align-items:center;font-size:11px;color:var(--mut)}
+ul.parts .rb{font-size:10px;padding:0 6px;border-radius:999px;color:#fff;flex:none}
+ul.parts .rb:empty{display:none}

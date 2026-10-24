@@ -127,7 +127,8 @@ async function openCase(name) {
   $('bconv').textContent = d.convergencia ? d.convergencia.rows.length : '';
   $('resumen').innerHTML = d.resumen ? md(d.resumen) : '<p class="mut">Este caso no tiene RESUMEN.md</p>';
   renderScenes(d); renderConv(d); fillParams(d); renderOutline();
-  await loadDatasets(); renderOutline();
+  await loadDatasets();
+  loadRoles(); renderOutline();
   if (gen === openGen) loadTree(false);
 }
 
@@ -189,6 +190,12 @@ function initViewer() {
   canvas.addEventListener('pointermove', onHover);
   canvas.addEventListener('pointerleave', () => { $('vtip').hidden = true; setHot(null); });
   canvas.addEventListener('dblclick', e => { const hit = pick(e); if (hit) flyTo(hit.object.userData.part); });
+  let down = null;  // clic «limpio» (sin arrastrar para orbitar) en modo Fronteras: menú del papel de esa cara
+  canvas.addEventListener('pointerdown', e => { down = [e.clientX, e.clientY]; });
+  canvas.addEventListener('pointerup', e => {
+    if (!V.rolesMode || !down || Math.hypot(e.clientX - down[0], e.clientY - down[1]) > 4 || e.button !== 0) return;
+    const hit = pick(e); if (hit) openRoleMenu(hit.object.userData.part, e.clientX, e.clientY); else $('rolemenu').hidden = true;
+  });
   requestAnimationFrame(loop);
 }
 function resize() {
@@ -440,7 +447,8 @@ function renderParts() {
 function renderPart(p, ul) {
   {
     const li = document.createElement('li'); p.li = li; li.tabIndex = 0; li.setAttribute('role', 'option'); li.title = `${p.name} · clic o Enter: volar a la superficie`;
-    li.innerHTML = `<input type="checkbox" checked aria-label="ver ${esc(p.name)}"><span class="sw" style="background:#${p.color.toString(16).padStart(6, '0')}"></span><span class="n">${esc(p.name)}</span><span class="c">${(p.ni / 3).toLocaleString('es')}</span>`;
+    li.innerHTML = `<input type="checkbox" checked aria-label="ver ${esc(p.name)}"><span class="sw" style="background:#${p.color.toString(16).padStart(6, '0')}"></span><span class="n">${esc(p.name)}</span><span class="rb"></span><span class="c">${(p.ni / 3).toLocaleString('es')}</span>`;
+    paintRoleBadge(p);
     li.querySelector('input').onchange = e => { p.mesh.visible = e.target.checked; if (p.group) syncGroup(p.group); V.needs = true; };
     li.onclick = e => { if (e.target.tagName !== 'INPUT') flyTo(p); };
     li.onkeydown = e => { if (e.key === 'Enter') flyTo(p); else if (e.key === ' ') { e.preventDefault(); const c = li.querySelector('input'); c.checked = !c.checked; c.onchange({ target: c }); } };
@@ -460,11 +468,12 @@ function applyColors(anim = false) {
   const c = [0, 0, 0];
   for (const p of st.ds.parts) {
     const col = p.mesh.geometry.getAttribute('color'); const arr = col.array;
-    if (!a) { const base = new THREE.Color(p.color); for (let i = 0; i < p.nv; i++) { arr[3 * i] = base.r; arr[3 * i + 1] = base.g; arr[3 * i + 2] = base.b; } }
+    if (V.rolesMode) { const base = new THREE.Color(ROLE_COLOR[roleOf(p)] ?? 0xc9d1da); for (let i = 0; i < p.nv; i++) { arr[3 * i] = base.r; arr[3 * i + 1] = base.g; arr[3 * i + 2] = base.b; } }
+    else if (!a) { const base = new THREE.Color(p.color); for (let i = 0; i < p.nv; i++) { arr[3 * i] = base.r; arr[3 * i + 1] = base.g; arr[3 * i + 2] = base.b; } }
     else for (let i = 0; i < p.nv; i++) { const v = a[p.v0 + i]; if (!Number.isFinite(v)) { arr[3 * i] = arr[3 * i + 1] = arr[3 * i + 2] = 0.6; continue; } cmapColor((v - lo) / ((hi - lo) || 1), c); arr[3 * i] = c[0]; arr[3 * i + 1] = c[1]; arr[3 * i + 2] = c[2]; }
     col.needsUpdate = true;
   }
-  drawLegend(a ? st.scalar : null, lo, hi); V.needs = true;
+  drawLegend(a && !V.rolesMode ? st.scalar : null, lo, hi); V.needs = true;
   if (from) {  // transición de 400 ms entre el color anterior y el nuevo
     const gen = V.gen, tgt = st.ds.parts.map(p => Float32Array.from(p.mesh.geometry.getAttribute('color').array)), t0 = performance.now();
     st.ds.parts.forEach((p, i) => p.mesh.geometry.getAttribute('color').array.set(from[i]));
@@ -523,6 +532,64 @@ function setRotor(on) {
   V.needs = true;
 }
 $('rotor').onclick = () => setRotor(!V.rotor);
+// ---------------------------------------------------------------- modo Fronteras: el usuario dice qué cara es qué
+// Papel por «región/frontera», guardado en cases/<caso>/fronteras.json (la IA lo usa tal cual al poner las condiciones).
+const ROLE_COLOR = { inlet: 0x1d6fd1, outlet: 0xd1495b, wall: 0x8d99ae, interface: 0xe0a800, symmetry: 0x2a9d3f };
+const ROLE_TXT = { inlet: 'Entrada', outlet: 'Salida', wall: 'Pared', interface: 'Interfaz', symmetry: 'Simetría' };
+st.roles = {};
+const roleKey = p => `${p.group?.name || ''}/${p.name}`;
+const roleOf = p => st.roles[roleKey(p)];
+function paintRoleBadge(p) {
+  const b = p.li?.querySelector('.rb'); if (!b) return; const r = roleOf(p);
+  b.textContent = r ? ROLE_TXT[r] : ''; b.className = 'rb' + (r ? ' r-' + r : '');
+}
+async function loadRoles() {
+  st.roles = {}; if (!st.case) return;
+  try { st.roles = (await api(`/api/cases/${encodeURIComponent(st.case)}/roles`)).roles || {}; } catch {}
+  if (st.ds) { for (const p of st.ds.parts) paintRoleBadge(p); if (V.rolesMode) applyColors(); }
+  renderRolesBar();
+}
+function setRolesMode(on) {
+  V.rolesMode = on && !!st.ds; $('rolesbtn').setAttribute('aria-pressed', V.rolesMode); $('rolemenu').hidden = true;
+  if (V.rolesMode && V.ghost) { V.ghost = false; applyGhost(); }  // en modo Fronteras todo opaco: se elige lo que se ve
+  applyColors(); renderRolesBar();
+  if (V.rolesMode) toast('Fronteras: haz clic en una cara y elige su papel. Doble clic sigue volando a ella.', 'ok');
+}
+function renderRolesBar() {
+  let bar = $('rolesbar');
+  if (!bar) { bar = document.createElement('div'); bar.id = 'rolesbar'; bar.className = 'rolesbar'; $('viewer').appendChild(bar); }
+  bar.hidden = !V.rolesMode;
+  if (!V.rolesMode) return;
+  const n = r => Object.values(st.roles).filter(v => v === r).length;
+  const ok = n('inlet') > 0 && n('outlet') > 0;
+  bar.innerHTML = `<b>Fronteras</b>${['inlet', 'outlet', 'interface', 'wall', 'symmetry'].map(r => `<span class="chip-r"><i class="r-${r}"></i>${ROLE_TXT[r]} ${n(r)}</span>`).join('')}
+    <span class="mut small">sin marcar = pared</span><span class="sp"></span>
+    <button class="sm pri" id="rolesapply" ${ok ? '' : 'disabled title="Marca al menos una entrada y una salida"'}>Aplicar con la IA</button><button class="sm" id="rolesexit">Salir</button>`;
+  $('rolesexit').onclick = () => setRolesMode(false);
+  $('rolesapply').onclick = () => {
+    if (busyChat()) return;
+    const by = r => Object.entries(st.roles).filter(([, v]) => v === r).map(([k]) => k);
+    const lst = r => by(r).join(', ') || '—';
+    $('chattext').value = `En cases/${st.case} marqué en el visor el papel de cada frontera (cases/${st.case}/fronteras.json). ` +
+      `Entrada: ${lst('inlet')}. Salida: ${lst('outlet')}. Interfaz: ${lst('interface')}. Simetría: ${lst('symmetry')}. El resto, paredes. ` +
+      `Aplica exactamente esos tipos (entrada mass flow inlet con el caudal del caso, salida pressure outlet 0 Pa), revisa que las interfaces casen, ` +
+      `reinicia la solución (clearSolution) y vuelve a iterar hasta el criterio escribiendo reports/convergencia.csv; si vuelve a divergir, para y dímelo.`;
+    sendChat();
+  };
+}
+function openRoleMenu(p, x, y) {
+  const m = $('rolemenu'); $('rmname').textContent = roleKey(p); m.hidden = false;
+  const r = m.getBoundingClientRect(); m.style.left = Math.min(x, innerWidth - r.width - 8) + 'px'; m.style.top = Math.min(y, innerHeight - r.height - 8) + 'px';
+  for (const b of m.querySelectorAll('[data-role]')) b.onclick = async () => {
+    m.hidden = true; const k = roleKey(p);
+    if (b.dataset.role) st.roles[k] = b.dataset.role; else delete st.roles[k];
+    paintRoleBadge(p); applyColors(); renderRolesBar();
+    try { await api(`/api/cases/${encodeURIComponent(st.case)}/roles`, { roles: st.roles }); } catch (e) { toast('No pude guardar: ' + e.message, 'error'); }
+  };
+  m.querySelector('[data-role]').focus();
+}
+$('rolesbtn').onclick = () => setRolesMode(!V.rolesMode);
+addEventListener('keydown', e => { if (e.key === 'Escape') $('rolemenu').hidden = true; });
 $('wire').onclick = () => { V.wire = !V.wire; $('wire').setAttribute('aria-pressed', V.wire); for (const m of V.meshes) m.material.wireframe = V.wire; V.needs = true; };
 function updateClip() {
   const on = $('clipon').checked; const ax = $('clipax').value; const t = +$('clipv').value / 1000;
@@ -992,7 +1059,7 @@ addEventListener('keydown', e => {
   if (e.key === 'Escape') { $('lightbox').hidden = true; return; }
   if (e.ctrlKey || e.metaKey || e.altKey || e.target.matches('input,textarea,select')) return;
   if (e.key === 'f' || e.key === 'F') fit(); else if (e.key === '1') setView('iso'); else if (e.key === '2') setView('axial'); else if (e.key === '3') setView('lateral');
-  else if (e.key === '`') $('docktoggle').click(); else if (e.key === 'c' || e.key === 'C') $('chattoggle').click(); else if (e.key === 't' || e.key === 'T') $('treetoggle').click();
+  else if (e.key === '`') $('docktoggle').click(); else if (e.key === 'c' || e.key === 'C') $('chattoggle').click(); else if (e.key === 't' || e.key === 'T') $('treetoggle').click(); else if (e.key === 'b' || e.key === 'B') $('rolesbtn').click();
 });
 
 // ---------------------------------------------------------------- arranque

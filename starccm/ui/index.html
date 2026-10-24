@@ -89,6 +89,7 @@
         <button class="sm" id="spin" aria-pressed="false" title="Giro automático de la cámara">⟳</button>
         <button class="sm" id="ghost" aria-pressed="true" title="Carcasa translúcida: voluta, shroud y casing al 25 % para ver los álabes">Carcasa</button>
         <button class="sm" id="wire" aria-pressed="false" title="Malla superficial">Malla</button>
+        <button class="sm" id="rolesbtn" aria-pressed="false" title="Elegir en el 3D qué cara es entrada, salida, pared o interfaz (tecla B)">Fronteras</button>
         <button class="sm" id="rotor" aria-pressed="false" title="Gira los álabes y el cubo en el visor (solo animación: 0,25 rev/s, eje Z)">Rotor</button>
         <label class="clip"><input type="checkbox" id="clipon"> Corte <select id="clipax" aria-label="Eje del corte"><option>Z</option><option>X</option><option>Y</option></select><input type="range" id="clipv" min="0" max="1000" value="500" aria-label="Posición del corte"></label>
         <button class="sm icon" id="help" title="Atajos: F encuadrar · 1 iso · 2 axial · 3 lateral · doble clic vuela a la superficie · ` pliega el dock · Esc cierra" aria-label="Atajos de teclado">?</button>
@@ -167,6 +168,15 @@
     <div class="row end"><button type="button" class="sm" id="nccancel">Cancelar</button><button type="submit" class="pri" id="ncok">Crear caso</button></div>
   </form>
 </dialog>
+<div id="rolemenu" class="rolemenu" role="menu" hidden>
+  <div class="rm-name mono" id="rmname"></div>
+  <button role="menuitem" data-role="inlet"><i class="r-inlet"></i>Entrada</button>
+  <button role="menuitem" data-role="outlet"><i class="r-outlet"></i>Salida</button>
+  <button role="menuitem" data-role="wall"><i class="r-wall"></i>Pared</button>
+  <button role="menuitem" data-role="interface"><i class="r-interface"></i>Interfaz</button>
+  <button role="menuitem" data-role="symmetry"><i class="r-symmetry"></i>Simetría</button>
+  <button role="menuitem" data-role="">Quitar</button>
+</div>
 <div id="lightbox" hidden><img alt=""><div class="lb-cap"></div></div>
 <div id="toast" role="status" aria-live="polite"></div>
 <script type="module" src="/app.js"></script>

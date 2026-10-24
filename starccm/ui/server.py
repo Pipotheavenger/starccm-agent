@@ -101,6 +101,7 @@ CHAT_SYSTEM = (
     "(PATTERN «.», FUNCS «Pressure,TotalPressure,Velocity,WallYplus», OUT cases/<caso>/surfaces/_raw/superficies/"
     "superficies.case): el visor las convierte solo; y escribe cases/<caso>/RESUMEN.md (geometría, malla, física, "
     "resultados y tiempos en tablas, como cases/cursocfturbo/RESUMEN.md). Si algo falla dos veces, para y explica. "
+    "FRONTERAS: si existe cases/<caso>/fronteras.json es la asignación que hizo el usuario en el visor («región/frontera» → inlet | outlet | wall | interface | symmetry): úsala tal cual para los tipos de frontera, sin adivinar (inlet = mass flow inlet con el caudal pedido, outlet = pressure outlet 0 Pa). Si la geometría trae caras agrupadas o con nombres genéricos (Default, Faces, Surface…) y NO hay fronteras.json: separa las caras (receta separar-caras-por-angulo, ANGULO 89), exporta la geometría sin campos (receta exportar-superficies-ensight con PATTERN «.», FUNCS vacío y OUT cases/<caso>/surfaces/_raw/geometria/geometria.case) y PARA: pide al usuario que marque entrada y salida en el visor con el botón «Fronteras». Si la solución diverge (continuidad > 1 o creciendo), no sigas iterando: revisa fronteras y física. "
     "NARRA: el usuario solo ve el chat. Antes de CADA herramienta escribe UNA frase corta (máx. 12 palabras) de "
     "qué vas a hacer y por qué; tras un resultado importante, una línea con el dato clave (celdas, H, residuo…). "
     "Termina siempre con una línea: qué quedó hecho y qué cambió."
@@ -361,6 +362,36 @@ async def api_case_cad(name: str, fname: str, request: Request) -> dict:
 def api_case_cad_list(name: str) -> dict:
     d = _case_dir(name) / "cad"
     return {"files": [{"name": f.name, "bytes": f.stat().st_size} for f in sorted(d.iterdir()) if f.is_file() and not f.name.endswith(".part")] if d.is_dir() else []}
+
+
+# ---------------------------------------------------------------- papel de cada frontera, elegido por el usuario en el visor
+ROLES = {"inlet", "outlet", "wall", "interface", "symmetry"}
+
+
+class RolesReq(BaseModel):
+    roles: dict[str, str] = Field(default_factory=dict)
+
+
+@app.get("/api/cases/{name}/roles")
+def api_roles(name: str) -> dict:
+    f = _case_dir(name) / "fronteras.json"
+    try:
+        d = json.loads(f.read_text(encoding="utf-8")) if f.is_file() else {}
+    except ValueError:
+        d = {}
+    return {"roles": d.get("roles", {}), "at": d.get("at"), "file": f"cases/{name}/fronteras.json"}
+
+
+@app.post("/api/cases/{name}/roles")
+def api_roles_set(name: str, req: RolesReq) -> dict:
+    """Guarda cases/<caso>/fronteras.json: {«región/frontera»: inlet|outlet|wall|interface|symmetry}. La IA lo usa tal cual."""
+    bad = {k: v for k, v in req.roles.items() if v not in ROLES or not k or len(k) > 200}
+    if bad:
+        raise HTTPException(422, f"papel no válido (usa {', '.join(sorted(ROLES))}): {list(bad)[:5]}")
+    f = _case_dir(name) / "fronteras.json"
+    f.write_text(json.dumps({"roles": req.roles, "at": time.strftime("%Y-%m-%d %H:%M:%S")}, ensure_ascii=False, indent=1), encoding="utf-8")
+    log.info("fronteras de %s: %s", name, {r: sum(1 for v in req.roles.values() if v == r) for r in ROLES})
+    return api_roles(name)
 
 
 @app.get("/files/{name}/images/{fname}")
@@ -1105,6 +1136,10 @@ def _selftest() -> int:
     except urllib.error.HTTPError as e:
         bad = e.code
     check(bad == 400, "extensión no admitida -> 400")
+    c, r = post(f"/api/cases/{nombre}/roles", {"roles": {"rotor/Inflow": "inlet", "voluta/outlet": "outlet"}})
+    check(c == 200 and r["roles"].get("rotor/Inflow") == "inlet" and get(f"/api/cases/{nombre}/roles")[1]["roles"].get("voluta/outlet") == "outlet",
+          "fronteras: guardar y leer fronteras.json")
+    check(post(f"/api/cases/{nombre}/roles", {"roles": {"x/y": "luna"}})[0] == 422, "fronteras: papel no válido -> 422")
     shutil.rmtree(CASES / nombre, ignore_errors=True)
     c, _ = get("/api/cases/no_existe")
     check(c == 404, "caso inexistente -> 404")
