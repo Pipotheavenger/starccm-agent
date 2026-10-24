@@ -297,9 +297,54 @@ def _pull_new(marker: str) -> list[str]:
     return got
 
 
+def _local_inputs(body: str) -> list[Path]:
+    """Archivos de starccm/ que la macro menciona y existen en este PC (CAD de cases/<caso>/cad, CSV de entrada…).
+    El .sim no: lo gestiona server_start."""
+    loc = _jpath(HERE.resolve())
+    rx = re.escape(loc).replace("/", r"[/\\]+") + r"""([^"'\s]*)"""
+    out = []
+    for m in re.finditer(rx, body, flags=re.I):
+        rel = re.sub(r"[/\\]+", "/", m.group(1)).lstrip("/")
+        f = (HERE / rel).resolve()
+        if rel and f.is_file() and HERE.resolve() in f.parents and f.suffix.lower() not in (".sim", ".java", ".class") and f not in out:
+            out.append(f)
+    return out
+
+
+def _push_inputs(files: list[Path]) -> list[str]:
+    """Sube al servidor (tar por SSH) los que faltan allí o tienen otro tamaño. Devuelve las rutas subidas."""
+    import io
+    import tarfile
+    if not files:
+        return []
+    rels = [f.relative_to(HERE.resolve()).as_posix() for f in files]
+    r = _ssh(f"cd {_qs(REMOTE_DIR)} && for f in " + " ".join(_qs(x) for x in rels) + '; do printf "%s\\t%s\\n" "$(stat -c %s "$f" 2>/dev/null || echo -1)" "$f"; done', timeout=60)
+    sizes = {}
+    for ln in r.stdout.splitlines():
+        if "\t" in ln:
+            n, f = ln.split("\t", 1)
+            sizes[f] = int(n) if n.lstrip("-").isdigit() else -1
+    need = [(f, rel) for f, rel in zip(files, rels) if sizes.get(rel, -1) != f.stat().st_size]
+    if not need:
+        return []
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w") as tf:
+        for f, rel in need:
+            tf.add(str(f), arcname=rel)
+    up = subprocess.run(_ssh_cmd(f"mkdir -p {_qs(REMOTE_DIR)} && cd {_qs(REMOTE_DIR)} && tar xf -"), input=buf.getvalue(),
+                        capture_output=True, timeout=3600)
+    if up.returncode != 0:
+        raise RuntimeError(f"no pude subir entradas al servidor: {up.stderr.decode('utf-8', 'replace')[-300:]}")
+    return [rel for _, rel in need]
+
+
 def _inject_remote(st: dict, src: Path, tag: str, timeout: float) -> tuple[int, str, bool, list[str]]:
     """Sube la macro, la corre con el cliente batch del servidor con su stdout en vivo al .out local, y trae lo nuevo."""
-    body = _translate(src.read_text(encoding="utf-8"))
+    raw = src.read_text(encoding="utf-8")
+    pushed = _push_inputs(_local_inputs(raw))  # CAD y demás entradas que el servidor aún no tiene
+    if pushed:
+        _log(f"remoto: subidos {len(pushed)} archivo(s): {', '.join(pushed[:6])}")
+    body = _translate(raw)
     rdir = f"{REMOTE_DIR}/macros"
     rsrc = f"{rdir}/{src.name}"
     marker = f"{rdir}/.mark_{tag}"
@@ -666,8 +711,14 @@ def _server_start_remote(sim_path: str, name: str, old: dict) -> dict:
         if srcp is not None:
             if srcp.resolve() != sim.resolve():
                 shutil.copy2(srcp, sim)
-            rsize = _ssh(f"stat -c %s {_qs(rsim)} 2>/dev/null || echo 0", timeout=30).stdout.strip() or "0"
-            if int(rsize.split()[-1]) != sim.stat().st_size:  # falta o es otro: subirlo (lento: ~0,24 MB/s medido)
+            # tamaño y fecha del remoto: se sube SOLO si falta allí o si el del PC es más nuevo (el remoto puede tener
+            # más trabajo guardado por save/server_stop en el servidor: nunca se pisa con uno más viejo)
+            info = (_ssh(f"stat -c '%s %Y' {_qs(rsim)} 2>/dev/null || echo '-1 0'", timeout=30).stdout.split() or ["-1", "0"])[-2:]
+            rsize, rmtime = int(info[0]), float(info[1])
+            lsize, lmtime = sim.stat().st_size, sim.stat().st_mtime
+            if rsize < 0 or (rsize != lsize and lmtime > rmtime + 5):  # lento: ~0,24 MB/s medido
+                if rsize >= 0:
+                    _ssh(f"cp -p {_qs(rsim)} {_qs(rsim + '.antes')}", timeout=600)  # copia del remoto por si acaso
                 t1 = time.time()
                 r = subprocess.run([shutil.which("scp") or "scp", *_SSH_OPTS, str(sim), f"{SSH_HOST}:{rsim}"],
                                    capture_output=True, text=True, timeout=7200)

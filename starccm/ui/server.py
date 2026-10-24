@@ -81,17 +81,27 @@ STOP_LOCK = threading.Lock()
 CHAT_PROC: dict = {"p": None, "stopped": False}
 CLAUDE_BIN = os.environ.get("STARCCM_CLAUDE_BIN") or shutil.which("claude") or "claude"
 CHAT_SYSTEM = (
-    "Operas desde el panel web del agente STAR-CCM+ (starccm/ui). El usuario ve a tu lado la galería de "
-    "casos (RESUMEN.md, escenas PNG, curva de convergencia) y el estado del solver, que se refrescan solos. "
-    "Responde en español, corto, con tablas para números. Antes de escribir Java: recipe_search primero, "
-    "docs_search segundo. Un solo servidor a la vez (server_start reutiliza el vivo); al terminar un bloque "
-    "de trabajo largo guarda con save. Si te piden resumen, comparación o explicación, solo lees y respondes "
-    "(no lances iterate ni server_start). Las escenas van a cases/<caso>/images/ y el historial a "
-    "cases/<caso>/reports/convergencia.csv para que la galería los muestre. "
-    "Termina siempre con una línea: qué quedó hecho y qué cambió. "
-    "Cada mensaje empieza con el caso y dónde eligió el usuario correr la simulación (Local = este PC Windows con "
-    "STAR-CCM+ 2410; Servidor = el Linux de vm/SERVIDOR.md con 2502 ya instalado, cuya ejecución remota aún no está montada: "
-    "si está elegido, no arranques nada allí; prepara, explica y avisa)."
+    "Operas desde el panel web del agente STAR-CCM+ (starccm/ui). El usuario ve a tu lado el árbol, el visor 3D, "
+    "las escenas PNG, la salida en vivo y la convergencia, que se refrescan solos. Responde en español, corto, con "
+    "tablas para números. Antes de escribir Java: recipe_search primero, docs_search segundo; precompila (run_java "
+    "ya lo hace). Un solo servidor a la vez (server_start reutiliza el vivo); guarda con save tras cada bloque largo. "
+    "Si te piden resumen, comparación o explicación, solo lees y respondes (no lances iterate ni server_start). "
+    "DÓNDE CORRE: cada mensaje empieza con el caso y la ejecución elegida. Llama siempre a server_start sin where "
+    "(toma la elección de la página): Local = este PC (STAR-CCM+ 2410); Servidor = Linux de vm/SERVIDOR.md "
+    "(2502, 14 núcleos); en Servidor las rutas de starccm/ en tu Java se traducen solas, el CAD se sube solo y lo "
+    "que escribas en cases/ vuelve solo al PC. "
+    "CASO NUEVO (geometría en cases/<caso>/cad/): sigue el «Flujo estándar» de CLAUDE.md con las recetas bomba-* "
+    "adaptando nombres de partes y fronteras (inspect para verlos), server_start(name=<caso>) para trabajar en "
+    "sims/<caso>.sim, una operación de malla por parte, MRF con el eje y las rpm pedidas, reportes H, M, eta; itera "
+    "en bloques de 100 con iterate y AÑADE una fila por bloque a cases/<caso>/reports/convergencia.csv con la "
+    "cabecera iter,seconds,H,M,pt_in,pt_out,Q_in,Q_out,eta,continuity,xmom (usa Write/Edit: solo puedes escribir "
+    "dentro de cases/); para hasta el criterio de CLAUDE.md. Al terminar: escenas presion_alabes, velocidad_plano, "
+    "yplus, plano_vectores y malla a cases/<caso>/images/ (recetas bomba-escenas, escena-plano-vectores, "
+    "escena-malla-rotor y export_scene con path), superficies con campo con la receta exportar-superficies-ensight "
+    "(PATTERN «.», FUNCS «Pressure,TotalPressure,Velocity,WallYplus», OUT cases/<caso>/surfaces/_raw/superficies/"
+    "superficies.case): el visor las convierte solo; y escribe cases/<caso>/RESUMEN.md (geometría, malla, física, "
+    "resultados y tiempos en tablas, como cases/cursocfturbo/RESUMEN.md). Si algo falla dos veces, para y explica. "
+    "Termina siempre con una línea: qué quedó hecho y qué cambió."
 )
 
 
@@ -214,7 +224,7 @@ def _where_text() -> str:
     s = _settings()
     if s["run_where"] == "server":
         sv = s["server"]
-        tail = "remoto disponible" if sv["ready"] else "remoto aún no disponible: no arranques nada allí, prepara y avisa"
+        tail = "remoto disponible: server_start lo lanza allí por SSH" if sv["ready"] else "remoto aún no disponible: no arranques nada allí, prepara y avisa"
         return f"ejecución elegida: {sv['label']} {sv['host'] or ''} · STAR-CCM+ {sv['version']} · {tail}".replace("  ", " ")
     return f"ejecución: Local (este PC, STAR-CCM+ {s['local']['version']}, np {s['local']['np']})"
 
@@ -299,6 +309,56 @@ def case(name: str) -> dict:
     return {**_case_row(d), "resumen": r.read_text(encoding="utf-8", errors="replace") if r.is_file() else "",
             "images": _images(d), "convergencia": _convergencia(d), "dir": str(d),
             "pump": (d / "pump.py").is_file()}
+
+
+# ---------------------------------------------------------------- caso nuevo: carpeta + CAD subido desde la página
+CAD_EXT = {".stp", ".step", ".x_t", ".x_b", ".igs", ".iges", ".stl", ".jt", ".sat", ".cfturbo-ccm", ".dbs", ".nas", ".msh"}
+CAD_MAX = 2 * 1024 ** 3  # 2 GB por archivo
+
+
+class NewCaseReq(BaseModel):
+    name: str = Field(min_length=1, max_length=60, pattern=r"^[A-Za-z0-9_\-]+$")
+
+
+@app.post("/api/cases/new")
+def api_case_new(req: NewCaseReq) -> dict:
+    """Crea cases/<nombre>/{cad,images,reports}. La IA hace el resto desde el chat."""
+    d = CASES / req.name
+    if d.exists():
+        raise HTTPException(409, f"ya existe el caso {req.name}")
+    for sub in ("cad", "images", "reports"):
+        (d / sub).mkdir(parents=True)
+    log.info("caso nuevo: cases/%s", req.name)
+    return {"name": req.name, "dir": str(d)}
+
+
+@app.put("/api/cases/{name}/cad/{fname}")
+async def api_case_cad(name: str, fname: str, request: Request) -> dict:
+    """Sube un archivo de geometría al cad/ del caso (cuerpo = el archivo tal cual, en trozos: sin multipart)."""
+    d = _case_dir(name) / "cad"
+    if not re.fullmatch(r"[A-Za-z0-9_\-. ]+", fname) or ".." in fname or not any(fname.lower().endswith(e) for e in CAD_EXT):
+        raise HTTPException(400, f"archivo no admitido: usa {', '.join(sorted(CAD_EXT))}")
+    if int(request.headers.get("content-length") or 0) > CAD_MAX:
+        raise HTTPException(413, "archivo de más de 2 GB")
+    d.mkdir(exist_ok=True)
+    tmp = d / (fname + ".part")
+    n = 0
+    with open(tmp, "wb") as f:
+        async for chunk in request.stream():
+            n += len(chunk)
+            if n > CAD_MAX:
+                f.close(); tmp.unlink(missing_ok=True)
+                raise HTTPException(413, "archivo de más de 2 GB")
+            f.write(chunk)
+    tmp.replace(d / fname)
+    log.info("CAD subido: cases/%s/cad/%s (%d bytes)", name, fname, n)
+    return {"file": f"cases/{name}/cad/{fname}", "bytes": n}
+
+
+@app.get("/api/cases/{name}/cad")
+def api_case_cad_list(name: str) -> dict:
+    d = _case_dir(name) / "cad"
+    return {"files": [{"name": f.name, "bytes": f.stat().st_size} for f in sorted(d.iterdir()) if f.is_file() and not f.name.endswith(".part")] if d.is_dir() else []}
 
 
 @app.get("/files/{name}/images/{fname}")
@@ -576,10 +636,52 @@ def _surf_dir(case: str) -> Path:
     return _case_dir(case) / "surfaces"
 
 
+def _meta_lines(text: str) -> tuple[list[str], list[dict]]:
+    """BOUNDARY y ROTFRAME (salida de la receta exportar-superficies-ensight, en stdout o en <case>.meta)."""
+    bounds, rotation = [], []
+    for ln in text.splitlines():
+        f = ln.split("\t")
+        if f[0] == "BOUNDARY" and len(f) >= 2:
+            bounds.append(f[1])
+        elif f[0] == "ROTFRAME" and len(f) >= 5:
+            try:
+                rotation.append({"region": f[1], "axis": [float(x) for x in f[2].split(",")],
+                                 "origin": [float(x) for x in f[3].split(",")], "rpm": float(f[4])})
+            except ValueError:
+                pass
+    return bounds, rotation
+
+
+def _sync_raw(case: str) -> list[str]:
+    """Convierte las exportaciones EnSight crudas (surfaces/_raw/<nombre>/*.case) que aún no tengan dataset o sean
+    más nuevas que él: así lo que exporte la IA desde el chat aparece solo en el visor."""
+    d = _surf_dir(case)
+    done = []
+    for cf in sorted((d / "_raw").glob("*/*.case")) if (d / "_raw").is_dir() else []:
+        name = cf.parent.name
+        if not re.fullmatch(r"[A-Za-z0-9_\-]+", name):
+            continue
+        man = d / name / "manifest.json"
+        if man.is_file() and man.stat().st_mtime >= cf.stat().st_mtime:
+            continue
+        meta = cf.with_name(cf.name + ".meta")
+        bounds, rotation = _meta_lines(meta.read_text(encoding="utf-8", errors="replace")) if meta.is_file() else ([], [])
+        try:
+            surf.convert_case(cf, d / name, {"boundaries": bounds, "rotation": rotation, "exported": time.strftime(
+                "%Y-%m-%d %H:%M:%S", time.localtime(cf.stat().st_mtime)), "source_meta": meta.is_file()})
+            done.append(name)
+            log.info("superficie %s/%s convertida desde _raw (%d fronteras, %d marcos)", case, name, len(bounds), len(rotation))
+        except Exception as e:  # noqa: BLE001
+            log.warning("no pude convertir %s: %s", cf, e)
+    return done
+
+
 @app.get("/api/surfaces")
 def api_surfaces(case: str) -> dict:
-    """Datasets listos del caso: cases/<caso>/surfaces/<nombre>/manifest.json."""
+    """Datasets listos del caso: cases/<caso>/surfaces/<nombre>/manifest.json (antes convierte los _raw nuevos)."""
     d = _surf_dir(case)
+    if not SURF_LOCK.locked():
+        _sync_raw(case)
     out = []
     for m in sorted(d.glob("*/manifest.json"), key=lambda p: p.stat().st_mtime, reverse=True) if d.is_dir() else []:
         try:
@@ -630,16 +732,7 @@ def api_surface(req: SurfaceReq) -> dict:
             raise HTTPException(500, f"export falló: {r.get('exception') or r.get('stdout', '')[-500:]}")
         if not case_file.is_file():
             raise HTTPException(500, f"STAR-CCM+ no escribió {case_file.name}; salida: {r.get('stdout', '')[-500:]}")
-        bounds = [ln.split("\t", 1)[1] for ln in r["stdout"].splitlines() if ln.startswith("BOUNDARY\t")]
-        rotation = []  # marcos rotatorios del .sim: el visor gira esas regiones sobre su eje real
-        for ln in r["stdout"].splitlines():
-            f = ln.split("\t")
-            if f[0] == "ROTFRAME" and len(f) >= 5:
-                try:
-                    rotation.append({"region": f[1], "axis": [float(x) for x in f[2].split(",")],
-                                     "origin": [float(x) for x in f[3].split(",")], "rpm": float(f[4])})
-                except ValueError:
-                    pass
+        bounds, rotation = _meta_lines(r["stdout"])  # marcos rotatorios: el visor gira esas regiones sobre su eje real
         man = surf.convert_case(case_file, _surf_dir(req.case) / req.name,
                                 {"boundaries": bounds, "rotation": rotation, "pattern": req.pattern, "funcs": req.funcs,
                                  "exported": time.strftime("%Y-%m-%d %H:%M:%S"), "seconds": round(time.time() - t0, 1)})
@@ -735,9 +828,10 @@ def _chat_events(req: ChatReq):
         prompt = f"({'Caso seleccionado en el panel: cases/' + req.case + ' · ' if req.case else ''}{_where_text()})\n{req.message}"
         cmd = [CLAUDE_BIN, "-p", prompt, "--output-format", "stream-json", "--verbose",
                "--mcp-config", str(REPO / ".mcp.json"), "--strict-mcp-config",
-               "--allowedTools", "mcp__starccm__*,Read,Glob,Grep",
-               "--disallowedTools", "Bash,Write,Edit,NotebookEdit,WebFetch,WebSearch,Read(**/.env*),Read(**/.starccm-agent.env)",
-               "--append-system-prompt", CHAT_SYSTEM, "--max-turns", "40"]
+               # escribe SOLO dentro de cases/ (RESUMEN.md, convergencia.csv); nada de shell ni red
+               "--allowedTools", "mcp__starccm__*,Read,Glob,Grep,Write(cases/**),Edit(cases/**)",
+               "--disallowedTools", "Bash,NotebookEdit,WebFetch,WebSearch,Read(**/.env*),Read(**/.starccm-agent.env)",
+               "--append-system-prompt", CHAT_SYSTEM, "--max-turns", "250"]
         if req.session_id:
             cmd += ["--resume", req.session_id]
         try:
@@ -891,6 +985,23 @@ def _selftest() -> int:
         if d["images"]:
             c, png = get(f"/files/cursocfturbo/images/{d['images'][0]['file']}", raw=True)
             check(c == 200 and png.startswith(PNG_SIG), "GET /files/.../images/<png> es un PNG")
+    nombre = "selftest_caso_tmp"
+    shutil.rmtree(CASES / nombre, ignore_errors=True)
+    c, r = post("/api/cases/new", {"name": nombre})
+    check(c == 200 and (CASES / nombre / "cad").is_dir(), "POST /api/cases/new crea cad/, images/, reports/")
+    check(post("/api/cases/new", {"name": nombre})[0] == 409, "caso repetido -> 409")
+    rq = urllib.request.Request(base + f"/api/cases/{nombre}/cad/pieza.stp", data=b"ISO-10303-21;\nEND-ISO-10303-21;\n", method="PUT")
+    with urllib.request.urlopen(rq, timeout=10) as rr:
+        up = json.loads(rr.read())
+    lst = get(f"/api/cases/{nombre}/cad")[1]
+    check(up.get("bytes", 0) > 0 and [f["name"] for f in lst.get("files", [])] == ["pieza.stp"], "PUT .../cad/pieza.stp sube y se lista")
+    rq = urllib.request.Request(base + f"/api/cases/{nombre}/cad/malo.exe", data=b"x", method="PUT")
+    try:
+        urllib.request.urlopen(rq, timeout=10); bad = 200
+    except urllib.error.HTTPError as e:
+        bad = e.code
+    check(bad == 400, "extensión no admitida -> 400")
+    shutil.rmtree(CASES / nombre, ignore_errors=True)
     c, _ = get("/api/cases/no_existe")
     check(c == 404, "caso inexistente -> 404")
     c, _ = get("/files/cursocfturbo/images/..%2F..%2FRESUMEN.md")

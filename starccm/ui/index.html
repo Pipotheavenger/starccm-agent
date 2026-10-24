@@ -34,7 +34,7 @@
 <main class="app" id="app">
   <!-- Panel izquierdo: el árbol de la simulación, como en STAR-CCM+ -->
   <aside class="simtree" aria-label="Simulación">
-    <div class="tree-head"><span class="sec-h">Simulación</span><span class="sp"></span><select id="case" aria-label="Caso" title="Caso (carpeta en cases/)"></select></div>
+    <div class="tree-head"><button class="sm icon" id="treetoggle" aria-pressed="true" title="Plegar o desplegar el panel de la simulación (tecla T)" aria-label="Plegar panel de la simulación">«</button><span class="sec-h">Simulación</span><span class="sp"></span><select id="case" aria-label="Caso" title="Caso (carpeta en cases/)"></select><button class="sm icon" id="newcase" title="Caso nuevo desde una geometría (STEP, Parasolid, IGES, STL…)" aria-label="Caso nuevo">＋</button></div>
     <div class="tree" id="tree">
       <details open id="n-out"><summary>Simulación <span class="badge" id="b-out"></span></summary><ul id="outline"></ul></details>
       <details open id="n-geo"><summary>Superficies 3D <span class="badge" id="b-geo"></span><button class="sm mini" id="exportbtn" title="Exportar fronteras con campo desde el solver vivo (EnSight → visor)">↓ solver</button></summary>
@@ -125,7 +125,7 @@
     <div class="chat-resize" id="chatresize" role="separator" aria-orientation="vertical" aria-label="Ancho del panel de IA" tabindex="0" title="Arrastra para cambiar el ancho · doble clic restablece"></div>
     <div class="chat-head"><button class="sm icon" id="chattoggle" aria-pressed="true" aria-label="Plegar o desplegar el panel de IA" title="Plegar o desplegar el panel de IA (C)">»</button><span class="sec-h">IA</span><span id="chatstate" aria-live="polite"></span><span class="sp"></span>
       <button class="sm" id="newchat">Nueva</button><button class="sm danger" id="stopchat" disabled>Detener</button></div>
-    <div id="chatlog"><div class="chat-empty" id="chatempty"><p>Pide escenas, planos de corte, vectores, cambios de parámetros o que corra iteraciones. La IA opera STAR-CCM+ por el MCP y la página se actualiza sola.</p></div></div>
+    <div id="chatlog"><div class="chat-empty" id="chatempty"><p>Pide escenas, planos de corte, vectores, cambios de parámetros o que corra iteraciones.</p></div></div>
     <div class="quick" id="quick">
       <button class="sm" data-q="¿Está vivo el servidor de STAR-CCM+? Dame server_status y, si está vivo, inspect('reports').">Estado</button>
       <button class="sm" data-q="Exporta una escena nueva de presión total en un plano de corte z = 30 mm con vectores de velocidad (export_scene a cases/<caso>/images/plano_vectores.png) y dime qué se ve.">Plano + vectores</button>
@@ -142,6 +142,26 @@
     <label>Campos <span class="mut">(field functions internas)</span><input id="e_fun" value="Pressure,TotalPressure,Velocity,WallYplus"></label>
     <p class="mut small">Una macro (~10 s) más la exportación EnSight (segundos a minutos según la malla). Requiere solver vivo y el chat en reposo.</p>
     <div class="row end"><button type="button" class="sm" id="expcancel">Cancelar</button><button type="submit" class="pri">Exportar</button></div>
+  </form>
+</dialog>
+<dialog id="ncdlg" aria-labelledby="ncdlg-h">
+  <form id="ncform" method="dialog">
+    <h2 class="sec-h" id="ncdlg-h">Caso nuevo desde una geometría</h2>
+    <label>Nombre del caso<input id="nc_name" pattern="[A-Za-z0-9_\-]+" required placeholder="bomba_v2" title="Letras, números, _ y -"></label>
+    <label>Geometría <span class="mut">(STEP, Parasolid, IGES, STL; puedes elegir varias, y el .cfturbo-ccm si viene de CFturbo)</span><input id="nc_files" type="file" multiple required accept=".stp,.step,.x_t,.x_b,.igs,.iges,.stl,.jt,.sat,.cfturbo-ccm"></label>
+    <div class="pgrid">
+      <label>Máquina<select id="nc_type"><option value="bomba centrífuga">Bomba centrífuga</option><option value="turbina hidráulica">Turbina hidráulica</option><option value="ventilador">Ventilador</option><option value="compresor">Compresor</option><option value="otra turbomáquina">Otra</option></select></label>
+      <label>Fluido<input id="nc_fluid" value="agua"></label>
+      <label>rpm <span class="mut">(signo = sentido)</span><input id="nc_rpm" inputmode="decimal" placeholder="2980"></label>
+      <label>Caudal másico <span class="mut">kg/s</span><input id="nc_mdot" inputmode="decimal" placeholder="69,5"></label>
+      <label>Eje de giro<select id="nc_axis"><option value="+Z">+Z</option><option value="+X">+X</option><option value="+Y">+Y</option><option value="-Z">−Z</option></select></label>
+      <label>Iteraciones máx.<input id="nc_iter" inputmode="numeric" value="1000"></label>
+    </div>
+    <label>Notas para la IA <span class="mut">(opcional)</span><textarea id="nc_notes" rows="2" placeholder="p. ej. la entrada es la cara inferior; usar presión total de salida 0 Pa"></textarea></label>
+    <label class="check small"><input type="checkbox" id="nc_run" checked> Que la IA prepare y corra la simulación completa al crear el caso</label>
+    <p class="mut small" id="nc_where"></p>
+    <div id="nc_prog" class="small mono" aria-live="polite"></div>
+    <div class="row end"><button type="button" class="sm" id="nccancel">Cancelar</button><button type="submit" class="pri" id="ncok">Crear caso</button></div>
   </form>
 </dialog>
 <div id="lightbox" hidden><img alt=""><div class="lb-cap"></div></div>

@@ -1,9 +1,10 @@
 // Exporta fronteras (malla superficial + campos en los vértices) a EnSight Gold (.case) para el visor 3D de ui/.
-// STAR-CCM+ 2410 · 2026-10-23 · ESTADO: compila con javac; por verificar contra el solver real.
+// STAR-CCM+ 2410 y 2502 · 2026-10-24 · VERIFICADO contra el solver real (export) · el .meta compila con javac.
 // Parámetros del cuerpo: PATTERN (regex sobre "region/frontera"), FUNCS (nombres internos de field functions;
 // los vectores se exportan como magnitud), OUT (ruta .case). Firma usada (javadoc 2410):
 // ImportManager.export(String, Collection<Region>, Collection<Boundary>, Collection<Part>, Collection<PartSurface>,
 //                      Collection<FieldFunction>, boolean appendToFile, boolean dataAtVerts)
+StringBuilder meta = new StringBuilder();  // BOUNDARY/ROTFRAME también en <OUT>.meta: el visor lo lee aunque la macro la lance la IA
 java.util.regex.Pattern pat = java.util.regex.Pattern.compile("PATTERN", java.util.regex.Pattern.CASE_INSENSITIVE);
 java.util.Vector<Region> regs = new java.util.Vector<Region>();
 java.util.Vector<Boundary> bnds = new java.util.Vector<Boundary>();
@@ -12,7 +13,7 @@ for (Region r : sim.getRegionManager().getRegions())
     // las fronteras de interfaz (rotor/estator) duplican superficies internas: fuera del visor
     if (b instanceof DirectBoundaryInterfaceBoundary || b.getPresentationName().contains("[")) continue;
     String full = r.getPresentationName() + "/" + b.getPresentationName();
-    if (pat.matcher(full).find()) { bnds.add(b); sim.println("BOUNDARY\t" + full); }
+    if (pat.matcher(full).find()) { bnds.add(b); sim.println("BOUNDARY\t" + full); meta.append("BOUNDARY\t" + full + "\n"); }
   }
 if (bnds.isEmpty()) throw new RuntimeException("Ninguna frontera coincide con PATTERN");
 java.util.Vector<FieldFunction> ffs = new java.util.Vector<FieldFunction>();
@@ -37,7 +38,10 @@ for (Region r : sim.getRegionManager().getRegions()) {
       DoubleVector ax = f.getAxisDirection().getSIVector(), og = f.getAxisOrigin().getSIVector();  // SI: origen en m
       double rpm = f.getRotationRate().getSIValue() * 60.0 / (2.0 * Math.PI);
       sim.println("ROTFRAME	" + r.getPresentationName() + "	" + ax.get(0) + "," + ax.get(1) + "," + ax.get(2) + "	" + og.get(0) + "," + og.get(1) + "," + og.get(2) + "	" + rpm);
+      meta.append("ROTFRAME	" + r.getPresentationName() + "	" + ax.get(0) + "," + ax.get(1) + "," + ax.get(2) + "	" + og.get(0) + "," + og.get(1) + "," + og.get(2) + "	" + rpm + "\n");
     }
   } catch (Exception e) { sim.println("WARN	sin marco en " + r.getPresentationName() + ": " + e); }
 }
+try { java.nio.file.Files.write(java.nio.file.Paths.get(resolvePath("OUT") + ".meta"), meta.toString().getBytes("UTF-8")); }
+catch (Exception e) { sim.println("WARN\tno pude escribir " + "OUT" + ".meta: " + e); }
 sim.println("CASE OUT");

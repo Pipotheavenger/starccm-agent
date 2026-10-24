@@ -124,6 +124,15 @@ html.resizing,html.resizing *{cursor:col-resize!important;user-select:none}
   html.chat-off.chat-busy .chat-head .sec-h::after{content:"";width:8px;height:8px;border-radius:50%;background:var(--acc);animation:pulse 1.2s infinite;margin-top:6px}
 }
 @media (max-width:1099px){.chat-resize{display:none}}
+/* panel de la simulación (izquierda) plegable en escritorio: franja de 38 px con el título en vertical */
+@media (min-width:1100px){
+  html.tree-off{--col-l:38px}
+  html.tree-off .simtree>:not(.tree-head){display:none!important}
+  html.tree-off .tree-head{flex-direction:column;align-items:center;padding:var(--s2) 0;gap:var(--s3);border-bottom:0}
+  html.tree-off .tree-head>:not(#treetoggle):not(.sec-h){display:none}
+  html.tree-off .tree-head .sec-h{writing-mode:vertical-rl;letter-spacing:.12em}
+}
+@media (max-width:1099px){#treetoggle{display:none}}
 .lbl-ejec{font-size:11px;color:var(--mut)}
 
 table.kv{border-collapse:collapse;width:100%;font-size:11px;margin-top:4px}
@@ -266,3 +275,4 @@ ul.parts li.grp>details[open]>summary::before{content:"▾"}
 ul.parts li.grp>details>summary:hover{background:var(--panel-2)}
 ul.parts.sub{padding:0 0 2px 22px}
 #tab-chat .chat-head .sec-h{display:none}
+dialog label.check{flex-direction:row;align-items:center;gap:6px;color:var(--fg)}

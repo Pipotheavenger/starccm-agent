@@ -52,6 +52,45 @@ async function loadCases() {
   if (name) { sel.value = name; await openCase(name); }
 }
 $('case').onchange = () => openCase($('case').value);
+// ---------------------------------------------------------------- caso nuevo: carpeta + geometría + encargo a la IA
+$('newcase').onclick = async () => {
+  $('nc_prog').textContent = '';
+  try { const s = await api('/api/settings'); $('nc_where').textContent = s.run_where === 'server' ? 'Correrá en el Servidor Linux (STAR-CCM+ 2502, 14 núcleos); la geometría se sube sola.' : 'Correrá en este PC (Local). Puedes cambiarlo arriba en «Ejecutar en».'; } catch { $('nc_where').textContent = ''; }
+  $('ncdlg').showModal(); $('nc_name').focus();
+};
+$('nccancel').onclick = () => $('ncdlg').close();
+const NUM = v => { const x = parseFloat(String(v).replace(',', '.')); return Number.isFinite(x) ? x : null; };
+$('ncform').onsubmit = async e => {
+  e.preventDefault();
+  const name = $('nc_name').value.trim(), files = [...$('nc_files').files];
+  const rpm = NUM($('nc_rpm').value), mdot = NUM($('nc_mdot').value), iters = parseInt($('nc_iter').value, 10);
+  const run = $('nc_run').checked, tipo = $('nc_type').value, eje = $('nc_axis').value, fluido = $('nc_fluid').value.trim() || 'agua', notas = $('nc_notes').value.trim();
+  if (!/^[A-Za-z0-9_-]+$/.test(name)) { $('nc_prog').textContent = 'Nombre: solo letras, números, _ y -'; return; }
+  if (!files.length) { $('nc_prog').textContent = 'Elige al menos un archivo de geometría'; return; }
+  if (run && (rpm == null || rpm === 0 || mdot == null || mdot <= 0)) { $('nc_prog').textContent = 'Para correr hacen falta rpm (≠ 0) y caudal másico (> 0)'; return; }
+  if (st.chatting && run) { $('nc_prog').textContent = 'La IA está trabajando: espera a que termine'; return; }
+  $('ncok').disabled = true;
+  try {
+    await api('/api/cases/new', { name });
+    for (const [k, f] of files.entries()) {
+      $('nc_prog').textContent = `subiendo ${k + 1}/${files.length}: ${f.name} (${(f.size / 1048576).toFixed(1).replace('.', ',')} MB)…`;
+      const r = await fetch(`/api/cases/${encodeURIComponent(name)}/cad/${encodeURIComponent(f.name)}`, { method: 'PUT', body: f });
+      if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || ('HTTP ' + r.status));
+    }
+    $('ncdlg').close(); $('ncform').reset();
+    await refreshCaseList(); $('case').value = name; await openCase(name);
+    toast(`Caso ${name} creado con ${files.length} archivo(s) de geometría`, 'ok');
+    if (!run) { $('ncok').disabled = false; return; }
+    const lista = files.map(f => f.name).join(', ');
+    $('chattext').value = `Caso nuevo cases/${name}: ${tipo}, geometría en cases/${name}/cad/ (${lista}). ` +
+      `Datos: ${rpm} rpm sobre ${eje}, caudal másico ${mdot} kg/s de ${fluido}, máximo ${Number.isFinite(iters) ? iters : 1000} iteraciones. ` +
+      `Prepara y corre la simulación completa siguiendo el flujo estándar (server_start(name="${name}") sin where; importar, nombrar fronteras, regiones e interfaces, malla por parte, física, MRF, fronteras, reportes), ` +
+      `itera hasta el criterio de parada escribiendo reports/convergencia.csv, y al terminar deja las escenas, las superficies con campo para el visor y RESUMEN.md, y guarda.` +
+      (notas ? ` Notas: ${notas}` : '');
+    sendChat();
+  } catch (err) { $('nc_prog').textContent = 'No se pudo: ' + err.message; }
+  $('ncok').disabled = false;
+};
 async function refreshCaseList() {  // un caso creado por Claude en el chat aparece sin F5
   try {
     const cs = await api('/api/cases'); if (cs.length === st.cases.length && cs.every((c, i) => c.name === st.cases[i].name)) return;
@@ -477,7 +516,7 @@ function updateClip() {
   V.needs = true;
 }
 $('clipon').onchange = updateClip; $('clipax').onchange = updateClip; $('clipv').oninput = updateClip;
-$('help').onclick = () => toast('Atajos: F encuadrar · 1 iso · 2 axial · 3 lateral · doble clic vuela a la superficie · ` pliega el dock · Esc cierra la imagen');
+$('help').onclick = () => toast('Atajos: F encuadrar · 1 iso · 2 axial · 3 lateral · doble clic vuela a la superficie · ` pliega el dock · T pliega la simulación · C pliega la IA · Esc cierra la imagen');
 // en pantallas estrechas (apilado) la rueda debe desplazar la página, no hacer zoom: el zoom se activa al tocar el modelo
 function narrowZoom() { V.controls.enableZoom = !NARROW.matches || !!V.zoomOn; syncOverlays(); }
 $('gl').addEventListener('pointerdown', () => { if (NARROW.matches && !V.zoomOn) { V.zoomOn = true; narrowZoom(); } });
@@ -820,6 +859,12 @@ function setChatOpen(on) {
 }
 $('chattoggle').onclick = () => setChatOpen(document.documentElement.classList.contains('chat-off'));
 setChatOpen(LS.get('scc_chatopen', '1') === '1');
+// panel de la simulación (izquierda) plegable, igual que el de la IA; se recuerda
+function setTreeOpen(on) {
+  document.documentElement.classList.toggle('tree-off', !on); $('treetoggle').setAttribute('aria-pressed', on); $('treetoggle').textContent = on ? '«' : '»'; LS.set('scc_treeopen', on ? '1' : '0'); setTimeout(() => { V.needs = true; }, 0);
+}
+$('treetoggle').onclick = () => setTreeOpen(document.documentElement.classList.contains('tree-off'));
+setTreeOpen(LS.get('scc_treeopen', '1') === '1');
 // ancho del panel de IA: arrastrar el borde izquierdo (o flechas con el foco), doble clic restablece; se recuerda
 (() => { const rs = $('chatresize'), root = document.documentElement, MIN = 260, DEF = 330;
   const maxW = () => Math.max(MIN, Math.min(720, innerWidth * 0.55));
@@ -839,7 +884,7 @@ addEventListener('keydown', e => {
   if (e.key === 'Escape') { $('lightbox').hidden = true; return; }
   if (e.ctrlKey || e.metaKey || e.altKey || e.target.matches('input,textarea,select')) return;
   if (e.key === 'f' || e.key === 'F') fit(); else if (e.key === '1') setView('iso'); else if (e.key === '2') setView('axial'); else if (e.key === '3') setView('lateral');
-  else if (e.key === '`') $('docktoggle').click(); else if (e.key === 'c' || e.key === 'C') $('chattoggle').click();
+  else if (e.key === '`') $('docktoggle').click(); else if (e.key === 'c' || e.key === 'C') $('chattoggle').click(); else if (e.key === 't' || e.key === 'T') $('treetoggle').click();
 });
 
 // ---------------------------------------------------------------- arranque
