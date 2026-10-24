@@ -1232,11 +1232,15 @@ def _chat_events(req: ChatReq):
                 yield _sse({"kind": "raw", "text": line[:500]})
                 continue
             t = o.get("type")
+            boundary = False  # ¿fin de un paso? (resultado de una herramienta o texto sin herramienta): ahí se puede cortar
             if t == "system" and o.get("subtype") == "init":
+                CHAT_RUN["session"] = o.get("session_id")
                 yield _sse({"kind": "init", "session_id": o.get("session_id"), "model": o.get("model"),
                             "mcp": o.get("mcp_servers")})
             elif t == "assistant":
-                for b in o.get("message", {}).get("content", []):
+                blocks = o.get("message", {}).get("content", [])
+                boundary = not any(b.get("type") == "tool_use" for b in blocks)
+                for b in blocks:
                     if b.get("type") == "text" and b.get("text"):
                         yield _sse({"kind": "text", "text": _clip(scc._redact(b["text"]), 40000)})
                     elif b.get("type") == "tool_use":
@@ -1253,11 +1257,20 @@ def _chat_events(req: ChatReq):
                                     "input": json.loads(scc._redact(json.dumps(_clip(b.get("input")))))})
             elif t == "user":
                 for b in o.get("message", {}).get("content", []):
-                    if isinstance(b, dict) and b.get("type") == "tool_result" and b.get("tool_use_id") not in hidden:
+                    if isinstance(b, dict) and b.get("type") == "tool_result":
+                        boundary = True
+                        if b.get("tool_use_id") in hidden:
+                            continue
                         c = b.get("content")
                         txt = c if isinstance(c, str) else " ".join(x.get("text", "") for x in c if isinstance(x, dict))
                         yield _sse({"kind": "tool_result", "text": scc._redact(txt)[:800], "is_error": bool(b.get("is_error"))})
-            elif t == "result":
+            if boundary and CHAT_PROC.get("pending") and not CHAT_PROC.get("stopped"):
+                # mensaje del usuario en espera: cortar AQUÍ, con el paso terminado (ninguna macro a medias), y retomar
+                CHAT_PROC["interrupted"] = True
+                _kill_tree(p)
+                log.info("chat: pausa tras el último paso para leer %d mensaje(s) del usuario", len(CHAT_PROC["pending"]))
+                break
+            if t == "result":
                 yield _sse({"kind": "result", "subtype": o.get("subtype"), "session_id": o.get("session_id"),
                             "turns": o.get("num_turns"), "seconds": round(time.time() - t0),
                             "text": _clip(scc._redact(str(o.get("result"))), 2000) if o.get("subtype") != "success" else None})
@@ -1267,6 +1280,8 @@ def _chat_events(req: ChatReq):
         log.info("chat: terminó rc=%s en %.0f s%s", rc, time.time() - t0, " (detenido)" if CHAT_PROC.get("stopped") else "")
         if CHAT_PROC.get("stopped"):
             yield _sse({"kind": "stopped", "text": "Detenido por el usuario"})
+        elif CHAT_PROC.get("pending"):  # el hilo retoma la conversación con el mensaje en espera: sin «done»
+            return
         elif rc not in (0, None) and err:
             yield _sse({"kind": "error", "text": err[-800:]})
         yield _sse({"kind": "done", "rc": rc})
@@ -1284,15 +1299,30 @@ CHAT_RUN: dict = {"id": 0, "events": [], "done": True, "message": "", "case": No
 CHAT_COND = threading.Condition()
 
 
+INTERRUPT_NOTE = ("(MENSAJE DEL USUARIO MIENTRAS TRABAJABAS. Te pausé justo al terminar tu último paso: no quedó ninguna "
+                  "macro tuya a medias. Atiende esto primero; luego decide si retomas lo que hacías y dilo en una línea.)\n")
+
+
 def _chat_worker(req: "ChatReq", rid: int) -> None:
     try:
-        for ev in _chat_events(req):
-            if ev.startswith('data: {"kind": "ping"'):
-                continue  # los latidos no se guardan: el índice de reenganche (frm) cuenta solo eventos reales, como la página
+        while True:
+            for ev in _chat_events(req):
+                if ev.startswith('data: {"kind": "ping"'):
+                    continue  # los latidos no se guardan: el índice de reenganche (frm) cuenta solo eventos reales, como la página
+                with CHAT_COND:
+                    if CHAT_RUN["id"] == rid:
+                        CHAT_RUN["events"].append(ev)
+                        CHAT_COND.notify_all()
+            # mensajes que el usuario escribió mientras la IA trabajaba: misma conversación (--resume), sin cortar el flujo
             with CHAT_COND:
-                if CHAT_RUN["id"] == rid:
-                    CHAT_RUN["events"].append(ev)
-                    CHAT_COND.notify_all()
+                pend, CHAT_PROC["pending"] = CHAT_PROC.get("pending") or [], []
+                if not pend or CHAT_PROC.get("stopped") or CHAT_RUN["id"] != rid:
+                    break
+                CHAT_PROC["interrupted"] = False
+                CHAT_RUN["events"].append(_sse({"kind": "resumed", "n": len(pend), "text": "La IA lee tu mensaje…"}))
+                CHAT_COND.notify_all()
+            req = ChatReq(message=INTERRUPT_NOTE + "\n\n".join(pend), session_id=CHAT_RUN.get("session") or req.session_id, case=req.case)
+            log.info("chat: retomo la conversación con %d mensaje(s) en espera", len(pend))
     except Exception as e:  # noqa: BLE001  sin esto la página se quedaba sin respuesta ni «done»
         log.exception("chat: el hilo falló")
         with CHAT_COND:
@@ -1342,7 +1372,25 @@ def api_chat(req: ChatReq) -> StreamingResponse:
 def api_chat_current() -> dict:
     """La conversación en curso o la última: para que una pestaña nueva o recargada la muestre y se enganche."""
     return {"id": CHAT_RUN["id"], "running": not CHAT_RUN["done"], "n": len(CHAT_RUN["events"]),
-            "message": CHAT_RUN["message"], "case": CHAT_RUN["case"], "started": CHAT_RUN["started"]}
+            "message": CHAT_RUN["message"], "case": CHAT_RUN["case"], "started": CHAT_RUN["started"],
+            "pending": len(CHAT_PROC.get("pending") or [])}
+
+
+class QueueReq(BaseModel):
+    message: str = Field(min_length=1, max_length=20000)
+
+
+@app.post("/api/chat/queue")
+def api_chat_queue(req: QueueReq) -> dict:
+    """Mensaje para la IA MIENTRAS trabaja: se pausa al terminar el paso en curso (nunca a mitad de una macro) y
+    sigue la misma conversación con este mensaje primero. Sin conversación en marcha: 409 (envíalo normal)."""
+    with CHAT_COND:
+        if CHAT_RUN["done"]:
+            raise HTTPException(409, "la IA no está trabajando: envía el mensaje normal")
+        CHAT_PROC.setdefault("pending", []).append(req.message)
+        n = len(CHAT_PROC["pending"])
+    log.info("chat: mensaje en espera (%d)", n)
+    return {"queued": n}
 
 
 @app.get("/api/chat/stream")
@@ -1354,6 +1402,7 @@ def api_chat_stream(id: int, frm: int = 0) -> StreamingResponse:
 
 @app.post("/api/chat/stop")
 def api_chat_stop() -> dict:
+    CHAT_PROC["pending"] = []  # «Detener» descarta los mensajes en espera (la página lo avisa)
     p = CHAT_PROC["p"]
     if p and p.poll() is None:
         CHAT_PROC["stopped"] = True
@@ -1622,6 +1671,18 @@ def _selftest() -> int:
             evs = [json.loads(x[6:]) for x in rr.read().decode("utf-8").split("\n\n") if x.startswith("data: ")]
         txt = next((e["text"] for e in evs if e["kind"] == "text"), "")
         check("```pregunta" in txt and json.loads(txt.split("```pregunta")[1].split("```")[0])["opciones"], "chat: la pregunta con opciones viaja íntegra")
+        # mensaje mientras la IA trabaja: se pausa al terminar el paso y sigue la MISMA conversación con el mensaje
+        check(post("/api/chat/queue", {"message": "x"})[0] == 409, "mensaje en espera sin conversación en marcha -> 409")
+        rq = urllib.request.Request(base + "/api/chat", data=json.dumps({"message": "hola"}).encode(), headers={"content-type": "application/json"}, method="POST")
+        with urllib.request.urlopen(rq, timeout=60) as rr:
+            rr.read(150)
+            c, r = post("/api/chat/queue", {"message": "malla menos fina"})
+            evs = [json.loads(x[6:]) for x in rr.read().decode("utf-8").split("\n\n") if x.startswith("data: ")]
+        kinds = [e["kind"] for e in evs]
+        texts = [e.get("text", "") for e in evs if e["kind"] == "text"]
+        check(c == 200 and r.get("queued") == 1 and "resumed" in kinds and kinds.count("done") == 1 and kinds[-1] == "done"
+              and any(t == "Recibido: malla menos fina" for t in texts) and "Listo: 3 partes importadas." not in texts,
+              f"chat: mensaje en espera -> pausa tras el paso y la IA lo recibe ({kinds.count('init')} tramos)")
     finally:
         CLAUDE_BIN = real_bin
     # los latidos no se guardan (el índice de reenganche cuenta eventos reales) y un fallo del hilo avisa a la página

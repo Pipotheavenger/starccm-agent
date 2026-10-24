@@ -905,7 +905,21 @@ function toolSummary(name, inp = {}) {
   return [name, ...bits].join(' · ');
 }
 const setChatState = html => { if ($('chatstate').innerHTML !== html) $('chatstate').innerHTML = html; };
-function setChatting(on) { st.chatting = on; $('chatdot').hidden = !on; document.documentElement.classList.toggle('chat-busy', on); $('send').disabled = on; $('stopchat').disabled = !on; if (st.status.alive != null) renderStatus(st.status); }
+function setChatting(on) {
+  st.chatting = on; $('chatdot').hidden = !on; document.documentElement.classList.toggle('chat-busy', on); $('stopchat').disabled = !on;
+  // mientras trabaja, «Enviar» deja el mensaje en espera: la IA lo atiende en cuanto termina el paso en curso
+  $('send').textContent = on ? 'Enviar ya' : 'Enviar';
+  $('send').title = on ? 'La IA lo lee en cuanto termine el paso en curso (sin cortar una macro a medias) y sigue la misma conversación' : 'Enviar a la IA';
+  $('chattext').placeholder = on ? 'Escribe para corregir a la IA mientras trabaja…' : 'Mensaje para la IA';
+  if (!on) for (const m of $('chatlog').querySelectorAll('.m.queued')) { m.classList.remove('queued'); m.querySelector('.qnote')?.remove(); }
+  if (st.status.alive != null) renderStatus(st.status);
+}
+async function queueChat(text) {
+  $('chattext').value = ''; st.lastMsg = text;
+  const d = addMsg('user queued', `${esc(text)}<div class="qnote mut small">en espera · la IA lo lee al terminar el paso en curso${$('chatstate').textContent ? ' (' + esc($('chatstate').textContent.replace(/….*/, '…')) + ')' : ''}</div>`);
+  try { await api('/api/chat/queue', { message: text }); toast('Mensaje en espera: la IA lo atiende al terminar el paso en curso', 'ok'); }
+  catch (e) { d.querySelector('.qnote').textContent = 'no se pudo dejar en espera: ' + e.message; d.classList.add('bad'); }
+}
 function onChatEvent(ev, ctx) {
   if (['result', 'error'].includes(ev.kind) && /No conversation found/i.test(ev.text || '')) { ctx.stale = true; return; }
   if (ev.kind === 'result' && ev.turns === 0 && ev.subtype !== 'success' && !ev.text) return;
@@ -926,6 +940,9 @@ function onChatEvent(ev, ctx) {
       ctx.step.querySelector('.ic').textContent = ev.is_error ? '✗' : '✓'; ctx.step.querySelector('.dur').textContent = ctx.replay ? '' : ` ${s} s`; ctx.step = null; }
     if (ev.is_error) addMsg('tool bad', 'Error: ' + esc(ev.text)); else if (/server_/.test(ctx.tool)) poll(); if (st.tab === 'out') loadProgress(); }
   else if (ev.kind === 'status') $('chatstate').textContent = ev.text;
+  else if (ev.kind === 'resumed') {  // la IA se pausó tras su último paso y retoma con los mensajes en espera
+    for (const m of $('chatlog').querySelectorAll('.m.queued')) { m.classList.remove('queued'); const n = m.querySelector('.qnote'); if (n) n.textContent = 'entregado a la IA'; }
+    if (!ctx.replay) addMsg('bot mut', 'Pausa tras el último paso: la IA lee tu mensaje.'); ctx.tool = ''; $('chatstate').textContent = ev.text || 'leyendo tu mensaje…'; }
   else if (ev.kind === 'ping') { if (!ctx.tool) $('chatstate').textContent = `trabajando… ${ev.t} s`; }
   else if (ev.kind === 'error') addMsg('err', /conversación en curso/.test(ev.text) ? 'Ya hay una conversación en curso. Espera o pulsa Detener.' : esc(ev.text));
   else if (ev.kind === 'result') { ctx.tool = ''; if (ev.text) addMsg('err', esc(ev.text)); $('chatstate').textContent = `listo · ${ev.turns ?? '?'} turnos · ${ev.seconds} s`; }
@@ -1018,7 +1035,8 @@ async function resumeChat() {
 async function sendChat(retry = false) {
   if (document.documentElement.classList.contains('chat-off')) setChatOpen(true);
   if (NARROW.matches && st.tab !== 'chat') openTab('chat');  // los parámetros viven en Propiedades: al pedir, se muestra la conversación
-  const text = $('chattext').value.trim(); if (!text || st.chatting) return;
+  const text = $('chattext').value.trim(); if (!text) return;
+  if (st.chatting) return queueChat(text);
   $('chattext').value = ''; st.lastMsg = text; if (!retry) addMsg('user', esc(text));
   setChatting(true); $('chatstate').textContent = 'pensando…';
   const ctx = { t0: Date.now(), tool: '', login: false, done: false, refresh: false, n: 0 };
@@ -1040,7 +1058,9 @@ async function sendChat(retry = false) {
 }
 $('send').onclick = () => sendChat();
 $('chattext').addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendChat(); } else if (e.key === 'ArrowUp' && !$('chattext').value && st.lastMsg) { e.preventDefault(); $('chattext').value = st.lastMsg; } });
-$('stopchat').onclick = () => { $('stopchat').disabled = true; $('chatstate').textContent = 'deteniendo…'; api('/api/chat/stop', {}).then(j => { if (!j.stopped) { $('chatstate').textContent = 'no había nada que detener'; $('stopchat').disabled = !st.chatting; } }).catch(e => { $('chatstate').textContent = 'no pude detener: ' + e.message; $('stopchat').disabled = !st.chatting; }); };
+$('stopchat').onclick = () => { $('stopchat').disabled = true; $('chatstate').textContent = 'deteniendo…';
+  for (const m of $('chatlog').querySelectorAll('.m.queued')) { m.classList.remove('queued'); const n = m.querySelector('.qnote'); if (n) n.textContent = 'no enviado (detuviste la IA): reenvíalo'; }
+  api('/api/chat/stop', {}).then(j => { if (!j.stopped) { $('chatstate').textContent = 'no había nada que detener'; $('stopchat').disabled = !st.chatting; } }).catch(e => { $('chatstate').textContent = 'no pude detener: ' + e.message; $('stopchat').disabled = !st.chatting; }); };
 $('newchat').onclick = () => {
   if (busyChat()) return;
   if (!armed($('newchat'), '¿Seguro?', 4000)) return;

@@ -140,6 +140,9 @@ Reglas:
   que guarda los eventos: recargar o cerrar la pestaña no lo mata (`/api/chat/current` y `/api/chat/stream`
   reenganchan). La IA narra cada paso en una frase corta; cada tool se ve como «▶ Importando la geometría … 12 s ✓».
 - Cada mensaje del chat empieza con `(Caso …)` y el estado del solver local.
+- Mensaje mientras la IA trabaja («Enviar ya»): `POST /api/chat/queue`. La UI mata la CLI justo al terminar el paso
+  en curso (tras un resultado de herramienta o un texto sin herramienta, nunca con una macro a medias) y la retoma
+  con `--resume` y el mensaje, en el mismo hilo y el mismo flujo de eventos (`resumed`). «Detener» lo descarta.
 - `cases/<caso>/fronteras.json` (modo Fronteras): papel de cada cara elegido por el usuario
   (`inlet|outlet|wall|interface|symmetry`). La IA lo usa tal cual, sin adivinar. Si la geometría trae caras
   agrupadas o con nombres genéricos: separarlas por ángulo (receta `separar-caras-por-angulo.java`),

@@ -181,7 +181,8 @@ Errores siempre `{"detail": "texto"}`. Los `409` son «solver no vivo» o «la I
 | `POST /api/chat {message, session_id, case}` | SSE: `status init text tool tool_result ping raw result error stopped done`; un chat a la vez; corre en un hilo del servidor |
 | `GET /api/chat/current` | la conversación en curso o la última (`id running n message case started`) |
 | `GET /api/chat/stream?id=&frm=` | reengancha el SSE desde el evento `frm`; 404 si ya no está en memoria |
-| `POST /api/chat/stop` | mata la CLI y sus hijos |
+| `POST /api/chat/stop` | mata la CLI y sus hijos (descarta los mensajes en espera) |
+| `POST /api/chat/queue {message}` | mensaje mientras la IA trabaja: pausa al terminar el paso en curso y sigue la misma conversación con él; 409 si no hay conversación |
 
 ## Primera comprobación con el solver real
 

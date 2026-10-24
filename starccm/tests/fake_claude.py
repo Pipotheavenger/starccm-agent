@@ -20,6 +20,10 @@ if "PREGUNTA_PRUEBA" in prompt:  # la página debe pintar una tarjeta con opcion
     out({"type": "assistant", "message": {"content": [{"type": "text", "text": txt}]}})
     out({"type": "result", "subtype": "success", "session_id": "fake-0001", "num_turns": 1})
     sys.exit(0)
+if "MENSAJE DEL USUARIO MIENTRAS TRABAJABAS" in prompt:  # la página retomó la conversación con un mensaje en espera
+    out({"type": "assistant", "message": {"content": [{"type": "text", "text": "Recibido: " + prompt.rsplit("\n", 1)[-1]}]}})
+    out({"type": "result", "subtype": "success", "session_id": "fake-0001", "num_turns": 1})
+    sys.exit(0)
 out({"type": "assistant", "message": {"content": [{"type": "text", "text": "Importo la geometría."}]}})
 time.sleep(pause)
 out({"type": "assistant", "message": {"content": [{"type": "tool_use", "id": "t1", "name": "mcp__starccm__run_java",
