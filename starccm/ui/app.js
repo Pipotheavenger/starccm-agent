@@ -310,7 +310,8 @@ async function loadDatasets() {
   const want = LS.get('scc_ds_' + st.case);
   const okDs = d => d.manifest?.n_triangles > 0;  // un dataset vacío (exportación fallida) no tapa a los buenos
   // 3D en vivo: mientras se sigue, la exportación automática más nueva gana a la preferencia guardada
-  const live = V.follow !== false && st.datasets.find(d => d.manifest?.live && okDs(d));
+  // …solo si es la exportación más reciente: acabada la corrida, unas superficies exportadas después (con planos) mandan
+  const live = V.follow !== false && st.datasets[0]?.manifest?.live && okDs(st.datasets[0]) ? st.datasets[0] : null;
   const pick = live || (want && want !== 'demo' && st.datasets.find(d => d.name === want && okDs(d))) || st.datasets.find(d => d.name !== 'demo' && okDs(d)) || st.datasets.find(okDs) || st.datasets[0];
   $('dsel').value = pick.name; $('dsel').onchange = () => { const d = st.datasets.find(x => x.name === $('dsel').value); V.follow = !!d?.manifest?.live; loadDataset(d); };
   // tras un chat la página se refresca: si el dataset es el mismo (nombre y fecha) no se recarga ni se pierde el encuadre
