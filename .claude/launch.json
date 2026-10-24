@@ -2,12 +2,6 @@
   "version": "0.0.1",
   "configurations": [
     {
-      "name": "cfturbo-ui",
-      "runtimeExecutable": "cfturbo/.venv/Scripts/python.exe",
-      "runtimeArgs": ["-m", "uvicorn", "--app-dir", "cfturbo", "ui.server:app", "--host", "127.0.0.1", "--port", "8765"],
-      "port": 8765
-    },
-    {
       "name": "starccm-ui",
       "runtimeExecutable": "starccm/.venv/Scripts/python.exe",
       "runtimeArgs": ["-m", "uvicorn", "--app-dir", "starccm", "ui.server:app", "--host", "127.0.0.1", "--port", "8767"],

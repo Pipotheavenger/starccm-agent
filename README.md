@@ -1,16 +1,18 @@
 # starccm-agent
 
 Agentes de IA para turbomáquinas hidráulicas que operan software de ingeniería real desde lenguaje
-natural, con Claude Code como cerebro y un servidor MCP por herramienta. Dos agentes independientes,
-cada uno en su carpeta, con su `CLAUDE.md` (brief que manda), su MCP, su entorno Python y su memoria:
+natural, con Claude Code como cerebro y un servidor MCP por herramienta. Este repositorio es el agente de
+STAR-CCM+; su hermano de diseño 1D vive en su propio repositorio desde el 2026-10-24:
 
-| carpeta | herramienta | qué hace | estado (2026-10-24) |
+| repositorio | herramienta | qué hace | estado (2026-10-24) |
 |---|---|---|---|
-| [`starccm/`](starccm/README.md) | Simcenter STAR-CCM+ 2410 (este PC, 4 procesos), licencia PoD | prepara, malla, configura física, corre y entrega altura, torque, eficiencia y escenas de una bomba | MCP verificado contra el solver real, solo local; bomba `cursocfturbo` convergida; interfaz web completa |
-| [`cfturbo/`](cfturbo/README.md) | CFturbo 2026.1 (este PC) | diseño 1D por semejanza, variantes de geometría, curvas, exportación a CFD, interfaz web con visor 3D | terminado, evaluado 9/10 |
+| este, [`starccm/`](starccm/README.md) | Simcenter STAR-CCM+ 2410 (este PC, 4 procesos), licencia PoD | prepara, malla, configura física, corre y entrega altura, torque, eficiencia y escenas de una bomba | MCP verificado contra el solver real, solo local; bomba `cursocfturbo` convergida; interfaz web completa |
+| [`cfturbo-agent`](https://github.com/Pipotheavenger/cfturbo-agent) (en este PC: `Documentos\cfturbo-agent`) | CFturbo 2026.1 (este PC) | diseño 1D por semejanza, variantes de geometría, curvas, exportación a CFD, interfaz web con visor 3D | terminado, evaluado 9/10 |
 
 No comparten código ni se llaman entre sí. CFturbo exporta STEP + `.cfturbo-ccm`; el agente de
-STAR-CCM+ los toma como cualquier otro CAD (`starccm/cases/<caso>/cad/`).
+STAR-CCM+ los toma como cualquier otro CAD (`starccm/cases/<caso>/cad/`). La carpeta `cfturbo/` se quitó de
+aquí en un commit; su historial sigue en este repositorio (`git log -- cfturbo/`, último estado en el commit
+anterior a «quitar cfturbo/»).
 
 ## Cómo está construido
 
@@ -60,13 +62,6 @@ Tiempos medidos (100 iteraciones de la bomba):
 
 Arranque local 4,5 s; macro 8–10 s; primera macro de CAD/física 50–75 s.
 
-## cfturbo/ en una página
-
-- `mcp_server.py`: 12 tools sobre `CFturbo.exe -batch` editando el `.cft` (XML) copiado.
-- `ui/`: interfaz web (FastAPI + three.js, puerto 8765) con galería de corridas, visor 3D de STL,
-  tabla de parámetros, chat con Claude Code por SSE, curvas, reporte y comparación.
-- `projects/` (bombas base), `versions/` (corridas guardadas), `recipes/` (recetas y bitácora).
-
 ## Puesta en marcha
 
 ```bash
@@ -74,13 +69,9 @@ Arranque local 4,5 s; macro 8–10 s; primera macro de CAD/física 50–75 s.
 starccm\.venv\Scripts\python starccm\mcp_server.py --selftest
 ```
 
-```bash
-# CFturbo
-cfturbo\.venv\Scripts\python cfturbo\mcp_server.py --selftest
-```
-
-Los dos MCP se registran en el `.mcp.json` de esta raíz (ignorado por git; plantilla en cada
-carpeta). Reiniciar la sesión de Claude Code para que aparezcan las tools.
+El MCP se registra en el `.mcp.json` de esta raíz (ignorado por git). Puede registrar también el de
+CFturbo apuntando a `Documentos\cfturbo-agent` (lo crea su `bootstrap.ps1`). Reiniciar la sesión de
+Claude Code para que aparezcan las tools.
 
 ## Hoja de ruta
 
@@ -111,3 +102,5 @@ carpeta). Reiniciar la sesión de Claude Code para que aparezcan las tools.
 - 2026-10-24 (tarde): se quitó la ejecución remota (commit be0df78; era lo más frágil: 7 fallos solo por ser
   remoto, dos versiones de STAR-CCM+, solvers huérfanos). El agente es solo local; el servidor queda como
   opción manual. Recuperable en los commits `038629d`…`e163e33`.
+- 2026-10-24: `cfturbo/` pasa a su propio repositorio, `cfturbo-agent`, con su historial. Aquí se borró en
+  un commit, sin reescribir la historia.

@@ -28,7 +28,7 @@ starccm/
 3. Selftests (sin licencia, sin solver): ver «Selftests» abajo.
 4. El MCP está registrado en el `.mcp.json` de la raíz del repo (servidor `starccm`). Reiniciar la
    sesión de Claude Code para que aparezcan las tools.
-5. Interfaz: preview `starccm-ui` de `.claude/launch.json` de la raíz, o a mano (puerto 8767; 8765 es la de cfturbo):
+5. Interfaz: preview `starccm-ui` de `.claude/launch.json` de la raíz, o a mano (puerto 8767; 8765 es la de cfturbo-agent):
 
 ```bash
 starccm\.venv\Scripts\python -m uvicorn --app-dir starccm ui.server:app --port 8767

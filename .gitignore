@@ -25,9 +25,5 @@ starccm/cases/*/*
 *.sim~
 *.dmprj
 
-# cfturbo/
-cfturbo/projects/*/
-!cfturbo/projects/README.md
-cfturbo/versions/*/
-work/
-*.cft-res
+# cfturbo/ se fue a su repositorio (cfturbo-agent); restos locales que aún no se pudieron borrar
+cfturbo/

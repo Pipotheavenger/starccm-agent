@@ -5,7 +5,7 @@ malla, configura la física, corre y entrega altura, torque, eficiencia y escena
 STAR-CCM+ es el solver. Claude es el ingeniero que lo opera. Claude nunca resuelve física a mano.
 
 Proyecto independiente dentro del repo `starccm-agent`: todo vive en `starccm/`. No depende de
-`cfturbo/` (el agente hermano de diseño 1D) ni lo toca. Uso paso a paso y endpoints: `README.md`.
+`cfturbo-agent` (el agente hermano de diseño 1D, repositorio aparte en `Documentos\cfturbo-agent`) ni lo toca. Uso paso a paso y endpoints: `README.md`.
 Servidor Linux (solo a mano, fuera del agente): `vm/SERVIDOR.md`.
 
 ## Entorno
