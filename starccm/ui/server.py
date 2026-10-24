@@ -829,6 +829,8 @@ class StopReq(BaseModel):
 def api_server_stop(req: StopReq) -> dict:
     if CHAT_LOCK.locked():  # no inyectar saveState+kill mientras Claude tiene una macro en marcha
         raise HTTPException(409, "La IA está usando el solver; pulsa Detener en el chat primero")
+    if scc.macro_running():  # otra sesión (o una macro que sigue tras Detener) está trabajando en el solver
+        raise HTTPException(409, "hay una macro en marcha en el solver; espera a que termine (pestaña Salida)")
     if not STOP_LOCK.acquire(blocking=False):
         raise HTTPException(409, "ya se está apagando")
     try:
