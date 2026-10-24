@@ -632,8 +632,17 @@ def api_surface(req: SurfaceReq) -> dict:
         if not case_file.is_file():
             raise HTTPException(500, f"STAR-CCM+ no escribió {case_file.name}; salida: {r.get('stdout', '')[-500:]}")
         bounds = [ln.split("\t", 1)[1] for ln in r["stdout"].splitlines() if ln.startswith("BOUNDARY\t")]
+        rotation = []  # marcos rotatorios del .sim: el visor gira esas regiones sobre su eje real
+        for ln in r["stdout"].splitlines():
+            f = ln.split("\t")
+            if f[0] == "ROTFRAME" and len(f) >= 5:
+                try:
+                    rotation.append({"region": f[1], "axis": [float(x) for x in f[2].split(",")],
+                                     "origin": [float(x) for x in f[3].split(",")], "rpm": float(f[4])})
+                except ValueError:
+                    pass
         man = surf.convert_case(case_file, _surf_dir(req.case) / req.name,
-                                {"boundaries": bounds, "pattern": req.pattern, "funcs": req.funcs,
+                                {"boundaries": bounds, "rotation": rotation, "pattern": req.pattern, "funcs": req.funcs,
                                  "exported": time.strftime("%Y-%m-%d %H:%M:%S"), "seconds": round(time.time() - t0, 1)})
         log.info("superficie %s/%s: %d partes, %d triángulos, %s escalares en %.0f s", req.case, req.name,
                  len(man["parts"]), man["n_triangles"], len(man["scalars"]), time.time() - t0)

@@ -27,4 +27,17 @@ for (String n : "FUNCS".split(",")) {
   ffs.add(f); sim.println("FUNC\t" + f.getPresentationName());
 }
 sim.getImportManager().export(resolvePath("OUT"), regs, bnds, new java.util.Vector<Part>(), new java.util.Vector<PartSurface>(), ffs, false, true);
+// Marcos rotatorios (MRF) y regiones que los usan: el visor gira esas regiones sobre el eje real
+// (vale para bombas, turbinas, ventiladores, compresores: el eje y el centro salen de STAR-CCM+, no se suponen).
+for (Region r : sim.getRegionManager().getRegions()) {
+  try {
+    Object rf = r.getValues().get(MotionSpecification.class).getReferenceFrame();
+    if (rf instanceof RotatingReferenceFrame) {
+      RotatingReferenceFrame f = (RotatingReferenceFrame) rf;
+      DoubleVector ax = f.getAxisDirection().getSIVector(), og = f.getAxisOrigin().getSIVector();  // SI: origen en m
+      double rpm = f.getRotationRate().getSIValue() * 60.0 / (2.0 * Math.PI);
+      sim.println("ROTFRAME	" + r.getPresentationName() + "	" + ax.get(0) + "," + ax.get(1) + "," + ax.get(2) + "	" + og.get(0) + "," + og.get(1) + "," + og.get(2) + "	" + rpm);
+    }
+  } catch (Exception e) { sim.println("WARN	sin marco en " + r.getPresentationName() + ": " + e); }
+}
 sim.println("CASE OUT");

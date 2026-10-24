@@ -123,6 +123,13 @@ patrón `.`: 17 fronteras (impulsor, voluta, tubo de entrada), 187 400 triángul
 solver más 0,3 s de conversión. El botón «Carcasa» deja voluta, shroud y casing al 25 % para ver los
 álabes; también sirven las casillas del árbol y el plano de corte.
 
+Botón «Rotor» (animación del visor, 0,25 rev/s): cada marco rotatorio gira las superficies de su región
+sobre **su** eje y **su** origen. Al exportar superficies, la receta lee de STAR-CCM+ los marcos
+rotatorios (`ROTFRAME región, eje, origen, rpm`) y quedan en `manifest.rotation`, así que vale para
+bombas, turbinas, ventiladores o compresores sin suponer nada. Sin ese dato, gira las regiones con
+nombre de rotor (rotor, impeller, runner, rodete…) sobre el centro de su propia caja y el eje de menor
+espesor (Z si la caja es casi cúbica). El sentido sigue el signo de las rpm.
+
 Salida en vivo: el MCP escribe el stdout del cliente batch en `macros/<macro>.out` mientras corre, así
 que la pestaña *Salida* muestra las iteraciones (residuales y reportes) en tiempo real y marca la macro
 «en marcha» hasta que aparece `AGENT_END`.

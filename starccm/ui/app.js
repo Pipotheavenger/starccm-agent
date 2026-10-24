@@ -144,8 +144,12 @@ function loop(t) {
   if (st.view !== '3d') return;
   if (V.anim) { const k = Math.min(1, (t - V.anim.t0) / V.anim.ms); const e = 1 - Math.pow(1 - k, 3);
     V.camera.position.lerpVectors(V.anim.p0, V.anim.p1, e); V.controls.target.lerpVectors(V.anim.c0, V.anim.c1, e); V.needs = true; if (k >= 1) V.anim = null; }
-  if (V.rotor) { const a = t * 0.001 * 0.25 * Math.PI * 2, c = V.bbox.getCenter(new THREE.Vector3()), co = Math.cos(a), si = Math.sin(a);
-    for (const m of V.meshes) if (ROTOR.test(m.userData.part.name) && !/shroud|casing/i.test(m.userData.part.name)) { m.rotation.z = a; m.position.set(c.x - (co * c.x - si * c.y), c.y - (si * c.x + co * c.y), 0); }
+  if (V.rotor && V.spinRig) {  // cada marco rotatorio gira sus superficies sobre SU eje y SU centro
+    for (const rig of V.spinRig) {
+      const a = t * 0.001 * 0.25 * Math.PI * 2 * rig.sign, q = new THREE.Quaternion().setFromAxisAngle(rig.axis, a);
+      const off = rig.origin.clone().sub(rig.origin.clone().applyQuaternion(q));  // p' = o + R(p − o)
+      for (const m of rig.meshes) { m.quaternion.copy(q); m.position.copy(off); }
+    }
     V.needs = true; }
   if (V.spin) { V.controls.autoRotate = true; V.needs = true; } else V.controls.autoRotate = false;
   V.controls.update();
@@ -433,9 +437,33 @@ $('fit').onclick = () => fit();
 $('spin').onclick = () => { V.spin = !V.spin; $('spin').setAttribute('aria-pressed', V.spin); };
 V.ghost = LS.get('scc_ghost', '1') === '1';
 $('ghost').onclick = () => { V.ghost = !V.ghost; LS.set('scc_ghost', V.ghost ? '1' : '0'); applyGhost(); };
+// Qué gira y sobre qué eje, para cualquier turbomáquina:
+// 1) manifest.rotation (marcos rotatorios leídos de STAR-CCM+ al exportar: región, eje, origen, rpm);
+// 2) si no, las regiones cuyo nombre indica rotor (rotor, impeller, runner, rodete…) o, sin regiones, las superficies con
+//    nombre de rotor; eje = el de menor espesor de su caja (disco de una bomba centrífuga) salvo que sea casi cúbica,
+//    entonces Z (convención de CFturbo); centro = centro de la caja de ESAS superficies (no de toda la máquina).
+const ROTOR_REGION = /rotor|impell|runner|rodete|rotating|rotat|blade_row|wheel/i;
+function rotorRigs() {
+  const parts = st.ds.parts, rot = st.ds.manifest.rotation || [];
+  if (rot.length) return rot.map(r => ({ meshes: parts.filter(p => p.group && p.group.name === r.region).map(p => p.mesh),
+    axis: new THREE.Vector3(...r.axis).normalize(), origin: new THREE.Vector3(...r.origin), sign: Math.sign(r.rpm) || 1, rpm: r.rpm, from: 'STAR-CCM+' })).filter(r => r.meshes.length);
+  let sel = parts.filter(p => p.group && ROTOR_REGION.test(p.group.name));
+  if (!sel.length) sel = parts.filter(p => ROTOR.test(p.name));
+  if (!sel.length) return [];
+  const box = new THREE.Box3(); for (const p of sel) { p.mesh.geometry.computeBoundingBox(); box.union(p.mesh.geometry.boundingBox); }
+  const size = box.getSize(new THREE.Vector3()), dims = [size.x, size.y, size.z], k = dims.indexOf(Math.min(...dims));
+  const flat = Math.min(...dims) < 0.7 * Math.max(...dims);
+  const axis = new THREE.Vector3(0, 0, 0).setComponent(flat ? k : 2, 1);
+  const rpm = parseFloat(String(st.data?.params?.rpm ?? '').replace(',', '.'));
+  return [{ meshes: sel.map(p => p.mesh), axis, origin: box.getCenter(new THREE.Vector3()), sign: Math.sign(rpm) || 1, rpm, from: 'estimado' }];
+}
 function setRotor(on) {
   V.rotor = on && !!st.ds; $('rotor').setAttribute('aria-pressed', V.rotor);
-  if (!V.rotor) for (const m of V.meshes) { m.rotation.z = 0; m.position.set(0, 0, 0); }
+  for (const m of V.meshes) { m.quaternion.identity(); m.position.set(0, 0, 0); }
+  V.spinRig = V.rotor ? rotorRigs() : null;
+  if (V.rotor && !V.spinRig.length) { V.rotor = false; $('rotor').setAttribute('aria-pressed', false); toast('No encuentro superficies que giren (sin marco rotatorio en el dataset ni región rotor)', 'warn'); }
+  else if (V.rotor) { const r = V.spinRig[0], ax = ['X', 'Y', 'Z'][[r.axis.x, r.axis.y, r.axis.z].map(Math.abs).indexOf(Math.max(...[r.axis.x, r.axis.y, r.axis.z].map(Math.abs)))];
+    $('vstate').title = `Rotor: ${V.spinRig.length} marco(s), eje ${ax} (${r.from})${Number.isFinite(r.rpm) ? ', ' + r.rpm + ' rpm' : ''}`; }
   V.needs = true;
 }
 $('rotor').onclick = () => setRotor(!V.rotor);
