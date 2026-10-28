@@ -23,15 +23,6 @@
   },
   "historial_malla": [
     {
-      "caso": "G001_nq10_B",
-      "nq": 10,
-      "D2_mm": 257.8,
-      "base_mm": 4.5,
-      "celdas_sin_ext": 1456889,
-      "celdas": 1552913,
-      "nota": "BombaNQ10 fina con extensiones (2026-10-28); D2 de u2 = 40,5 m/s a 3000 rpm"
-    },
-    {
       "caso": "G002_nq15_B",
       "nq": 15,
       "D2_mm": 254.01,
@@ -46,6 +37,14 @@
       "base_mm": 3.8,
       "celdas_sin_ext": 1000395,
       "celdas": 1293419
+    },
+    {
+      "caso": "G001_nq10_B",
+      "nq": 10,
+      "D2_mm": 257.83,
+      "base_mm": 4.4,
+      "celdas_sin_ext": 1498555,
+      "celdas": 1599390
     }
   ]
 }
