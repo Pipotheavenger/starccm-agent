@@ -18,3 +18,5 @@ Una línea por lección, con fecha y caso. Las escribe el revisor (Opus) y las l
   oscilación 8,6 % en 801–1000. En NQ15, 1000 iteraciones no bastan para H: reabrir y seguir sin remallar.
 - 2026-10-28 · G004 · Intento 2: seguir de 1000 a 1500 it. bastó. H se estabilizó en 52–55 m (máximo en la 1300, 2,1 % en
   1301–1500) y M bajó ~1 %/100 it. En NQ15, presupuestar ~1500 iteraciones.
+- 2026-10-28 · G005 · NQ15 variante fD2 0,904: H llegó a su máximo en la it. 950 (oscilación 4,6 % en 801–1000, al borde
+  del límite); con fD2 más alto que G004 estabiliza antes, pero 1000 it. siguen siendo justas en NQ15.
