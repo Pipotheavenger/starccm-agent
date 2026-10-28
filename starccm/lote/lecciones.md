@@ -14,3 +14,7 @@ Una línea por lección, con fecha y caso. Las escribe el revisor (Opus) y las l
   iteraciones pueden quedarse cortas; vigilar la deriva de H, no solo la de M.
 - 2026-10-28 · G003 · En NQ15 la η sale ≈ 0,49 con η_Euler ≈ 0,9: el par incluye la fricción de disco de las cámaras
   laterales (~40 % de P_eje). Es una η baja válida, no un error de fronteras.
+- 2026-10-28 · G004 · NQ15 variante (fD2 0,867): H sube ~4 m/100 it. hasta la it. 1000 (28,7 → 50,3 m) con M plano;
+  oscilación 8,6 % en 801–1000. En NQ15, 1000 iteraciones no bastan para H: reabrir y seguir sin remallar.
+- 2026-10-28 · G004 · Intento 2: seguir de 1000 a 1500 it. bastó. H se estabilizó en 52–55 m (máximo en la 1300, 2,1 % en
+  1301–1500) y M bajó ~1 %/100 it. En NQ15, presupuestar ~1500 iteraciones.
