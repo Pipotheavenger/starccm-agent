@@ -1,0 +1,28 @@
+{
+  "receta_version": 1,
+  "max_celdas": 2000000,
+  "objetivo_celdas": 1600000,
+  "iteraciones": 1000,
+  "bloque": 100,
+  "D2_sobre_base": 57.3,
+  "min_rotor_pct": 25.0,
+  "alabes_pct": 50.0,
+  "prismas": 5,
+  "ext_entrada_D": 3.0,
+  "ext_salida_D": 5.0,
+  "urf_v": 0.5,
+  "urf_p": 0.2,
+  "chequeos": {
+    "H_rel_min": 0.5,
+    "H_rel_max": 1.6,
+    "eta_min": 0.25,
+    "eta_max": 0.95,
+    "balance_max_pct": 1.0,
+    "oscilacion_H_max_pct": 5.0,
+    "d2_tol_pct": 3.0
+  },
+  "historial_malla": [
+    {"caso": "G001_nq10_B", "nq": 10, "D2_mm": 257.8, "base_mm": 4.5, "celdas_sin_ext": 1456889, "celdas": 1552913,
+     "nota": "BombaNQ10 fina con extensiones (2026-10-28); D2 de u2 = 40,5 m/s a 3000 rpm"}
+  ]
+}

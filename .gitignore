@@ -27,3 +27,8 @@ starccm/cases/*/*
 
 # cfturbo/ se fue a su repositorio (cfturbo-agent); restos locales que aún no se pudieron borrar
 cfturbo/
+
+# lote/: estado de la corrida (no es código)
+starccm/lote/estado.json
+starccm/lote/propuestas.json
+starccm/lote/PARAR

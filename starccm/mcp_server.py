@@ -5,8 +5,8 @@ tool inyecta una macro Java con un cliente batch (`starccm+ -host localhost:P -b
 y lee lo que la macro imprimió con sim.println entre los marcadores AGENT_BEGIN/AGENT_END.
 No se recarga el .sim entre pasos. Claude nunca resuelve física a mano: STAR-CCM+ es el solver.
 
-Tools (11): server_start, server_stop, server_status, inspect, run_java, iterate, export_scene, save,
-recipe_search, recipe_save, docs_search.
+Tools (12): server_start, server_stop, server_status, inspect, run_java, run_java_file, iterate, export_scene,
+save, recipe_search, recipe_save, docs_search.
 
 Uso:   python mcp_server.py            (stdio, lo lanza Claude Code desde .mcp.json)
        python mcp_server.py --selftest (starccm+ falso de tests/, sin licencia, ~5 s)
@@ -666,6 +666,24 @@ def run_java(body: str, imports: str = "", timeout_s: int = 3600) -> dict:
         return _inject(body, imports, timeout=timeout_s)
 
 
+@mcp.tool()
+def run_java_file(path: str, timeout_s: int = 3600) -> dict:
+    """Como run_java, pero el cuerpo sale de un archivo .java ya preparado (macros del lote en cases/<caso>/macros/,
+    o recetas sin parámetros). Imports extra: una línea «// imports: a.*, b.*» en el archivo. Solo archivos dentro
+    de cases/ o recipes/."""
+    p = Path(path)
+    if not p.is_absolute():
+        p = HERE / p
+    p = p.resolve()
+    if not any(p.is_relative_to(d.resolve()) for d in (CASES, RECIPES)) or p.suffix != ".java" or not p.is_file():
+        raise ValueError(f"run_java_file: {path} no es un .java dentro de cases/ o recipes/")
+    body = p.read_text(encoding="utf-8")
+    imports = ",".join(m.strip() for m in re.findall(r"^//\s*imports:\s*(.+)$", body, flags=re.M))
+    with _lock:
+        r = _inject(body, imports, timeout=timeout_s)
+    return {**r, "file": str(p)}
+
+
 _INSPECT = {
     "regions": """
 for (Region r : sim.getRegionManager().getRegions()) {
@@ -1040,6 +1058,21 @@ def _selftest() -> int:
     check(r["ok"] and r["stdout"].strip() == "OK", f"run_java OK ({r['seconds']}s)")
     r = run_java('sim.println("AGENT_FAKE_FAIL");\nsim.println("no llega");')
     check(not r["ok"] and r["exception"] and "fallo simulado" in r["exception"], "run_java captura excepción")
+    caso_tmp = CASES / f"_selftest_{os.getpid()}"
+    try:
+        (caso_tmp / "macros").mkdir(parents=True, exist_ok=True)
+        mf = caso_tmp / "macros" / "01.java"
+        mf.write_text('// imports: star.segregatedflow.*\nsim.println("FILE_OK");\n', encoding="utf-8")
+        r = run_java_file(str(mf))
+        check(r["ok"] and "FILE_OK" in r["stdout"] and "import star.segregatedflow.*;" in Path(r["macro"]).read_text(encoding="utf-8"),
+              "run_java_file ejecuta un .java de cases/ con sus imports")
+        try:
+            run_java_file(str(HERE / "mcp_server.py"))
+            check(False, "run_java_file rechaza archivos fuera de cases/ y recipes/")
+        except ValueError:
+            check(True, "run_java_file rechaza archivos fuera de cases/ y recipes/")
+    finally:
+        shutil.rmtree(caso_tmp, ignore_errors=True)
     r = inspect("regions")
     check(r["ok"] and r["path"] == "regions", "inspect(regions) responde")
     r = inspect("nodo_que_no_existe")

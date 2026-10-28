@@ -77,6 +77,7 @@ sin licencia, 5–20 s) debe pasar antes de entregar. Tools:
 | `server_status()` | | vivo o no, minutos de inactividad |
 | `inspect(path?)` | `tree`, `regions`, `physics`, `mesh_ops`, `parts`, `reports`, `monitors`, `scenes`, `solver` | JSON con nombres, tipos y valores |
 | `run_java(body, imports?, timeout_s?)` | cuerpo de `execute()`; `sim` ya existe | stdout, exception, trace, segundos, ruta de la macro |
+| `run_java_file(path, timeout_s?)` | `.java` ya preparado dentro de `cases/` o `recipes/` (imports en `// imports: …`) | lo mismo que `run_java`; lo usa el lote (`lote/README.md`) |
 | `iterate(n)` | iteraciones | iteración actual, última fila de todos los monitores (residuales + reportes) |
 | `export_scene(name, path?)` | escena | ruta del PNG (`cases/_scenes/` por defecto) |
 | `save(path?)` | | ruta guardada |
