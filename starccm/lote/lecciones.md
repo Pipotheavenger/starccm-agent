@@ -10,3 +10,5 @@ Una línea por lección, con fecha y caso. Las escribe el revisor (Opus) y las l
   en 801–1000: es normal en estas bombas (recirculación); no es divergencia.
 - 2026-10-28 · G047 · En rodetes de flujo mixto (nq ≳ 70) el chequeo de D2 por máximo radio de BladeTE sale +5–8 %
   (borde de salida inclinado, lado cubierta más afuera); validar D2 con U2/ω del reporte Euler (G047: 35,02 m/s ≈ diseño).
+- 2026-10-28 · G002 · En NQ15 base, H seguía subiendo a la it. 800 (48 m a 300, 76 a 800) con M ya estable: 1000
+  iteraciones pueden quedarse cortas; vigilar la deriva de H, no solo la de M.

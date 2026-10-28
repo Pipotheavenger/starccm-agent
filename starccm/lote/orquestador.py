@@ -319,8 +319,26 @@ def revisar(g: dict, lote: dict) -> dict:
     caso = M.CASES / g["id"]
     prompt = (f"Revisa el caso {g['id']} (cases/{g['id']}/) siguiendo lote/revision.md. Intento {lote['intento']} de 2. "
               f"Escribe cases/{g['id']}/veredicto.json.")
-    permitidas = "Read,Glob,Grep,Write(cases/**),Edit(lote/lecciones.md),Write(lote/propuestas.json)"
+    # Write se rige por las reglas Edit(...): sin Edit(cases/**) el revisor no puede crear veredicto.json en -p
+    permitidas = ("Read,Glob,Grep,Edit(cases/**),Write(cases/**),Edit(lote/lecciones.md),"
+                  "Edit(lote/propuestas.json),Write(lote/propuestas.json)")
     return claude(prompt, MODELO_REVISOR, permitidas, caso / "logs" / f"revisor_{lote['intento']}.jsonl", T_REVISOR, 40)
+
+
+def veredicto_denegado(log: Path) -> dict:
+    """Si el revisor intentó escribir veredicto.json y se le negó el permiso, rescata ese contenido del log."""
+    try:
+        for ln in log.read_text(encoding="utf-8", errors="replace").splitlines()[::-1]:
+            if '"permission_denials"' not in ln:
+                continue
+            for d in json.loads(ln).get("permission_denials") or []:
+                ti = d.get("tool_input") or {}
+                if str(ti.get("file_path", "")).replace("\\", "/").endswith("/veredicto.json"):
+                    return json.loads(ti.get("content", "{}"))
+            break
+    except (OSError, ValueError):
+        pass
+    return {}
 
 
 def asegurar_solver_apagado(gid: str) -> None:
@@ -510,7 +528,9 @@ def una(g: dict, todas: list[dict], estado: dict) -> None:
         chq = chequear(g, lote, P)
         rv = revisar(g, lote)
         coste += rv.get("coste_usd") or 0
-        ver = leer_json(caso / "veredicto.json", {}) or {}
+        ver = leer_json(caso / "veredicto.json", {}) or veredicto_denegado(caso / "logs" / f"revisor_{intento}.jsonl")
+        if ver.get("estado") in ("OK", "REINTENTAR", "REVISAR"):
+            escribir_json(caso / "veredicto.json", ver)
         if ver.get("estado") not in ("OK", "REINTENTAR", "REVISAR"):  # sin revisor: los chequeos deciden
             ver = {"estado": "OK" if not chq["graves_fallidos"] else "REVISAR",
                    "motivo": "sin veredicto del revisor; decidido por los chequeos: " + (", ".join(chq["graves_fallidos"]) or "todo bien")}
@@ -587,13 +607,14 @@ def seco() -> int:
             if d.is_dir() and (d.name.startswith("G002_") or d.name.startswith("G034_") or d.name.startswith("G033_")):
                 shutil.copytree(d, tmp / "geo" / d.name, ignore=shutil.ignore_patterns("CFD", "*.html", "*.pdf"))
         shutil.copy2(LOTE / "parametros.json", tmp / "parametros.json")
+        ids0 = {h["caso"] for h in leer_json(tmp / "parametros.json")["historial_malla"]}
         Cfg.seco, Cfg.geo, Cfg.params, Cfg.estado, Cfg.eventos, Cfg.prefijo = True, tmp / "geo", tmp / "parametros.json", tmp / "estado.json", tmp / "eventos.log", "SECO_"
         rc = main(["--solo", "G002,G034"])
         est = leer_json(Cfg.estado, {})
         ok = (rc == 0 and est.get("SECO_G002_nq15_B", {}).get("estado") == "OK" and est.get("SECO_G034_nq65_V", {}).get("estado") == "REVISAR"
               and (tmp / "geo" / "_lote_simulacion.csv").is_file()
               and any((tmp / "geo").glob("G002_*/CFD/*.sim")) and any((tmp / "geo").glob("G002_*/CFD/images/*.png"))
-              and len(leer_json(Cfg.params)["historial_malla"]) == 3          # G001 + las dos nuevas
+              and len(leer_json(Cfg.params)["historial_malla"]) == len(ids0 | {"G002_nq15_B", "G034_nq65_V"})  # las de antes + las dos
               and leer_json(Cfg.params)["min_rotor_pct"] == 40.0               # propuesta recortada a su límite
               and leer_json(Cfg.params).get("iteraciones") == 1000)            # propuesta prohibida rechazada
         print("SECO:", "todo en verde" if ok else "FALLA", json.dumps({k: v.get("estado") for k, v in est.items()}))
