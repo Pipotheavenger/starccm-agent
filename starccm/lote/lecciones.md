@@ -12,3 +12,5 @@ Una línea por lección, con fecha y caso. Las escribe el revisor (Opus) y las l
   (borde de salida inclinado, lado cubierta más afuera); validar D2 con U2/ω del reporte Euler (G047: 35,02 m/s ≈ diseño).
 - 2026-10-28 · G002 · En NQ15 base, H seguía subiendo a la it. 800 (48 m a 300, 76 a 800) con M ya estable: 1000
   iteraciones pueden quedarse cortas; vigilar la deriva de H, no solo la de M.
+- 2026-10-28 · G003 · En NQ15 la η sale ≈ 0,49 con η_Euler ≈ 0,9: el par incluye la fricción de disco de las cámaras
+  laterales (~40 % de P_eje). Es una η baja válida, no un error de fronteras.
