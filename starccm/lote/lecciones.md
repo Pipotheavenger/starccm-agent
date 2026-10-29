@@ -51,3 +51,5 @@ Una línea por lección, con fecha y caso. Las escribe el revisor (Opus) y las l
   NQ25–30 base.
 - 2026-10-29 · G017 · NQ35 variante Z 7 (fD2 0,922): H y M bajan juntos ~1 %/100 it. en 801–1000 con η plana; 1000 it.
   bastan para η, la media de H queda ~1 % alta.
+- 2026-10-29 · G018 · NQ35 variante Δβ2 −6,2° (β2 13,6°), Z 6: H 0,41 × diseño con corrida sana (Vu2/U2 ≈ 0,27, η_Euler
+  0,78, H plana); con Δβ2 ≲ −6° la H puede salir del rango 0,5–1,6 por física, no por montaje: REVISAR, no reintentar.
