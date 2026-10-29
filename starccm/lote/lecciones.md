@@ -59,3 +59,5 @@ Una línea por lección, con fecha y caso. Las escribe el revisor (Opus) y las l
   NQ35–37 las variantes con fD2 < 0,9 dan H ≈ 0,3 (G010 NQ25 con fD2 0,854 daba 0,66): sospechar de la generación, REVISAR.
 - 2026-10-29 · G022 · NQ37 variante Z 5, Δβ2 +2,4°, fD2 0,935: H 0,67 × diseño escalado (0,58 × base) con corrida sana: OK;
   refuerza que el hundimiento a ≈0,3 de G019/G021 viene de fD2 < 0,9, no del montaje.
+- 2026-10-29 · G026 · NQ50 variante Z 7, Δβ2 −2,7°, fD2 0,975: H 0,74 × diseño escalado, estable en 1000 it.; con fD2 ≈ 1
+  las variantes dan ~0,7, no el hundimiento a 0,3 de fD2 < 0,9.
