@@ -49,3 +49,5 @@ Una línea por lección, con fecha y caso. Las escribe el revisor (Opus) y las l
   eIn = «Inflow [int_entrada 1]» y eOut = «Outflow [int_salida 1]» (entrada = menor radio en bomba). NQ30 base: 1000 it. bastan.
 - 2026-10-29 · G015 · NQ35 base: H estable desde la it. ~640 (±0,2 % en 801–1000) con η_Euler 0,90; 1000 it. bastan, como en
   NQ25–30 base.
+- 2026-10-29 · G017 · NQ35 variante Z 7 (fD2 0,922): H y M bajan juntos ~1 %/100 it. en 801–1000 con η plana; 1000 it.
+  bastan para η, la media de H queda ~1 % alta.

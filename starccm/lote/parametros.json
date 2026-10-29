@@ -157,6 +157,14 @@
       "base_mm": 3.4,
       "celdas_sin_ext": 1353722,
       "celdas": 1632382
+    },
+    {
+      "caso": "G017_nq35_V",
+      "nq": 35,
+      "D2_mm": 215.81,
+      "base_mm": 3.3,
+      "celdas_sin_ext": 1483054,
+      "celdas": 1783778
     }
   ]
 }
