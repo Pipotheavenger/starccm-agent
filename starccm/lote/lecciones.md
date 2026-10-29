@@ -57,3 +57,5 @@ Una línea por lección, con fecha y caso. Las escribe el revisor (Opus) y las l
   Vu2/U2 ≈ 0,24 con corrida sana; la H baja no sigue solo a Δβ2, el recorte fD2 fuerte también la hunde: REVISAR.
 - 2026-10-29 · G021 · NQ37 variante Z 7, Δβ2 −4,2°, fD2 0,886: H 0,34 × diseño escalado con corrida sana, como G018/G019; en
   NQ35–37 las variantes con fD2 < 0,9 dan H ≈ 0,3 (G010 NQ25 con fD2 0,854 daba 0,66): sospechar de la generación, REVISAR.
+- 2026-10-29 · G022 · NQ37 variante Z 5, Δβ2 +2,4°, fD2 0,935: H 0,67 × diseño escalado (0,58 × base) con corrida sana: OK;
+  refuerza que el hundimiento a ≈0,3 de G019/G021 viene de fD2 < 0,9, no del montaje.
