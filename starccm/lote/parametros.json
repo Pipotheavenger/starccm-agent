@@ -221,6 +221,14 @@
       "base_mm": 3.2,
       "celdas_sin_ext": 1443814,
       "celdas": 1742799
+    },
+    {
+      "caso": "G025_nq50_B",
+      "nq": 50,
+      "D2_mm": 220.91,
+      "base_mm": 3.1,
+      "celdas_sin_ext": 1465273,
+      "celdas": 1767433
     }
   ]
 }
