@@ -35,3 +35,7 @@ Una línea por lección, con fecha y caso. Las escribe el revisor (Opus) y las l
   801–1000, η_Euler 0,97); desde NQ25, 1000 iteraciones bastan.
 - 2026-10-29 · G010 · En variantes, H_diseno_m del lote es el de la bomba base: comparar con fD2² · H_diseno (G004 0,75 ≈
   0,867²; G010 0,66 con fD2 0,854 y β2 −4,9°). El U2 del reporte Euler es el de la interfaz, no el del álabe recortado.
+- 2026-10-29 · G011 · NQ25 variante Z 7, β2 +4,6°: a diferencia de G009 base, H sigue subiendo a la it. 1000 (87,6 → 90,1 m
+  en 801–1000) con η_Euler 0,998; en variantes con más álabes o β2 mayor, presupuestar ~1500 iteraciones también en NQ25.
+- 2026-10-29 · G011 (intento 2) · En variantes con fD2 < 1, η_Euler puede quedar > 1 (1,014) con H ya estable (±0,4 % en
+  1301–1500): U2 y Vu2 se miden en la interfaz, no en el álabe recortado. Como señal de transitorio, solo en bombas base.
