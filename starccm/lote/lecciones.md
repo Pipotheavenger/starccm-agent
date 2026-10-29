@@ -26,3 +26,8 @@ Una línea por lección, con fecha y caso. Las escribe el revisor (Opus) y las l
   η_Euler > 1 (señal de que pt_out sigue en transitorio); como en NQ15, en NQ ≤ 20 presupuestar ~1500 iteraciones.
 - 2026-10-29 · G007 (intento 2) · NQ20 base, 1000 → 1500 it.: H pasa por un pico (94 m en la it. ~1180) y baja hasta
   ~87,7 m en la 1500, con M plano desde la 1000. En NQ ≤ 20, mejor 1500–1800 iteraciones y promediar las últimas 200.
+- 2026-10-29 · G008 · NQ22 base: igual que NQ15–20, H sigue subiendo a la it. 1000 (78 → 87 m en 780–1000) con M plano y
+  η_Euler 1,03; la regla de ~1500 iteraciones vale al menos hasta NQ22. El chequeo de oscilación usa semirrango: un 4 %
+  puede esconder una deriva del 8 %.
+- 2026-10-29 · G008 (intento 2) · NQ22 base, 1000 → 1500 it.: H pico ~90 m en la 1040, se asienta en 86,5–89 m desde la
+  1300 y η_Euler baja de ~1,03 a 0,95; 1500 it. bastan hasta NQ22.
