@@ -31,3 +31,5 @@ Una línea por lección, con fecha y caso. Las escribe el revisor (Opus) y las l
   puede esconder una deriva del 8 %.
 - 2026-10-29 · G008 (intento 2) · NQ22 base, 1000 → 1500 it.: H pico ~90 m en la 1040, se asienta en 86,5–89 m desde la
   1300 y η_Euler baja de ~1,03 a 0,95; 1500 it. bastan hasta NQ22.
+- 2026-10-29 · G009 · NQ25 base: H pasa por su pico hacia la it. 900 y se asienta en 87–88 m antes de la 1000 (1,6 % en
+  801–1000, η_Euler 0,97); desde NQ25, 1000 iteraciones bastan.
