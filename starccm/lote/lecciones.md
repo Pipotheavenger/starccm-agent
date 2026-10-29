@@ -55,3 +55,5 @@ Una línea por lección, con fecha y caso. Las escribe el revisor (Opus) y las l
   0,78, H plana); con Δβ2 ≲ −6° la H puede salir del rango 0,5–1,6 por física, no por montaje: REVISAR, no reintentar.
 - 2026-10-29 · G019 · NQ35 variante Z 6, Δβ2 −3,1°, fD2 0,869: H 0,31 × diseño escalado (peor que G018 con Δβ2 −6,2°) y
   Vu2/U2 ≈ 0,24 con corrida sana; la H baja no sigue solo a Δβ2, el recorte fD2 fuerte también la hunde: REVISAR.
+- 2026-10-29 · G021 · NQ37 variante Z 7, Δβ2 −4,2°, fD2 0,886: H 0,34 × diseño escalado con corrida sana, como G018/G019; en
+  NQ35–37 las variantes con fD2 < 0,9 dan H ≈ 0,3 (G010 NQ25 con fD2 0,854 daba 0,66): sospechar de la generación, REVISAR.
