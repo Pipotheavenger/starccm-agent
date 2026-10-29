@@ -39,3 +39,7 @@ Una línea por lección, con fecha y caso. Las escribe el revisor (Opus) y las l
   en 801–1000) con η_Euler 0,998; en variantes con más álabes o β2 mayor, presupuestar ~1500 iteraciones también en NQ25.
 - 2026-10-29 · G011 (intento 2) · En variantes con fD2 < 1, η_Euler puede quedar > 1 (1,014) con H ya estable (±0,4 % en
   1301–1500): U2 y Vu2 se miden en la interfaz, no en el álabe recortado. Como señal de transitorio, solo en bombas base.
+- 2026-10-29 · G012 · NQ25 variante Z 5, fD2 0,953: H sigue subiendo a la it. 1000 (67,4 → 69,1 m en 801–1000) con M bajando
+  despacio. Igual que G011: en todas las variantes NQ25, presupuestar ~1500 iteraciones desde el principio.
+- 2026-10-29 · G012 (intento 2) · NQ25 variante Z 5: a diferencia de G011 (Z 7, estable en 1301–1500), H sigue subiendo
+  ~0,5 m/100 it. a la it. 1500 con M plano; con menos álabes H converge más lento y 1500 it. dejan la media ~2–4 % baja.
