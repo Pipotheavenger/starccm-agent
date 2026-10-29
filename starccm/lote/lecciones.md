@@ -61,3 +61,5 @@ Una línea por lección, con fecha y caso. Las escribe el revisor (Opus) y las l
   refuerza que el hundimiento a ≈0,3 de G019/G021 viene de fD2 < 0,9, no del montaje.
 - 2026-10-29 · G026 · NQ50 variante Z 7, Δβ2 −2,7°, fD2 0,975: H 0,74 × diseño escalado, estable en 1000 it.; con fD2 ≈ 1
   las variantes dan ~0,7, no el hundimiento a 0,3 de fD2 < 0,9.
+- 2026-10-29 · G027 · NQ50 variante Z 6, Δβ2 +2,0°, fD2 0,888: H 0,62 × diseño escalado con corrida sana (0,49 × base, roza
+  el chequeo); el hundimiento a ≈0,3 con fD2 < 0,9 fue propio de NQ35–37, no de NQ50.
