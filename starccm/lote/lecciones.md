@@ -47,3 +47,5 @@ Una línea por lección, con fecha y caso. Las escribe el revisor (Opus) y las l
   en 1301–1500, ~1 %), aunque menos que con Z 5; M bajó 3 % de la 1000 a la 1500. La regla de Z vs. convergencia no es fija.
 - 2026-10-29 · G014 · 06-euler puede fallar antes de iterar: el radio medio de las interfaces sale 0 sin solución. Fijar
   eIn = «Inflow [int_entrada 1]» y eOut = «Outflow [int_salida 1]» (entrada = menor radio en bomba). NQ30 base: 1000 it. bastan.
+- 2026-10-29 · G015 · NQ35 base: H estable desde la it. ~640 (±0,2 % en 801–1000) con η_Euler 0,90; 1000 it. bastan, como en
+  NQ25–30 base.
