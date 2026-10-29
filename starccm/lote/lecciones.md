@@ -53,3 +53,5 @@ Una línea por lección, con fecha y caso. Las escribe el revisor (Opus) y las l
   bastan para η, la media de H queda ~1 % alta.
 - 2026-10-29 · G018 · NQ35 variante Δβ2 −6,2° (β2 13,6°), Z 6: H 0,41 × diseño con corrida sana (Vu2/U2 ≈ 0,27, η_Euler
   0,78, H plana); con Δβ2 ≲ −6° la H puede salir del rango 0,5–1,6 por física, no por montaje: REVISAR, no reintentar.
+- 2026-10-29 · G019 · NQ35 variante Z 6, Δβ2 −3,1°, fD2 0,869: H 0,31 × diseño escalado (peor que G018 con Δβ2 −6,2°) y
+  Vu2/U2 ≈ 0,24 con corrida sana; la H baja no sigue solo a Δβ2, el recorte fD2 fuerte también la hunde: REVISAR.
