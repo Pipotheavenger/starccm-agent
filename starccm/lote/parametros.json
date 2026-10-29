@@ -77,6 +77,14 @@
       "base_mm": 4.3,
       "celdas_sin_ext": 1505162,
       "celdas": 1606424
+    },
+    {
+      "caso": "G007_nq20_B",
+      "nq": 20,
+      "D2_mm": 250.19,
+      "base_mm": 4.3,
+      "celdas_sin_ext": 1431221,
+      "celdas": 1529424
     }
   ]
 }

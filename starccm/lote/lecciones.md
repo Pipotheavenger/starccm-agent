@@ -22,3 +22,7 @@ Una línea por lección, con fecha y caso. Las escribe el revisor (Opus) y las l
   del límite); con fD2 más alto que G004 estabiliza antes, pero 1000 it. siguen siendo justas en NQ15.
 - 2026-10-28 · G006 · NQ15 variante con fD2 0,987: H se estabiliza hacia la it. 700 (oscilación 3,7 % en 801–1000); con fD2
   cercano a 1, 1000 iteraciones bastan.
+- 2026-10-29 · G007 · NQ20 base: H sube de forma monótona hasta la it. 1000 (82 → 91 m en 600–1000) con M plano y
+  η_Euler > 1 (señal de que pt_out sigue en transitorio); como en NQ15, en NQ ≤ 20 presupuestar ~1500 iteraciones.
+- 2026-10-29 · G007 (intento 2) · NQ20 base, 1000 → 1500 it.: H pasa por un pico (94 m en la it. ~1180) y baja hasta
+  ~87,7 m en la 1500, con M plano desde la 1000. En NQ ≤ 20, mejor 1500–1800 iteraciones y promediar las últimas 200.
