@@ -45,3 +45,5 @@ Una línea por lección, con fecha y caso. Las escribe el revisor (Opus) y las l
   ~0,5 m/100 it. a la it. 1500 con M plano; con menos álabes H converge más lento y 1500 it. dejan la media ~2–4 % baja.
 - 2026-10-29 · G013 (intento 2) · NQ25 variante Z 7, fD2 0,910: con Z 7 H también sigue subiendo a la 1500 (66,6 → 67,2 m
   en 1301–1500, ~1 %), aunque menos que con Z 5; M bajó 3 % de la 1000 a la 1500. La regla de Z vs. convergencia no es fija.
+- 2026-10-29 · G014 · 06-euler puede fallar antes de iterar: el radio medio de las interfaces sale 0 sin solución. Fijar
+  eIn = «Inflow [int_entrada 1]» y eOut = «Outflow [int_salida 1]» (entrada = menor radio en bomba). NQ30 base: 1000 it. bastan.

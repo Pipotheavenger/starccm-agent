@@ -133,6 +133,14 @@
       "base_mm": 3.6,
       "celdas_sin_ext": 1563741,
       "celdas": 1697621
+    },
+    {
+      "caso": "G014_nq30_B",
+      "nq": 30,
+      "D2_mm": 238.1,
+      "base_mm": 3.8,
+      "celdas_sin_ext": 1227646,
+      "celdas": 1460089
     }
   ]
 }
