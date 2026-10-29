@@ -43,3 +43,5 @@ Una línea por lección, con fecha y caso. Las escribe el revisor (Opus) y las l
   despacio. Igual que G011: en todas las variantes NQ25, presupuestar ~1500 iteraciones desde el principio.
 - 2026-10-29 · G012 (intento 2) · NQ25 variante Z 5: a diferencia de G011 (Z 7, estable en 1301–1500), H sigue subiendo
   ~0,5 m/100 it. a la it. 1500 con M plano; con menos álabes H converge más lento y 1500 it. dejan la media ~2–4 % baja.
+- 2026-10-29 · G013 (intento 2) · NQ25 variante Z 7, fD2 0,910: con Z 7 H también sigue subiendo a la 1500 (66,6 → 67,2 m
+  en 1301–1500, ~1 %), aunque menos que con Z 5; M bajó 3 % de la 1000 a la 1500. La regla de Z vs. convergencia no es fija.
