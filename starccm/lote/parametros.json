@@ -101,6 +101,14 @@
       "base_mm": 4.1,
       "celdas_sin_ext": 1364724,
       "celdas": 1466911
+    },
+    {
+      "caso": "G010_nq25_V",
+      "nq": 25,
+      "D2_mm": 210.08,
+      "base_mm": 3.4,
+      "celdas_sin_ext": 1606604,
+      "celdas": 1756337
     }
   ]
 }

@@ -33,3 +33,5 @@ Una línea por lección, con fecha y caso. Las escribe el revisor (Opus) y las l
   1300 y η_Euler baja de ~1,03 a 0,95; 1500 it. bastan hasta NQ22.
 - 2026-10-29 · G009 · NQ25 base: H pasa por su pico hacia la it. 900 y se asienta en 87–88 m antes de la 1000 (1,6 % en
   801–1000, η_Euler 0,97); desde NQ25, 1000 iteraciones bastan.
+- 2026-10-29 · G010 · En variantes, H_diseno_m del lote es el de la bomba base: comparar con fD2² · H_diseno (G004 0,75 ≈
+  0,867²; G010 0,66 con fD2 0,854 y β2 −4,9°). El U2 del reporte Euler es el de la interfaz, no el del álabe recortado.
