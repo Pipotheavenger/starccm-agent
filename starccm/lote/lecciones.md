@@ -81,3 +81,5 @@ Una línea por lección, con fecha y caso. Las escribe el revisor (Opus) y las l
   en nq ≳ 70 contar las extensiones al estimar objetivo_celdas.
 - 2026-10-30 · G042 · NQ80 variante Z 7, Δβ2 +0,3°, fD2 0,894: H 0,58 × diseño escalado (0,47 × base) y η 0,68 frente a 0,84
   de la base, con corrida sana y recorte verificado frente a G041 (108,1/121,2 mm); como G027/G035: OK aunque falle H/base.
+- 2026-10-30 · G043 · NQ80 variante Z 5, Δβ2 −6,4°, fD2 0,929: H 0,47 × diseño escalado (Vu2/U2 0,20) con corrida sana y
+  recorte verificado (112,6/121,2 mm = fD2); el Δβ2 negativo hunde H aunque fD2 > 0,9 (G042 con +0,3° daba 0,58): REVISAR.
