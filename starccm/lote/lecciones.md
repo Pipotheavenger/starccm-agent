@@ -1,85 +1,12 @@
-# Lecciones del lote
+# Lecciones para el ejecutor
 
-Una línea por lección, con fecha y caso. Las escribe el revisor (Opus) y las lee el ejecutor al empezar cada caso.
+Reglas cortas que salen de 47 corridas (oct. 2026). Las mantiene una persona; las del revisor van a
+`lecciones_revisor.md`. Si algo de aquí choca con `receta.md`, manda la receta.
 
-- 2026-10-28 · G001 · Con el mínimo del rotor al 10 % del base el remallador refina los huelgos de las cámaras laterales
-  (CasingHub/SolidHub) a 0,45 mm: 3,8 M celdas. Al 25 %: 1,46 M. Usar 25 % desde el principio.
-- 2026-10-28 · G001 · Sin extensiones la presión total de entrada salía 3,4 kPa y H un 7 % más alta: las extensiones
-  (3 D entrada, 5 D salida) son parte fija del método.
-- 2026-10-28 · G001 · Con relajación 0,5/0,2 desde el inicio la continuidad se queda plana en ~2e-2 y H oscila ±1–2 %
-  en 801–1000: es normal en estas bombas (recirculación); no es divergencia.
-- 2026-10-28 · G047 · En rodetes de flujo mixto (nq ≳ 70) el chequeo de D2 por máximo radio de BladeTE sale +5–8 %
-  (borde de salida inclinado, lado cubierta más afuera); validar D2 con U2/ω del reporte Euler (G047: 35,02 m/s ≈ diseño).
-- 2026-10-28 · G002 · En NQ15 base, H seguía subiendo a la it. 800 (48 m a 300, 76 a 800) con M ya estable: 1000
-  iteraciones pueden quedarse cortas; vigilar la deriva de H, no solo la de M.
-- 2026-10-28 · G003 · En NQ15 la η sale ≈ 0,49 con η_Euler ≈ 0,9: el par incluye la fricción de disco de las cámaras
-  laterales (~40 % de P_eje). Es una η baja válida, no un error de fronteras.
-- 2026-10-28 · G004 · NQ15 variante (fD2 0,867): H sube ~4 m/100 it. hasta la it. 1000 (28,7 → 50,3 m) con M plano;
-  oscilación 8,6 % en 801–1000. En NQ15, 1000 iteraciones no bastan para H: reabrir y seguir sin remallar.
-- 2026-10-28 · G004 · Intento 2: seguir de 1000 a 1500 it. bastó. H se estabilizó en 52–55 m (máximo en la 1300, 2,1 % en
-  1301–1500) y M bajó ~1 %/100 it. En NQ15, presupuestar ~1500 iteraciones.
-- 2026-10-28 · G005 · NQ15 variante fD2 0,904: H llegó a su máximo en la it. 950 (oscilación 4,6 % en 801–1000, al borde
-  del límite); con fD2 más alto que G004 estabiliza antes, pero 1000 it. siguen siendo justas en NQ15.
-- 2026-10-28 · G006 · NQ15 variante con fD2 0,987: H se estabiliza hacia la it. 700 (oscilación 3,7 % en 801–1000); con fD2
-  cercano a 1, 1000 iteraciones bastan.
-- 2026-10-29 · G007 · NQ20 base: H sube de forma monótona hasta la it. 1000 (82 → 91 m en 600–1000) con M plano y
-  η_Euler > 1 (señal de que pt_out sigue en transitorio); como en NQ15, en NQ ≤ 20 presupuestar ~1500 iteraciones.
-- 2026-10-29 · G007 (intento 2) · NQ20 base, 1000 → 1500 it.: H pasa por un pico (94 m en la it. ~1180) y baja hasta
-  ~87,7 m en la 1500, con M plano desde la 1000. En NQ ≤ 20, mejor 1500–1800 iteraciones y promediar las últimas 200.
-- 2026-10-29 · G008 · NQ22 base: igual que NQ15–20, H sigue subiendo a la it. 1000 (78 → 87 m en 780–1000) con M plano y
-  η_Euler 1,03; la regla de ~1500 iteraciones vale al menos hasta NQ22. El chequeo de oscilación usa semirrango: un 4 %
-  puede esconder una deriva del 8 %.
-- 2026-10-29 · G008 (intento 2) · NQ22 base, 1000 → 1500 it.: H pico ~90 m en la 1040, se asienta en 86,5–89 m desde la
-  1300 y η_Euler baja de ~1,03 a 0,95; 1500 it. bastan hasta NQ22.
-- 2026-10-29 · G009 · NQ25 base: H pasa por su pico hacia la it. 900 y se asienta en 87–88 m antes de la 1000 (1,6 % en
-  801–1000, η_Euler 0,97); desde NQ25, 1000 iteraciones bastan.
-- 2026-10-29 · G010 · En variantes, H_diseno_m del lote es el de la bomba base: comparar con fD2² · H_diseno (G004 0,75 ≈
-  0,867²; G010 0,66 con fD2 0,854 y β2 −4,9°). El U2 del reporte Euler es el de la interfaz, no el del álabe recortado.
-- 2026-10-29 · G011 · NQ25 variante Z 7, β2 +4,6°: a diferencia de G009 base, H sigue subiendo a la it. 1000 (87,6 → 90,1 m
-  en 801–1000) con η_Euler 0,998; en variantes con más álabes o β2 mayor, presupuestar ~1500 iteraciones también en NQ25.
-- 2026-10-29 · G011 (intento 2) · En variantes con fD2 < 1, η_Euler puede quedar > 1 (1,014) con H ya estable (±0,4 % en
-  1301–1500): U2 y Vu2 se miden en la interfaz, no en el álabe recortado. Como señal de transitorio, solo en bombas base.
-- 2026-10-29 · G012 · NQ25 variante Z 5, fD2 0,953: H sigue subiendo a la it. 1000 (67,4 → 69,1 m en 801–1000) con M bajando
-  despacio. Igual que G011: en todas las variantes NQ25, presupuestar ~1500 iteraciones desde el principio.
-- 2026-10-29 · G012 (intento 2) · NQ25 variante Z 5: a diferencia de G011 (Z 7, estable en 1301–1500), H sigue subiendo
-  ~0,5 m/100 it. a la it. 1500 con M plano; con menos álabes H converge más lento y 1500 it. dejan la media ~2–4 % baja.
-- 2026-10-29 · G013 (intento 2) · NQ25 variante Z 7, fD2 0,910: con Z 7 H también sigue subiendo a la 1500 (66,6 → 67,2 m
-  en 1301–1500, ~1 %), aunque menos que con Z 5; M bajó 3 % de la 1000 a la 1500. La regla de Z vs. convergencia no es fija.
-- 2026-10-29 · G014 · 06-euler puede fallar antes de iterar: el radio medio de las interfaces sale 0 sin solución. Fijar
-  eIn = «Inflow [int_entrada 1]» y eOut = «Outflow [int_salida 1]» (entrada = menor radio en bomba). NQ30 base: 1000 it. bastan.
-- 2026-10-29 · G015 · NQ35 base: H estable desde la it. ~640 (±0,2 % en 801–1000) con η_Euler 0,90; 1000 it. bastan, como en
-  NQ25–30 base.
-- 2026-10-29 · G017 · NQ35 variante Z 7 (fD2 0,922): H y M bajan juntos ~1 %/100 it. en 801–1000 con η plana; 1000 it.
-  bastan para η, la media de H queda ~1 % alta.
-- 2026-10-29 · G018 · NQ35 variante Δβ2 −6,2° (β2 13,6°), Z 6: H 0,41 × diseño con corrida sana (Vu2/U2 ≈ 0,27, η_Euler
-  0,78, H plana); con Δβ2 ≲ −6° la H puede salir del rango 0,5–1,6 por física, no por montaje: REVISAR, no reintentar.
-- 2026-10-29 · G019 · NQ35 variante Z 6, Δβ2 −3,1°, fD2 0,869: H 0,31 × diseño escalado (peor que G018 con Δβ2 −6,2°) y
-  Vu2/U2 ≈ 0,24 con corrida sana; la H baja no sigue solo a Δβ2, el recorte fD2 fuerte también la hunde: REVISAR.
-- 2026-10-29 · G021 · NQ37 variante Z 7, Δβ2 −4,2°, fD2 0,886: H 0,34 × diseño escalado con corrida sana, como G018/G019; en
-  NQ35–37 las variantes con fD2 < 0,9 dan H ≈ 0,3 (G010 NQ25 con fD2 0,854 daba 0,66): sospechar de la generación, REVISAR.
-- 2026-10-29 · G022 · NQ37 variante Z 5, Δβ2 +2,4°, fD2 0,935: H 0,67 × diseño escalado (0,58 × base) con corrida sana: OK;
-  refuerza que el hundimiento a ≈0,3 de G019/G021 viene de fD2 < 0,9, no del montaje.
-- 2026-10-29 · G026 · NQ50 variante Z 7, Δβ2 −2,7°, fD2 0,975: H 0,74 × diseño escalado, estable en 1000 it.; con fD2 ≈ 1
-  las variantes dan ~0,7, no el hundimiento a 0,3 de fD2 < 0,9.
-- 2026-10-29 · G027 · NQ50 variante Z 6, Δβ2 +2,0°, fD2 0,888: H 0,62 × diseño escalado con corrida sana (0,49 × base, roza
-  el chequeo); el hundimiento a ≈0,3 con fD2 < 0,9 fue propio de NQ35–37, no de NQ50.
-- 2026-10-29 · G029 · NQ50 variante Z 5, Δβ2 −5,8°, fD2 0,865: H 0,22 × diseño escalado (Vu2 en el borde ≈ 0,15·U2) con
-  corrida sana; el hundimiento con fD2 < 0,9 también sale en NQ50 si se junta con Δβ2 negativo: REVISAR, no reintentar.
-- 2026-10-29 · G030 · NQ55 base: H estable (±0,3 %) en 801–1000 con M bajando ~1 %; 1000 it. bastan, H 0,81 × diseño.
-- 2026-10-29 · G032 · NQ60 base: el D2 por BladeTE ya sale +4,1 % (241 vs 232 mm) con U2 Euler 36,38 m/s = diseño; el
-  aviso de D2 de G047 empieza en nq ≈ 60, no solo ≳ 70.
-- 2026-10-29 · G034 · NQ65 variante Z 6, Δβ2 −3,4°, fD2 0,862: H 0,39 × diseño escalado (Vu2/U2 0,19, η 0,57) con corrida
-  sana; el hundimiento con fD2 < 0,9 y Δβ2 negativo sigue en NQ65: REVISAR, no reintentar.
-- 2026-10-30 · G035 · NQ65 variante Z 5, Δβ2 +6,7°, fD2 0,913: H 0,62 × diseño escalado (0,51 × base) con corrida sana, como
-  G027; con Δβ2 positivo y fD2 > 0,9 no aparece el hundimiento de G034: OK, aunque roce el chequeo de H.
-- 2026-10-30 · G036 · NQ65 variante Z 6, Δβ2 −6,9°, fD2 0,954: H 0,59 × diseño escalado con corrida sana; con fD2 > 0,95 el
-  Δβ2 negativo no hunde H. El recorte se valida con r_salida_alabe frente a la base (G033: 115,2/121,0 = 0,952 ≈ fD2); el
-  D2_cfturbo_mm del lote en las variantes NQ65 es el de la base.
-- 2026-10-30 · G037 · NQ65 variante Z 7, Δβ2 +2,8°, fD2 0,998: H 1,09 × base (48,1 vs 44,1 m) con η igual; con fD2 ≈ 1 y
-  Δβ2 positivo la variante supera a la base. Z 7 con base 3,0 mm deja 1,93 M celdas (rotor 848 k): cerca del límite.
-- 2026-10-30 · G039 · NQ72 base: las extensiones suman +33 % de celdas (1,48 → 1,97 M con base 2,9 mm), al borde de 2 M;
-  en nq ≳ 70 contar las extensiones al estimar objetivo_celdas.
-- 2026-10-30 · G042 · NQ80 variante Z 7, Δβ2 +0,3°, fD2 0,894: H 0,58 × diseño escalado (0,47 × base) y η 0,68 frente a 0,84
-  de la base, con corrida sana y recorte verificado frente a G041 (108,1/121,2 mm); como G027/G035: OK aunque falle H/base.
-- 2026-10-30 · G043 · NQ80 variante Z 5, Δβ2 −6,4°, fD2 0,929: H 0,47 × diseño escalado (Vu2/U2 0,20) con corrida sana y
-  recorte verificado (112,6/121,2 mm = fD2); el Δβ2 negativo hunde H aunque fD2 > 0,9 (G042 con +0,3° daba 0,58): REVISAR.
+- Malla: el mínimo del rotor al 25 % del base (no menos): al 10 % los huelgos de las cámaras laterales llevan a 3,8 M celdas.
+- Malla: el tamaño base ya viene calculado del historial (error típico ~8 %). Remalla solo con la regla de la receta.
+- Iteraciones: en nq ≤ 25 H suele seguir subiendo a la it. 1000. No lo arregles tú: el orquestador lo detecta y pide un
+  intento «extender». Tú termina las iteraciones de `lote.json` y cierra.
+- Continuidad plana en ~1e-2 con H oscilando ±1–2 % es normal en estas bombas (recirculación), no es divergencia.
+- η baja en nq 10–15 (0,41–0,49) es válida: el par incluye la fricción de disco de las cámaras laterales.
+- H muy por debajo del diseño en una variante es física de la variante: `ejecucion.json` va COMPLETO igual.

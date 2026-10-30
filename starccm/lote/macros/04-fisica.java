@@ -19,17 +19,30 @@ for (Region r : sim.getRegionManager().getRegions()) r.setPhysicsContinuum(pc);
 Liquid liq = (Liquid) pc.getModelManager().getModel(SingleComponentLiquidModel.class).getMaterial();
 ((ConstantMaterialPropertyMethod) liq.getMaterialProperties().getMaterialProperty(ConstantDensityProperty.class).getMethod()).getQuantity().setValue(RHO);
 ((ConstantMaterialPropertyMethod) liq.getMaterialProperties().getMaterialProperty(DynamicViscosityProperty.class).getMethod()).getQuantity().setValue(MU);
-RotatingReferenceFrame frame = sim.get(ReferenceFrameManager.class).createReferenceFrame(RotatingReferenceFrame.class, "MRF_rotor");
+// idempotente: reusa el marco MRF_rotor si ya existe (antes un reintento creaba «MRF_rotor 2»)
+ReferenceFrameManager rfm = sim.get(ReferenceFrameManager.class);
+RotatingReferenceFrame frame = null;
+for (Object o : rfm.getObjects()) if (o instanceof RotatingReferenceFrame && ((RotatingReferenceFrame) o).getPresentationName().matches("MRF_rotor( \\d+)?")) { frame = (RotatingReferenceFrame) o; break; }
+if (frame == null) frame = rfm.createReferenceFrame(RotatingReferenceFrame.class, "MRF_rotor");
+frame.setPresentationName("MRF_rotor");
 frame.getRotationRate().setValueAndUnits(RPM, sim.getUnitsManager().getUnits("rpm"));
 frame.getAxisDirection().setComponents(AX[0], AX[1], AX[2]);
 frame.getAxisOrigin().setComponents(0.0, 0.0, 0.0);
 Region rot = sim.getRegionManager().getRegion("rotor");
 rot.getValues().get(MotionSpecification.class).setReferenceFrame(frame);
-for (String n : new String[] {"CasingHub", "CasingShroud"}) {
-  if (!rot.getBoundaryManager().has(n)) { sim.println("WARN\trotor sin " + n); continue; }
-  Boundary b = rot.getBoundaryManager().getBoundary(n);
+// carcasas fijas: toda frontera «Casing*» del rotor en marco de laboratorio. En flujo mixto CasingHub/CasingShroud
+// están en el estator (ya fijas): eso es INFO, no un aviso.
+int nCas = 0;
+for (Boundary b : rot.getBoundaryManager().getBoundaries()) {
+  if (!b.getPresentationName().startsWith("Casing")) continue;
   b.getConditions().get(WallReferenceFrameOption.class).setSelected(ReferenceFrameOption.Type.LAB_FRAME);
-  sim.println("STATIC\t" + n);
+  sim.println("STATIC\t" + b.getPresentationName()); nCas++;
+}
+if (nCas == 0) {
+  StringBuilder donde = new StringBuilder();
+  for (Region r : sim.getRegionManager().getRegions()) for (Boundary b : r.getBoundaryManager().getBoundaries())
+    if (b.getPresentationName().startsWith("Casing")) donde.append(" ").append(r.getPresentationName()).append("/").append(b.getPresentationName());
+  sim.println("INFO\trotor sin fronteras Casing* (fijas en otras regiones:" + (donde.length() > 0 ? donde.toString() : " ninguna") + ")");
 }
 GlobalParameterManager gpm = sim.get(GlobalParameterManager.class);
 ScalarGlobalParameter flujo = gpm.has("Flujo") ? (ScalarGlobalParameter) gpm.getObject("Flujo")

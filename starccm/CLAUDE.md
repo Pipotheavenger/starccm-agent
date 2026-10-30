@@ -17,7 +17,7 @@ El solver corre solo en este PC. La ejecución remota se retiró el 2026-10-24 (
 |---|---|
 | STAR-CCM+ | **2410.0001** (build 19.06.009-R8, doble precisión) |
 | CPU | i5-1245U: 2 núcleos P + 8 E (12 hilos) |
-| procesos del solver | `STARCCM_NP` (por defecto hilos − 2; en `.env`: 4) |
+| procesos del solver | `STARCCM_NP` (por defecto hilos − 2; lo fija el `.env` de cada máquina: 4 en el portátil i5, 14 en el equipo de 16 hilos del lote) |
 | lanzador | `star\bin\starccm+.bat` bajo `STARCCM_HOME` (se detecta solo) |
 
 - Licencia Power-on-Demand contra `1999@flex.cd-adapco.com`. Flags: `-power -podkey $STARCCM_PODKEY

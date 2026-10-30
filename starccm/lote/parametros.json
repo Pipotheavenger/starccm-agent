@@ -1,5 +1,5 @@
 {
-  "receta_version": 1,
+  "receta_version": 2,
   "max_celdas": 2000000,
   "objetivo_celdas": 1600000,
   "iteraciones": 1000,
@@ -15,11 +15,22 @@
   "chequeos": {
     "H_rel_min": 0.5,
     "H_rel_max": 1.6,
+    "H_curva_aviso_min": 0.6,
+    "H_curva_aviso_max": 1.4,
+    "H_curva_grave_min": 0.25,
     "eta_min": 0.25,
     "eta_max": 0.95,
+    "eta_banda_nq": 0.15,
     "balance_max_pct": 1.0,
-    "oscilacion_H_max_pct": 5.0,
-    "d2_tol_pct": 3.0
+    "Q_bc_tol_pct": 0.5,
+    "deriva_H_max_pct_100it": 2.0,
+    "oscilacion_H_max_pct": 4.0,
+    "d2_tol_pct": 3.0,
+    "d2_var_tol_pct": 1.5,
+    "d2_nq_flujo_mixto": 60,
+    "yplus_max": 300,
+    "M_discos_max_frac": 0.25,
+    "escenas_min": 6
   },
   "historial_malla": [
     {
@@ -28,7 +39,8 @@
       "D2_mm": 254.01,
       "base_mm": 4.4,
       "celdas_sin_ext": 1430243,
-      "celdas": 1528059
+      "celdas": 1528059,
+      "estado": "REVISAR"
     },
     {
       "caso": "G047_nq90_B",
@@ -36,7 +48,8 @@
       "D2_mm": 224.09,
       "base_mm": 3.8,
       "celdas_sin_ext": 1000395,
-      "celdas": 1293419
+      "celdas": 1293419,
+      "estado": "OK"
     },
     {
       "caso": "G001_nq10_B",
@@ -44,39 +57,44 @@
       "D2_mm": 257.83,
       "base_mm": 4.4,
       "celdas_sin_ext": 1498555,
-      "celdas": 1599390
+      "celdas": 1599390,
+      "estado": "OK"
     },
     {
       "caso": "G003_nq15_V",
       "nq": 15,
-      "D2_mm": 243.83,
+      "D2_mm": 243.85,
       "base_mm": 4.1,
       "celdas_sin_ext": 1591599,
-      "celdas": 1703828
+      "celdas": 1703828,
+      "estado": "OK"
     },
     {
       "caso": "G004_nq15_V",
       "nq": 15,
-      "D2_mm": 220.27,
+      "D2_mm": 220.23,
       "base_mm": 3.7,
       "celdas_sin_ext": 1853997,
-      "celdas": 1988643
+      "celdas": 1988643,
+      "estado": "OK"
     },
     {
       "caso": "G005_nq15_V",
       "nq": 15,
-      "D2_mm": 229.82,
+      "D2_mm": 229.63,
       "base_mm": 3.9,
       "celdas_sin_ext": 1639685,
-      "celdas": 1761457
+      "celdas": 1761457,
+      "estado": "OK"
     },
     {
       "caso": "G006_nq15_V",
       "nq": 15,
-      "D2_mm": 250.83,
+      "D2_mm": 250.71,
       "base_mm": 4.3,
       "celdas_sin_ext": 1505162,
-      "celdas": 1606424
+      "celdas": 1606424,
+      "estado": "OK"
     },
     {
       "caso": "G007_nq20_B",
@@ -84,7 +102,8 @@
       "D2_mm": 250.19,
       "base_mm": 4.3,
       "celdas_sin_ext": 1431221,
-      "celdas": 1529424
+      "celdas": 1529424,
+      "estado": "OK"
     },
     {
       "caso": "G008_nq22_B",
@@ -92,7 +111,8 @@
       "D2_mm": 248.28,
       "base_mm": 4.2,
       "celdas_sin_ext": 1458564,
-      "celdas": 1559831
+      "celdas": 1559831,
+      "estado": "OK"
     },
     {
       "caso": "G009_nq25_B",
@@ -100,39 +120,44 @@
       "D2_mm": 245.74,
       "base_mm": 4.1,
       "celdas_sin_ext": 1364724,
-      "celdas": 1466911
+      "celdas": 1466911,
+      "estado": "OK"
     },
     {
       "caso": "G010_nq25_V",
       "nq": 25,
-      "D2_mm": 210.08,
+      "D2_mm": 209.86,
       "base_mm": 3.4,
       "celdas_sin_ext": 1606604,
-      "celdas": 1756337
+      "celdas": 1756337,
+      "estado": "OK"
     },
     {
       "caso": "G011_nq25_V",
       "nq": 25,
-      "D2_mm": 241.28,
+      "D2_mm": 241.07,
       "base_mm": 3.9,
       "celdas_sin_ext": 1438597,
-      "celdas": 1553839
+      "celdas": 1553839,
+      "estado": "OK"
     },
     {
       "caso": "G012_nq25_V",
       "nq": 25,
-      "D2_mm": 234.28,
+      "D2_mm": 234.19,
       "base_mm": 3.8,
       "celdas_sin_ext": 1378782,
-      "celdas": 1499465
+      "celdas": 1499465,
+      "estado": "OK"
     },
     {
       "caso": "G013_nq25_V",
       "nq": 25,
-      "D2_mm": 224.09,
+      "D2_mm": 223.62,
       "base_mm": 3.6,
       "celdas_sin_ext": 1563741,
-      "celdas": 1697621
+      "celdas": 1697621,
+      "estado": "OK"
     },
     {
       "caso": "G014_nq30_B",
@@ -140,7 +165,8 @@
       "D2_mm": 238.1,
       "base_mm": 3.8,
       "celdas_sin_ext": 1227646,
-      "celdas": 1460089
+      "celdas": 1460089,
+      "estado": "OK"
     },
     {
       "caso": "G015_nq35_B",
@@ -148,39 +174,44 @@
       "D2_mm": 233.64,
       "base_mm": 3.5,
       "celdas_sin_ext": 1363751,
-      "celdas": 1635502
+      "celdas": 1635502,
+      "estado": "OK"
     },
     {
       "caso": "G016_nq35_V",
       "nq": 35,
-      "D2_mm": 231.73,
+      "D2_mm": 231.3,
       "base_mm": 3.4,
       "celdas_sin_ext": 1353722,
-      "celdas": 1632382
+      "celdas": 1632382,
+      "estado": "OK"
     },
     {
       "caso": "G017_nq35_V",
       "nq": 35,
-      "D2_mm": 215.81,
+      "D2_mm": 215.42,
       "base_mm": 3.3,
       "celdas_sin_ext": 1483054,
-      "celdas": 1783778
+      "celdas": 1783778,
+      "estado": "OK"
     },
     {
       "caso": "G018_nq35_V",
       "nq": 35,
-      "D2_mm": 220.27,
+      "D2_mm": 220.32,
       "base_mm": 3.2,
       "celdas_sin_ext": 1547957,
-      "celdas": 1862209
+      "celdas": 1862209,
+      "estado": "REVISAR"
     },
     {
       "caso": "G019_nq35_V",
       "nq": 35,
-      "D2_mm": 203.08,
+      "D2_mm": 203.03,
       "base_mm": 3.2,
       "celdas_sin_ext": 1500002,
-      "celdas": 1814696
+      "celdas": 1814696,
+      "estado": "REVISAR"
     },
     {
       "caso": "G020_nq37_B",
@@ -188,23 +219,26 @@
       "D2_mm": 232.37,
       "base_mm": 3.4,
       "celdas_sin_ext": 1413964,
-      "celdas": 1692740
+      "celdas": 1692740,
+      "estado": "OK"
     },
     {
       "caso": "G021_nq37_V",
       "nq": 37,
-      "D2_mm": 205.63,
+      "D2_mm": 205.88,
       "base_mm": 3.2,
       "celdas_sin_ext": 1543446,
-      "celdas": 1860875
+      "celdas": 1860875,
+      "estado": "REVISAR"
     },
     {
       "caso": "G022_nq37_V",
       "nq": 37,
-      "D2_mm": 217.09,
+      "D2_mm": 217.26,
       "base_mm": 3.1,
       "celdas_sin_ext": 1486864,
-      "celdas": 1826825
+      "celdas": 1826825,
+      "estado": "OK"
     },
     {
       "caso": "G023_nq40_B",
@@ -212,7 +246,8 @@
       "D2_mm": 229.82,
       "base_mm": 3.3,
       "celdas_sin_ext": 1434827,
-      "celdas": 1723755
+      "celdas": 1723755,
+      "estado": "OK"
     },
     {
       "caso": "G024_nq45_B",
@@ -220,7 +255,8 @@
       "D2_mm": 225.36,
       "base_mm": 3.2,
       "celdas_sin_ext": 1443814,
-      "celdas": 1742799
+      "celdas": 1742799,
+      "estado": "OK"
     },
     {
       "caso": "G025_nq50_B",
@@ -228,39 +264,44 @@
       "D2_mm": 220.91,
       "base_mm": 3.1,
       "celdas_sin_ext": 1465273,
-      "celdas": 1767433
+      "celdas": 1767433,
+      "estado": "OK"
     },
     {
       "caso": "G026_nq50_V",
       "nq": 50,
-      "D2_mm": 215.81,
+      "D2_mm": 215.38,
       "base_mm": 3.0,
       "celdas_sin_ext": 1635071,
-      "celdas": 1956847
+      "celdas": 1956847,
+      "estado": "OK"
     },
     {
       "caso": "G027_nq50_V",
       "nq": 50,
-      "D2_mm": 196.08,
+      "D2_mm": 196.17,
       "base_mm": 3.0,
       "celdas_sin_ext": 1433540,
-      "celdas": 1760019
+      "celdas": 1760019,
+      "estado": "OK"
     },
     {
       "caso": "G028_nq50_V",
       "nq": 50,
-      "D2_mm": 211.36,
+      "D2_mm": 210.97,
       "base_mm": 2.9,
       "celdas_sin_ext": 1495888,
-      "celdas": 1844847
+      "celdas": 1844847,
+      "estado": "OK"
     },
     {
       "caso": "G029_nq50_V",
       "nq": 50,
-      "D2_mm": 190.99,
+      "D2_mm": 191.08,
       "base_mm": 2.9,
       "celdas_sin_ext": 1483355,
-      "celdas": 1834685
+      "celdas": 1834685,
+      "estado": "REVISAR"
     },
     {
       "caso": "G030_nq55_B",
@@ -268,7 +309,8 @@
       "D2_mm": 216.45,
       "base_mm": 3.0,
       "celdas_sin_ext": 1517881,
-      "celdas": 1829169
+      "celdas": 1829169,
+      "estado": "OK"
     },
     {
       "caso": "G031_nq57_B",
@@ -276,7 +318,8 @@
       "D2_mm": 215.18,
       "base_mm": 3.0,
       "celdas_sin_ext": 1513214,
-      "celdas": 1814023
+      "celdas": 1814023,
+      "estado": "OK"
     },
     {
       "caso": "G032_nq60_B",
@@ -284,7 +327,8 @@
       "D2_mm": 231.73,
       "base_mm": 3.2,
       "celdas_sin_ext": 1154621,
-      "celdas": 1526764
+      "celdas": 1526764,
+      "estado": "OK"
     },
     {
       "caso": "G033_nq65_B",
@@ -292,39 +336,44 @@
       "D2_mm": 231.09,
       "base_mm": 3.1,
       "celdas_sin_ext": 1314343,
-      "celdas": 1728717
+      "celdas": 1728717,
+      "estado": "OK"
     },
     {
       "caso": "G034_nq65_V",
       "nq": 65,
-      "D2_mm": 231.09,
+      "D2_mm": 199.2,
       "base_mm": 3.0,
       "celdas_sin_ext": 1327014,
-      "celdas": 1766915
+      "celdas": 1766915,
+      "estado": "REVISAR"
     },
     {
       "caso": "G035_nq65_V",
       "nq": 65,
-      "D2_mm": 231.09,
+      "D2_mm": 210.99,
       "base_mm": 3.0,
       "celdas_sin_ext": 1286718,
-      "celdas": 1726331
+      "celdas": 1726331,
+      "estado": "OK"
     },
     {
       "caso": "G036_nq65_V",
       "nq": 65,
-      "D2_mm": 231.09,
+      "D2_mm": 220.46,
       "base_mm": 3.2,
       "celdas_sin_ext": 1285773,
-      "celdas": 1673355
+      "celdas": 1673355,
+      "estado": "OK"
     },
     {
       "caso": "G037_nq65_V",
       "nq": 65,
-      "D2_mm": 231.09,
+      "D2_mm": 230.63,
       "base_mm": 3.0,
       "celdas_sin_ext": 1489869,
-      "celdas": 1929072
+      "celdas": 1929072,
+      "estado": "OK"
     },
     {
       "caso": "G038_nq70_B",
@@ -332,7 +381,8 @@
       "D2_mm": 229.82,
       "base_mm": 2.9,
       "celdas_sin_ext": 1444174,
-      "celdas": 1935670
+      "celdas": 1935670,
+      "estado": "OK"
     },
     {
       "caso": "G039_nq72_B",
@@ -340,7 +390,8 @@
       "D2_mm": 229.82,
       "base_mm": 2.9,
       "celdas_sin_ext": 1483184,
-      "celdas": 1965773
+      "celdas": 1965773,
+      "estado": "OK"
     },
     {
       "caso": "G040_nq75_B",
@@ -348,7 +399,8 @@
       "D2_mm": 229.18,
       "base_mm": 3.1,
       "celdas_sin_ext": 1342383,
-      "celdas": 1771023
+      "celdas": 1771023,
+      "estado": "OK"
     },
     {
       "caso": "G041_nq80_B",
@@ -356,39 +408,44 @@
       "D2_mm": 227.91,
       "base_mm": 3.2,
       "celdas_sin_ext": 1288184,
-      "celdas": 1703395
+      "celdas": 1703395,
+      "estado": "OK"
     },
     {
       "caso": "G042_nq80_V",
       "nq": 80,
-      "D2_mm": 227.91,
+      "D2_mm": 203.75,
       "base_mm": 3.2,
       "celdas_sin_ext": 1311218,
-      "celdas": 1726263
+      "celdas": 1726263,
+      "estado": "OK"
     },
     {
       "caso": "G043_nq80_V",
       "nq": 80,
-      "D2_mm": 227.91,
+      "D2_mm": 211.73,
       "base_mm": 3.0,
       "celdas_sin_ext": 1466827,
-      "celdas": 1934641
+      "celdas": 1934641,
+      "estado": "REVISAR"
     },
     {
       "caso": "G044_nq80_V",
       "nq": 80,
-      "D2_mm": 227.91,
+      "D2_mm": 198.97,
       "base_mm": 3.0,
       "celdas_sin_ext": 1420955,
-      "celdas": 1892858
+      "celdas": 1892858,
+      "estado": "REVISAR"
     },
     {
       "caso": "G045_nq80_V",
       "nq": 80,
-      "D2_mm": 227.91,
+      "D2_mm": 220.84,
       "base_mm": 3.2,
       "celdas_sin_ext": 1316773,
-      "celdas": 1732656
+      "celdas": 1732656,
+      "estado": "OK"
     },
     {
       "caso": "G046_nq85_B",
@@ -396,7 +453,11 @@
       "D2_mm": 226.0,
       "base_mm": 3.3,
       "celdas_sin_ext": 1262599,
-      "celdas": 1658151
+      "celdas": 1658151,
+      "estado": "OK"
     }
-  ]
+  ],
+  "iteraciones_extension": 1500,
+  "ventana_promedio": 200,
+  "borrar_backups_sim": true
 }

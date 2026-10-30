@@ -16,12 +16,28 @@ for (Region r : sim.getRegionManager().getRegions())
     if (pat.matcher(full).find()) { bnds.add(b); sim.println("BOUNDARY\t" + full); meta.append("BOUNDARY\t" + full + "\n"); }
   }
 if (bnds.isEmpty()) throw new RuntimeException("Ninguna frontera coincide con PATTERN");
+// 2026-10-30 (solo compilado): un nombre con '+' («Wall Y+») no queda declarado en el .case (sale un archivo «.WallY»
+// huérfano: 47/47 casos del lote sin y+ en el visor). WallYplus (o «yplus») se exporta como la UserFieldFunction
+// «yplus» = $WallYplus; cualquier otra función cuyo nombre visible no sea alfanumérico, como «agente_<función>».
 java.util.Vector<FieldFunction> ffs = new java.util.Vector<FieldFunction>();
+FieldFunctionManager ffmE = sim.getFieldFunctionManager();
 for (String n : "FUNCS".split(",")) {
   n = n.trim(); if (n.isEmpty()) continue;
-  FieldFunction f;
-  try { f = sim.getFieldFunctionManager().getFunction(n); }
-  catch (Exception e) { sim.println("WARN\tno existe la field function " + n); continue; }
+  FieldFunction f = null;
+  String base = n.equalsIgnoreCase("yplus") ? "WallYplus" : n;
+  try { f = ffmE.getFunction(n.equalsIgnoreCase("yplus") ? "WallYplus" : n); } catch (Exception e) { }
+  if (f == null) { sim.println("WARN\tno existe la field function " + n); continue; }
+  if (!f.getPresentationName().matches("[A-Za-z0-9_ ]+") && !(f instanceof UserFieldFunction)) {
+    String alias = base.equals("WallYplus") ? "yplus" : "agente_" + f.getFunctionName().replaceAll("\\W", "");
+    FieldFunction u = null;
+    try { u = ffmE.getFunction(alias); } catch (Exception e) { }
+    if (!(u instanceof UserFieldFunction)) {
+      UserFieldFunction nu = ffmE.createFieldFunction(); nu.setPresentationName(alias); nu.setFunctionName(alias); u = nu;
+    }
+    ((UserFieldFunction) u).setDefinition("$" + f.getFunctionName());
+    sim.println("FUNC_ALIAS\t" + f.getPresentationName() + " -> " + alias + " = $" + f.getFunctionName());
+    f = u;
+  }
   // vector (Velocity, WallShearStress...) -> su magnitud, que es lo que pinta el visor
   try { if (f.getType().toString().toLowerCase().contains("vector")) f = f.getMagnitudeFunction(); }
   catch (Exception e) { }
