@@ -3,11 +3,15 @@
 //      levanta un cilindro coaxial a cada una: L_IN_D diámetros aguas arriba y L_OUT_D aguas abajo. Cada cilindro es
 //      una región con su malla e interfaz con su vecina. Nombres: ext_entrada/{inlet,Wall,Outflow}
 //      y ext_salida/{Inflow,Wall,outlet}. Requiere la malla de 02 (los reportes de cara necesitan malla).
-//      Malla de las extensiones más gruesa: base BASE_EXT_MM (el orquestador pasa 2×BASE_MM) con los MISMOS prismas
-//      en pared que 02 (mismas capas y estiramiento, y el mismo espesor absoluto: 10 % de BASE_MM).
-//      Idempotente: si las extensiones ya están completas solo les pone el base y las vuelve a mallar; si quedaron a
-//      medias (o con nombres «X 2») las borra y las rehace. Reportes y funciones tmp_* siempre se borran (finally).
-//      Pantalla: CELLS, CELLS_TOTAL (con extensiones) y LOTE_OK; el detalle (caras, D, L, celdas) va a MALLA_JSON.
+//      Malla de las extensiones más gruesa: base 2 × (base actual de malla_rotor; si no la hay, BASE_EXT_MM, que el
+//      orquestador pone a 2×BASE_MM) con los MISMOS prismas en pared que 02 (mismas capas y estiramiento, y el mismo
+//      espesor absoluto: 10 % del base de la bomba). Así un remallado de 02 (solo BASE_MM) no se deshace al re-correr 03.
+//      Idempotente: si las extensiones ya están completas solo comprueba su base (si 02 ya las remalló no las toca); si
+//      quedaron a medias (o con nombres «X 2») las borra y las rehace, y avisa «WARN extensiones rehechas» (las
+//      condiciones de contorno, reportes y Euler de 04-06 apuntaban a las fronteras borradas).
+//      Reportes y funciones tmp_* siempre se borran (finally).
+//      Pantalla: CELLS, CELLS_TOTAL (con extensiones) y LOTE_OK; el detalle (caras, D, L, celdas) va a MALLA_JSON bajo
+//      «extensiones», conservando el bloque «malla_02» de 02.
 // Base: macros de BombaNQ10 del 2026-10-28 (medir caras + cilindros + interfaces), verificadas con el solver.
 double BASE_MM = {{BASE_MM}}, L_IN_D = {{L_IN_D}}, L_OUT_D = {{L_OUT_D}};
 double BASE_EXT_MM = {{BASE_EXT_MM}};
@@ -25,6 +29,13 @@ String[][] nuevosNombres = {{"Outflow", "Wall", "inlet"}, {"Inflow", "Wall", "ou
 double[] largoD = {L_IN_D, L_OUT_D};
 List<Report> tmpR = new ArrayList<Report>();
 List<FieldFunction> tmpF = new ArrayList<FieldFunction>();
+// base de la bomba = el que tiene ahora malla_rotor (02 lo pone; un remallado solo edita 02)
+double bBomba = BASE_MM;
+try { if (mom.has("malla_rotor")) { double b0 = ((AutoMeshOperation) mom.getObject("malla_rotor")).getDefaultValues().get(BaseSize.class).getSIValue() * 1000.0;
+        if (b0 > 0 && !Double.isInfinite(b0)) bBomba = b0; } } catch (Exception e) { }
+final double B_BOMBA = bBomba, B_EXT = mom.has("malla_rotor") ? 2 * bBomba : BASE_EXT_MM;
+if (Math.abs(B_EXT - BASE_EXT_MM) > 1e-6 * Math.max(1.0, BASE_EXT_MM))
+  sim.println("WARN\tbase de extensiones " + B_EXT + " mm (2 × base actual de malla_rotor " + B_BOMBA + " mm), no BASE_EXT_MM " + BASE_EXT_MM);
 class T {
   UserFieldFunction ff(String nm, String def) {
     UserFieldFunction f = ffm.createFieldFunction(); f.setPresentationName(nm); f.setFunctionName(nm); f.setDefinition(def); tmpF.add(f); return f; }
@@ -33,14 +44,31 @@ class T {
   double integ(FieldFunction f, Boundary b) {
     SurfaceIntegralReport a = rm.createReport(SurfaceIntegralReport.class); tmpR.add(a); a.setFieldFunction(f); a.getParts().setObjects(b); return a.getReportMonitorValue(); }
   void malla(AutoMeshOperation op) {
-    op.getDefaultValues().get(BaseSize.class).setValueAndUnits(BASE_EXT_MM, mm);
+    op.getDefaultValues().get(BaseSize.class).setValueAndUnits(B_EXT, mm);
     op.getDefaultValues().get(NumPrismLayers.class).setNumLayers(PRISMAS);
     op.getDefaultValues().get(PrismLayerStretching.class).setStretching(1.3);
-    op.getDefaultValues().get(PrismThickness.class).setRelativeSize(10.0 * BASE_MM / BASE_EXT_MM);  // = 10 % de BASE_MM
+    op.getDefaultValues().get(PrismThickness.class).setRelativeSize(10.0 * B_BOMBA / B_EXT);  // = 10 % del base de la bomba
+  }
+  // valor objeto de "clave" (primera aparición) en s, con llaves emparejadas fuera de cadenas; null si no hay objeto
+  String bloque(String s, String clave) {
+    int i = s.indexOf("\"" + clave + "\":");
+    if (i < 0) return null;
+    int a = i + clave.length() + 3;
+    while (a < s.length() && Character.isWhitespace(s.charAt(a))) a++;
+    if (a >= s.length() || s.charAt(a) != '{') return null;
+    int prof = 0; boolean cad = false;
+    for (int k = a; k < s.length(); k++) {
+      char ch = s.charAt(k);
+      if (cad) { if (ch == '\\') k++; else if (ch == '"') cad = false; continue; }
+      if (ch == '"') cad = true;
+      else if (ch == '{') prof++;
+      else if (ch == '}' && --prof == 0) return s.substring(a, k + 1);
+    }
+    return null;
   }
 }
 T t = new T();
-StringBuilder js = new StringBuilder("{\n  \"base_ext_mm\": " + BASE_EXT_MM + ",\n  \"caras\": {");
+StringBuilder js = new StringBuilder("{\n  \"base_ext_mm\": " + B_EXT + ",\n  \"base_bomba_mm\": " + B_BOMBA + ",\n  \"caras\": {");
 StringBuilder resumen = new StringBuilder();
 long total = 0;
 try {
@@ -55,12 +83,15 @@ try {
     for (String bn : nuevosNombres[k]) if (!rgm.getRegion(nombres[k]).getBoundaryManager().has(bn)) completas = false;
   }
   if (completas) {
+    int remalladas = 0;
     for (int k = 0; k < 2; k++) {
       AutoMeshOperation op = (AutoMeshOperation) mom.getObject("malla_" + nombres[k]);
-      t.malla(op); op.execute();
+      double bAct = -1;
+      try { bAct = op.getDefaultValues().get(BaseSize.class).getSIValue() * 1000.0; } catch (Exception e) { }
+      if (Math.abs(bAct - B_EXT) > 1e-6 * B_EXT) { t.malla(op); op.execute(); remalladas++; }  // si 02 ya la remalló, no repetir
     }
     js.append("\"reusadas\": true");
-    resumen.append(" reusadas");
+    resumen.append(" reusadas").append(remalladas > 0 ? " (" + remalladas + " remalladas)" : " (malla de 02)");
   } else {
     // limpiar lo que haya a medias: interfaces, operaciones, regiones y partes ext_*
     java.util.Vector<Interface> vi = new java.util.Vector<Interface>();
@@ -75,6 +106,10 @@ try {
     List<GeometryPart> vp = new ArrayList<GeometryPart>();
     for (GeometryPart p : spm.getParts()) if (p.getPresentationName().startsWith("ext_")) vp.add(p);
     if (!vp.isEmpty()) spm.removeParts(vp);
+    if (!vi.isEmpty() || !vo.isEmpty() || !vr.isEmpty() || !vp.isEmpty()) {
+      sim.println("WARN\textensiones rehechas: vuelve a correr 04, 05 y 06");
+      resumen.append(" REHECHAS");
+    }
     double[][] spec = new double[2][];
     for (int k = 0; k < 2; k++) {
       String[] p = caras[k].split("/");
@@ -86,8 +121,14 @@ try {
       }
       double area = t.integ(t.ff("tmp_one" + k, "1"), b);
       double nn = Math.sqrt(n[0]*n[0] + n[1]*n[1] + n[2]*n[2]);
-      if (nn < 0.9) throw new RuntimeException("la cara " + caras[k] + " no es plana (|normal media| = " + nn + "): revisar a mano");
+      // !(x >= …) y no (x < …): un NaN (reporte sin caras o sin malla) también para aquí
+      if (!(nn >= 0.9) || !(area > 0) || Double.isInfinite(area))
+        throw new RuntimeException("la cara " + caras[k] + " no es plana o no se pudo medir (|normal media| = " + nn + ", área = " + area + "): revisar a mano");
+      for (int i = 0; i < 3; i++) if (Double.isNaN(c[i]) || Double.isInfinite(c[i]))
+        throw new RuntimeException("centro de " + caras[k] + " no finito (" + c[0] + ", " + c[1] + ", " + c[2] + "): revisar a mano");
       double r = Math.sqrt(area / Math.PI), L = largoD[k] * 2 * r;
+      if (!(r > 0) || !(L > 0) || Double.isInfinite(L))
+        throw new RuntimeException("radio/largo de " + caras[k] + " no válidos (r = " + r + ", L = " + L + "): revisar a mano");
       spec[k] = new double[] {c[0], c[1], c[2], n[0]/nn, n[1]/nn, n[2]/nn, r, L};
       js.append(k > 0 ? ", " : "").append("\"").append(caras[k]).append("\": {\"c\": [").append(c[0]).append(", ").append(c[1]).append(", ").append(c[2])
         .append("], \"n\": [").append(n[0]/nn).append(", ").append(n[1]/nn).append(", ").append(n[2]/nn).append("], \"area\": ").append(area)
@@ -160,11 +201,13 @@ try {
   try { if (!tmpR.isEmpty()) rm.removeObjects(tmpR); } catch (Exception e) { }
   try { if (!tmpF.isEmpty()) ffm.removeObjects(tmpF); } catch (Exception e) { }
 }
-// malla.json: el detalle de 02 queda dentro como «malla_02»
+// malla.json = {"extensiones": {...}, "celdas_total": N, "malla_02": {...}}: el bloque de 02 se conserva tal cual
+// (formato plano antiguo de 02, sin «malla_02» ni «extensiones»: entra entero como malla_02)
 String previo = "null";
 try { String s0 = new String(java.nio.file.Files.readAllBytes(java.nio.file.Paths.get(MALLA_JSON)), "UTF-8").trim();
-      if (s0.startsWith("{") && s0.endsWith("}") && !s0.contains("\"extensiones\"")) previo = s0;
-      else if (s0.contains("\"malla_02\": {")) previo = s0.substring(s0.indexOf("\"malla_02\": ") + 12, s0.lastIndexOf("}")).trim(); } catch (Exception e) { }
+      String b02 = t.bloque(s0, "malla_02");
+      if (b02 != null) previo = b02;
+      else if (s0.startsWith("{") && s0.endsWith("}") && !s0.contains("\"extensiones\"")) previo = s0; } catch (Exception e) { }
 java.nio.file.Files.write(java.nio.file.Paths.get(MALLA_JSON), ("{\n  \"extensiones\": " + js.toString().replace("\n", "\n  ") + "\n  },\n  \"celdas_total\": " + total + ",\n  \"malla_02\": " + previo + "\n}\n").getBytes("UTF-8"));
 sim.println("CELLS_TOTAL\t" + total);
 sim.println("LOTE_OK 03 " + total + " celdas" + resumen);

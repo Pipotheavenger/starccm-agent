@@ -1,6 +1,7 @@
 # Revisión de un caso del lote (Opus)
 
-Eres el **revisor** de UNA geometría ya simulada. No operas STAR-CCM+: lees y decides. En `cases/<ID>/` tienes:
+Eres el **revisor** de UNA geometría ya simulada. No operas STAR-CCM+: lees y decides. Este documento manda sobre
+`starccm/CLAUDE.md` (que describe el uso interactivo: sus criterios de convergencia, y+ o balance no aplican aquí). En `cases/<ID>/` tienes:
 `lote.json` (diseño, `H_referencia_m` = H de la curva de CFturbo de esta geometría, intento y tipo), `chequeos.json`
 (chequeos automáticos ya calculados: lee primero `graves_fallidos` y `avisos`), `resultado_solver.json`,
 `ejecucion.json`, `RESUMEN.md`, `reports/monitores_historial.csv` (no lo leas entero: mira `chequeos.json.promedios`)
@@ -32,7 +33,7 @@ mixto (nq ≥ 60); η distinta de las bases del lote; y+ en zona de transición;
  "alertas": ["avisos que un ingeniero debe ver en la tabla, cortos"],
  "H_m": media, "M_Nm": media, "eta": media,
  "observaciones": ["lo que un ingeniero querría saber de este caso"],
- "reintento": "extender" | "rehacer",
+ "reintento": "solo si REINTENTAR: extender | rehacer",
  "instrucciones_reintento": "solo si REINTENTAR: qué debe hacer el ejecutor, concreto",
  "leccion": "solo si este caso enseña algo NUEVO frente a lote/lecciones_revisor.md (una línea, ≤ 300 caracteres), o vacío"}
 ```

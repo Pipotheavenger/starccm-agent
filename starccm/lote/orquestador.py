@@ -67,6 +67,8 @@ class Cfg:
     lecciones_rev = LOTE / "lecciones_revisor.md"
     lock = LOTE / ".lock"
     prefijo = ""
+    espera_infra = 1800          # s antes de reintentar tras un fallo de infraestructura
+    parar = LOTE / "PARAR"
 
 
 class ErrorInfra(RuntimeError):
@@ -92,9 +94,18 @@ def leer_json(p: Path, defecto=None):
 
 
 def escribir_json(p: Path, d) -> None:
+    """Escritura atómica. En Windows os.replace falla (WinError 5) si otro proceso tiene el destino abierto (la sesión
+    monitora leyendo estado.json): se reintenta unos segundos antes de rendirse."""
     tmp = Path(str(p) + ".tmp")
     tmp.write_text(json.dumps(d, indent=2, ensure_ascii=False), encoding="utf-8")
-    os.replace(tmp, p)
+    for i in range(20):
+        try:
+            os.replace(tmp, p)
+            return
+        except PermissionError:
+            if i == 19:
+                raise
+            time.sleep(0.5)
 
 
 def finito(x) -> bool:
@@ -233,34 +244,51 @@ def _mc(A: list, b: list) -> list | None:
 
 
 def frac_extensiones(P: dict, nq: int) -> float:
-    """Celdas de extensiones / celdas de la bomba, aprendido de los casos con extensiones gruesas (2 × base)."""
-    h = [e for e in P["historial_malla"] if e.get("ext_base_factor") == 2 and e.get("celdas_sin_ext")]
-    if len(h) >= 3:
-        cerca = sorted(h, key=lambda e: abs(e["nq"] - nq))[:5]
-        return statistics.median(e["celdas"] / e["celdas_sin_ext"] - 1 for e in cerca)
-    return 0.06
+    """Celdas de extensiones / celdas de la bomba a esa nq. Con ≥ 3 casos de extensiones gruesas (2 × base) a ±15 de nq,
+    su mediana; si no, la fracción de las extensiones finas (mismo base, receta v1) a esa nq dividida por 2 (las celdas
+    van ~1/base: base doble ≈ mitad de celdas)."""
+    h = [e for e in P["historial_malla"] if e.get("celdas_sin_ext") and abs(e["nq"] - nq) <= 15]
+    gruesas = [e["celdas"] / e["celdas_sin_ext"] - 1 for e in h if e.get("ext_base_factor") == 2]
+    if len(gruesas) >= 3:
+        return statistics.median(gruesas)
+    finas = [e["celdas"] / e["celdas_sin_ext"] - 1 for e in h if e.get("ext_base_factor") != 2]
+    return statistics.median(finas) / 2 if finas else 0.15
+
+
+def modelo_malla(P: dict) -> list | None:
+    """ln(celdas_bomba) = c0 + c1·ln(base) + c2·ln nq + c3·ln² nq sobre todo el historial. En 47 casos el D2 no explica
+    nada (coef. −0,02) y c1 ≈ −0,97: las celdas van ~1/base, no 1/base³ (prismas y superficie dominan). Error ~6 % con
+    validación cruzada dejando uno fuera."""
+    h = [e for e in P["historial_malla"] if e.get("celdas_sin_ext") and e.get("base_mm") and e.get("estado") != "ERROR"]
+    if len(h) < 8:
+        return None
+    A = [[1.0, math.log(e["base_mm"]), math.log(e["nq"]), math.log(e["nq"]) ** 2] for e in h]
+    c = _mc(A, [math.log(e["celdas_sin_ext"]) for e in h])
+    return c if c and -2.0 < c[1] < -0.4 else None
+
+
+def exponente_malla(P: dict) -> float:
+    """k en celdas ∝ base^−k, para la regla de remallado de la receta: base_nuevo = base·(celdas/objetivo)^(1/k)."""
+    c = modelo_malla(P)
+    return round(-c[1], 2) if c else 1.0
 
 
 def base_mm(P: dict, dat: dict) -> float:
-    """Tamaño base para que la bomba (sin extensiones) dé objetivo/(1+ext) celdas. Modelo ajustado a todo el historial:
-    ln(celdas_bomba) = c0 + c1·ln(D2/base) + c2·ln nq + c3·ln² nq (error ~8 % con validación cruzada en 47 casos). Con
-    pocos datos o un ajuste raro, el vecino de nq más cercana con (D2/base)³."""
-    D2 = dat.get("D2_esperado_mm") or dat["D2_cfturbo_mm"] or 250.0
+    """Tamaño base para que la bomba (sin extensiones) dé objetivo/(1+ext) celdas, con el modelo del historial. Sin
+    extrapolar: el base queda dentro de lo visto a nq parecida (±15 %). Sin modelo: el vecino de nq más cercana."""
     nq = dat["nq"]
     obj = P["objetivo_celdas"] / (1 + frac_extensiones(P, nq))
-    h = [e for e in P["historial_malla"] if e.get("celdas_sin_ext") and e.get("D2_mm") and e.get("estado") != "ERROR"]
-    if len(h) >= 8:
-        A = [[1.0, math.log(e["D2_mm"] / e["base_mm"]), math.log(e["nq"]), math.log(e["nq"]) ** 2] for e in h]
-        c = _mc(A, [math.log(e["celdas_sin_ext"]) for e in h])
-        if c and c[1] > 0.5:
-            ln = math.log(nq)
-            l = (math.log(obj) - c[0] - c[2] * ln - c[3] * ln * ln) / c[1]
-            ls = [a[1] for a in A]
-            l = min(max(l, min(ls) - 0.1), max(ls) + 0.1)        # sin extrapolar lejos de lo visto
-            return round(D2 / math.exp(l), 1)
+    h = [e for e in P["historial_malla"] if e.get("celdas_sin_ext") and e.get("base_mm") and e.get("estado") != "ERROR"]
+    c = modelo_malla(P)
+    if c:
+        ln = math.log(nq)
+        base = math.exp((math.log(obj) - c[0] - c[2] * ln - c[3] * ln * ln) / c[1])
+        cerca = [e["base_mm"] for e in h if abs(e["nq"] - nq) <= 10] or [e["base_mm"] for e in h]
+        return round(min(max(base, 0.85 * min(cerca)), 1.15 * max(cerca)), 1)
     if h:
         e = min(h, key=lambda e: abs(e["nq"] - nq))
-        return round(D2 / ((e["D2_mm"] / e["base_mm"]) * (obj / e["celdas_sin_ext"]) ** (1 / 3)), 1)
+        return round(e["base_mm"] * (e["celdas_sin_ext"] / obj), 1)
+    D2 = dat.get("D2_esperado_mm") or dat["D2_cfturbo_mm"] or 250.0
     return round(D2 / P["D2_sobre_base"], 1)
 
 
@@ -340,10 +368,14 @@ def preparar(g: dict, todas: list[dict], P: dict, intento: int = 1, tipo_intento
     lj = leer_json(caso / "lote.json", {}) or {}
     dat["D2_esperado_mm"] = d2_esperado(g, dat, todas)
     base = lj.get("base_mm") or base_mm(P, dat)
-    max_it = max_it or lj.get("iteraciones") or P["iteraciones"]
+    # nq bajas: H se asienta entre 1300 y 1500 (9 de 13 casos ≤ nq 25 lo necesitaron); empezar ahí ahorra reabrir el .sim
+    nb = P.get("iteraciones_nq_bajo") or {}
+    it0 = nb["iteraciones"] if nb and dat["nq"] <= nb["nq_max"] else P["iteraciones"]
+    max_it = max_it or lj.get("iteraciones") or it0
     destino = Path(dat["carpeta"]) / "CFD" / f"{dat['nombre']}.sim"
     lote = {**{k: v for k, v in dat.items() if k != "cad_caso"}, "H_referencia_m": h_referencia(g, dat, todas),
-            "base_mm": base, "intento": intento, "tipo_intento": tipo_intento, "instrucciones_reintento": instrucciones,
+            "base_mm": base, "exponente_malla": exponente_malla(P), "intento": intento, "tipo_intento": tipo_intento,
+            "instrucciones_reintento": instrucciones,
             "receta_version": P["receta_version"], "max_celdas": P["max_celdas"], "objetivo_celdas": P["objetivo_celdas"],
             "iteraciones": max_it, "iteraciones_extension": P["iteraciones_extension"], "ventana_promedio": P["ventana_promedio"],
             "parametros": {k: P[k] for k in ("min_rotor_pct", "alabes_pct", "prismas", "ext_entrada_D", "ext_salida_D", "urf_v", "urf_p")},
@@ -407,10 +439,13 @@ def env_cli() -> dict:
 
 
 def claude(prompt: str, modelo: str, permitidas: str, log: Path, timeout: int, max_turnos: int) -> dict:
-    """claude -p con salida stream-json a `log`. Devuelve rc, segundos, coste, subtipo y si se cortó por tiempo."""
+    """claude -p con salida stream-json a `log`. Devuelve rc, segundos, coste, subtipo y si se cortó por tiempo.
+    `--setting-sources project`: sin los plugins y skills del usuario (menos contexto y coste en cada sesión)."""
     cmd = [CLAUDE, "-p", prompt, "--model", modelo, "--output-format", "stream-json", "--verbose",
-           "--mcp-config", str(REPO / ".mcp.json"), "--strict-mcp-config", "--allowedTools", permitidas,
-           "--disallowedTools", "Bash,PowerShell,NotebookEdit,WebFetch,WebSearch,Read(**/.env*),Read(**/.starccm-agent.env)",
+           "--setting-sources", "project", "--mcp-config", str(REPO / ".mcp.json"), "--strict-mcp-config",
+           "--allowedTools", permitidas,
+           "--disallowedTools", "Bash,PowerShell,NotebookEdit,WebFetch,WebSearch,mcp__starccm__recipe_save,"
+                                "Read(**/.env*),Read(**/.starccm-agent.env)",
            "--max-turns", str(max_turnos)]
     if Cfg.seco:
         cmd = [sys.executable, str(LOTE / "falso_claude.py"), "-p", prompt, "--model", modelo]
@@ -425,6 +460,9 @@ def claude(prompt: str, modelo: str, permitidas: str, log: Path, timeout: int, m
         except subprocess.TimeoutExpired:
             subprocess.run(["taskkill", "/PID", str(p.pid), "/T", "/F"], capture_output=True)
             res["cortado"] = True
+        except BaseException:   # Ctrl+C o cierre: el hijo tiene su propia consola y no se entera; matarlo antes de salir
+            subprocess.run(["taskkill", "/PID", str(p.pid), "/T", "/F"], capture_output=True)
+            raise
         finally:
             lock_hijo(None)
     res["segundos"] = round(time.time() - t0)
@@ -445,8 +483,20 @@ def ejecutar(g: dict, lote: dict) -> dict:
     prompt = (f"Caso {g['id']}: cases/{g['id']}/. Lee lote/receta.md y lote/lecciones.md y sigue la receta con los datos "
               f"de cases/{g['id']}/lote.json (intento {n}, tipo «{lote['tipo_intento']}»: si no es «completo», mira la "
               f"sección de la receta para ese tipo y las instrucciones_reintento de lote.json). Trabaja solo, sin preguntar.")
-    permitidas = f"mcp__starccm__*,Read,Glob,Grep,Write(cases/{g['id']}/**),Edit(cases/{g['id']}/**)"
+    # sin recipe_save (recipes/ es compartida) ni docs/inspect sueltos que no hacen falta. Riesgo asumido: run_java y
+    # run_java_file ejecutan Java en la JVM del solver, que puede hacer cualquier cosa; el veto a Bash no lo cubre.
+    mcp = ",".join(f"mcp__starccm__{t}" for t in ("server_start", "server_stop", "server_status", "run_java",
+                                                   "run_java_file", "inspect", "save", "recipe_search", "export_scene"))
+    permitidas = f"{mcp},Read,Glob,Grep,Write(cases/{g['id']}/**),Edit(cases/{g['id']}/**)"
     return claude(prompt, MODELO_EJECUTOR, permitidas, caso / "logs" / f"ejecutor_{n}.jsonl", T_EJECUTOR, 250)
+
+
+def es_infra(r: dict) -> bool:
+    """claude no llegó a trabajar: salió con error sin línea `result` (cuota, red, sesión) o con un error de la API.
+    Agotar turnos o el tiempo es un problema del caso, no de infraestructura."""
+    if r.get("cortado") or r.get("subtipo") == "error_max_turns":
+        return False
+    return bool(r.get("rc")) and r.get("subtipo") in (None, "error_during_execution")
 
 
 def revisar(g: dict, lote: dict) -> dict:
@@ -497,21 +547,35 @@ def asegurar_solver_apagado(gid: str) -> None:
 
 # ---------------------------------------------------------------- candado de instancia única
 
-def _vivo(pid) -> bool:
+def _vivo(pid, imagen: str = "") -> bool:
+    """PID vivo y, si se da `imagen`, con ese ejecutable (tras un reinicio el PID puede ser de otro proceso)."""
     try:
-        return bool(pid) and M._pid_alive(int(pid))
+        if not (pid and M._pid_alive(int(pid))):
+            return False
+        if not imagen or Cfg.seco:
+            return True
+        r = subprocess.run(["tasklist", "/FI", f"PID eq {int(pid)}", "/FO", "CSV", "/NH"], capture_output=True, text=True)
+        return imagen.lower() in r.stdout.lower()
     except Exception:  # noqa: BLE001
         return False
+
+
+def lote_vivo() -> dict | None:
+    """El candado de otro orquestador vivo, o None."""
+    l = leer_json(Cfg.lock, {}) or {}
+    if l and int(l.get("pid") or 0) != os.getpid() and _vivo(l.get("pid"), "python"):
+        return l
+    return None
 
 
 def tomar_lock() -> bool:
     """lote/.lock con el PID: dos orquestadores sobre una licencia de una copia se pisan. Si el anterior murió, se limpia
     lo que dejó (su claude hijo y el solver)."""
-    l = leer_json(Cfg.lock, {}) or {}
-    if l and _vivo(l.get("pid")) and int(l["pid"]) != os.getpid():
+    if (l := lote_vivo()):
         print(f"Ya hay un orquestador vivo (PID {l['pid']}, desde {l.get('inicio')}). Si no es así, borra {Cfg.lock}.")
         return False
-    if l.get("hijo") and _vivo(l["hijo"]):
+    l = leer_json(Cfg.lock, {}) or {}
+    if l.get("hijo") and _vivo(l["hijo"], "claude"):
         subprocess.run(["taskkill", "/PID", str(l["hijo"]), "/T", "/F"], capture_output=True)
         evento("aviso", "", f"maté el claude huérfano {l['hijo']} del orquestador anterior")
     escribir_json(Cfg.lock, {"pid": os.getpid(), "inicio": ahora(), "hijo": None})
@@ -550,39 +614,58 @@ def leer_monitores(caso: Path) -> tuple[list[str], list[list[float]]]:
     return hdr, datos_
 
 
+def _tendencia(pts: list) -> tuple[float, float, float]:
+    """Media, pendiente (% de la media por 100 it.) y oscilación sin tendencia (2·σ del residuo, % de la media)."""
+    xs = [x for x, _ in pts]
+    ys = [y for _, y in pts]
+    m, mx = sum(ys) / len(ys), sum(xs) / len(xs)
+    sxx = sum((x - mx) ** 2 for x in xs)
+    b = sum((x - mx) * (y - m) for x, y in pts) / sxx if sxx else 0.0
+    res = [y - (m + b * (x - mx)) for x, y in pts]
+    return m, b * 100 / abs(m) * 100, 2 * statistics.pstdev(res) / abs(m) * 100
+
+
 def historial(caso: Path, ventana: int = 200) -> dict:
-    """Por monitor, en las últimas `ventana` iteraciones: media, mín., máx. y, para H, deriva (pendiente lineal en % por
-    100 it.) y oscilación sin tendencia (2·σ del residuo, %). La oscilación por semirrango confunde ruido con deriva."""
+    """Por monitor, en las últimas `ventana` iteraciones: media, mín., máx., deriva (pendiente lineal en % por 100 it.) y
+    oscilación sin tendencia (2·σ del residuo, %). La deriva también en 2 × ventana: una oscilación lenta (G001) da
+    pendiente en 200 it. que desaparece en 400; una deriva real (G003, G005) sale en las dos con el mismo signo."""
     hdr, datos_ = leer_monitores(caso)
     if not datos_:
         return {}
     it_max = max(r[0] for r in datos_)
-    sel = [r for r in datos_ if r[0] > it_max - ventana]
     out = {}
     for j, nombre in enumerate(hdr[1:], start=1):
-        pts = [(r[0], r[j]) for r in sel if j < len(r) and finito(r[j])]
+        todos = [(r[0], r[j]) for r in datos_ if j < len(r) and finito(r[j])]
+        pts = [p for p in todos if p[0] > it_max - ventana]
         if not pts:
             continue
         ys = [y for _, y in pts]
         m = sum(ys) / len(ys)
         d = {"media": m, "min": min(ys), "max": max(ys), "n": len(ys), "ultimo": ys[-1]}
         if len(pts) >= 10 and abs(m) > 1e-9:
-            xs = [x for x, _ in pts]
-            mx = sum(xs) / len(xs)
-            sxx = sum((x - mx) ** 2 for x in xs)
-            b = sum((x - mx) * (y - m) for x, y in pts) / sxx if sxx else 0.0
-            res = [y - (m + b * (x - mx)) for x, y in pts]
-            d["deriva_pct_100it"] = b * 100 / abs(m) * 100
-            d["oscilacion_pct"] = 2 * statistics.pstdev(res) / abs(m) * 100
+            _, d["deriva_pct_100it"], d["oscilacion_pct"] = _tendencia(pts)
+            largo = [p for p in todos if p[0] > it_max - 2 * ventana]
+            if len(largo) >= 1.5 * len(pts):
+                _, d["deriva_larga_pct_100it"], _ = _tendencia(largo)
         out[nombre] = d
     out["_iteracion"] = it_max
     return out
 
 
-def eta_referencia(nq: int, estado: dict) -> float | None:
-    """η esperada a esa nq según las bases ya simuladas en este lote (interpolación por nq)."""
-    pts = sorted((e["nq"], e["eta"]) for e in estado.values()
-                 if e.get("tipo") == "base" and e.get("estado") == "OK" and finito(e.get("eta")) and e.get("nq"))
+def deriva_real(d: dict, limite: float) -> bool:
+    """Deriva por encima del límite en la ventana Y en la ventana doble con el mismo signo (si hay ventana doble)."""
+    a = d.get("deriva_pct_100it")
+    if a is None or abs(a) <= limite:
+        return False
+    b = d.get("deriva_larga_pct_100it")
+    return b is None or (abs(b) > limite / 2 and (a > 0) == (b > 0))
+
+
+def eta_referencia(nq: int, estado: dict, excluir: str = "") -> float | None:
+    """η esperada a esa nq según las OTRAS bases ya simuladas en este lote (interpolación por nq). Solo tiene sentido
+    para bases: la η de una variante cae por su propia geometría."""
+    pts = sorted((e["nq"], e["eta"]) for k, e in estado.items()
+                 if k != excluir and e.get("tipo") == "base" and e.get("estado") == "OK" and finito(e.get("eta")) and e.get("nq"))
     if len(pts) < 3:
         return None
     if nq <= pts[0][0]:
@@ -624,17 +707,23 @@ def chequear(g: dict, lote: dict, P: dict, estado: dict | None = None) -> dict:
     chk("celdas", cel, f"<= {P['max_celdas']}", finito(cel) and cel <= P["max_celdas"])
     bal = res.get("balance_masa_pct")
     chk("balance de masa %", bal, f"<= {C['balance_max_pct']}", finito(bal) and abs(bal) <= C["balance_max_pct"])
-    # fronteras: el caudal que sale debe ser el impuesto (detecta BC cambiada o mal asignada)
-    dq = res.get("Q_out_vs_masa_pct")
-    qo, masa = res.get("Q_out_kg_s", rep.get("Q_out")), lote.get("masa_kg_s")
-    if not finito(dq) and finito(qo) and masa:
-        dq = (abs(qo) - masa) / masa * 100
-    if finito(dq):
-        chk("caudal de salida = BC %", dq, f"|x| <= {C['Q_bc_tol_pct']}", abs(dq) <= C["Q_bc_tol_pct"])
-    # giro: con el par con el signo de una turbina (o par ~0) la bomba gira al revés o el eje está mal
+    # caudal: el másico impuesto en la salida tiene que ser el del punto de diseño (ρ·Q), y por la entrada tiene que
+    # entrar lo mismo (la salida es la BC: compararla consigo misma no detecta nada)
+    masa = lote.get("masa_kg_s")
+    if masa and lote.get("rho") and lote.get("Q_m3h"):
+        dqd = (masa / (lote["rho"] * lote["Q_m3h"] / 3600) - 1) * 100
+        chk("caudal BC = ρ·Q de diseño %", dqd, f"|x| <= {C['Q_bc_tol_pct']}", abs(dqd) <= C["Q_bc_tol_pct"])
+    qin = (h.get("Q_in") or {}).get("media", rep.get("Q_in"))
+    if finito(qin) and masa:
+        dqi = (abs(qin) / masa - 1) * 100
+        chk("caudal que entra = BC %", dqi, f"|x| <= {C['balance_max_pct']}", abs(dqi) <= C["balance_max_pct"])
+    # giro: con el par con el signo de una turbina la bomba gira al revés o el eje está mal. La 09 nueva siempre lo
+    # escribe (lleva r_te_max_m): si falta o es null, la 09 falló a medias y no se puede dar por bueno
     sig = res.get("M_signo_ok")
-    if sig is not None:
+    if sig is not None or "r_te_max_m" in res:
         chk("par con signo de bomba (giro y eje)", sig, "true", sig is True)
+    if finito(Mm):
+        chk("par no nulo", Mm, "|M| > 0", abs(Mm) > 1e-6)
     chk("H > 0", H, "> 0", finito(H) and H > 0)
     Hrel = H / lote["H_diseno_m"] if finito(H) else None
     Href = lote.get("H_referencia_m")
@@ -649,13 +738,20 @@ def chequear(g: dict, lote: dict, P: dict, estado: dict | None = None) -> dict:
         chk("H dentro de lo que predice CFturbo", Hcur, f"{C['H_curva_aviso_min']}–{C['H_curva_aviso_max']}",
             C["H_curva_aviso_min"] <= Hcur <= C["H_curva_aviso_max"], grave=False)
     chk("eta", eta, f"{C['eta_min']}–{C['eta_max']}", finito(eta) and C["eta_min"] <= eta <= C["eta_max"])
-    eref = eta_referencia(lote["nq"], estado or {})
+    eref = eta_referencia(lote["nq"], estado or {}, g["id"]) if lote["tipo"] == "base" else None
     if eref is not None and finito(eta):
-        chk("eta frente a las bases del lote a esa nq", eta - eref, f"±{C['eta_banda_nq']}", abs(eta - eref) <= C["eta_banda_nq"], grave=False)
+        chk("eta frente a las otras bases del lote a esa nq", eta - eref, f"±{C['eta_banda_nq']}",
+            abs(eta - eref) <= C["eta_banda_nq"], grave=False)
     hh = h.get("H") or {}
+    lim = C["deriva_H_max_pct_100it"]
     if "deriva_pct_100it" in hh:
-        chk("deriva de H %/100 it.", hh["deriva_pct_100it"], f"|x| <= {C['deriva_H_max_pct_100it']}",
-            abs(hh["deriva_pct_100it"]) <= C["deriva_H_max_pct_100it"])
+        # deriva de H y de η graves (son los números que se entregan); la de M, aviso
+        for mon, nombre, grave in (("H", "deriva de H %/100 it.", True), ("eta", "deriva de η %/100 it.", True),
+                                   ("M", "deriva de M %/100 it.", False)):
+            d = h.get(mon) or {}
+            if "deriva_pct_100it" in d:
+                chk(nombre, d["deriva_pct_100it"], f"|x| <= {lim} (en {P['ventana_promedio']} y {2 * P['ventana_promedio']} it.)",
+                    not deriva_real(d, lim), grave=grave)
         chk("oscilación de H % (2σ sin tendencia)", hh["oscilacion_pct"], f"<= {C['oscilacion_H_max_pct']}",
             hh["oscilacion_pct"] <= C["oscilacion_H_max_pct"])
     else:
@@ -677,8 +773,10 @@ def chequear(g: dict, lote: dict, P: dict, estado: dict | None = None) -> dict:
         chk("y+ máximo en álabes", ym, f"<= {C['yplus_max']}", ym <= C["yplus_max"], grave=False)
     md, mt = res.get("M_discos"), res.get("M_total", Mm)
     if finito(md) and finito(mt) and abs(mt) > 1e-9:
+        # en nq bajas la fricción de disco es de por sí 20–35 % de la potencia (Gülich): el límite sube
+        fmax = C["M_discos_max_frac"] if lote["nq"] >= 25 else C.get("M_discos_max_frac_nq_bajo", 0.45)
         fr = abs(md / mt)
-        chk("par de discos / par total", fr, f"<= {C['M_discos_max_frac']}", fr <= C["M_discos_max_frac"], grave=False)
+        chk("par de discos / par total", fr, f"<= {fmax}", fr <= fmax, grave=False)
     imgs = len(list((caso / "images").glob("*.png")))
     chk("escenas PNG", imgs, f">= {C['escenas_min']}", imgs >= C["escenas_min"], grave=False)
     chk("ejecutor terminó", eje.get("estado"), "COMPLETO", eje.get("estado") == "COMPLETO")
@@ -687,7 +785,11 @@ def chequear(g: dict, lote: dict, P: dict, estado: dict | None = None) -> dict:
            "deriva_H_pct_100it": hh.get("deriva_pct_100it"), "oscilacion_H_pct": hh.get("oscilacion_pct"),
            "D2_medido_mm": round(2 * rmax * 1000, 2) if rmax else None, "celdas": cel, "iteracion": it,
            "graves_fallidos": graves, "avisos": [c["chequeo"] for c in lista if not c["grave"] and not c["ok"]],
-           "solo_falta_convergencia": bool(graves) and set(graves) <= {"deriva de H %/100 it.", "oscilación de H % (2σ sin tendencia)"},
+           # iterar más solo arregla una deriva (y moderada): una oscilación sin deriva es física (carga parcial, nq bajas)
+           "extender_util": bool(graves) and set(graves) <= {"deriva de H %/100 it.", "deriva de η %/100 it.",
+                                                             "oscilación de H % (2σ sin tendencia)"}
+                            and bool({"deriva de H %/100 it.", "deriva de η %/100 it."} & set(graves))
+                            and abs(hh.get("deriva_pct_100it") or 0) < 10,
            "chequeos": lista, "promedios": h}
     escribir_json(caso / "chequeos.json", out)
     return out
@@ -703,7 +805,7 @@ def entregar(g: dict, lote: dict, P: dict) -> Path:
         if (caso / sub).is_dir():
             if (dst / sub).is_dir():
                 shutil.rmtree(dst / sub, ignore_errors=True)   # sin restos de corridas anteriores
-            shutil.copytree(caso / sub, dst / sub)
+            shutil.copytree(caso / sub, dst / sub, dirs_exist_ok=True)
     if (caso / "surfaces" / "_raw" / "superficies").is_dir():
         shutil.copytree(caso / "surfaces" / "_raw" / "superficies", dst / "surfaces", dirs_exist_ok=True)
     for f in ("RESUMEN.md", "lote.json", "resultado_solver.json", "chequeos.json", "veredicto.json", "ejecucion.json", "malla.json"):
@@ -715,17 +817,27 @@ def entregar(g: dict, lote: dict, P: dict) -> Path:
         tmp = dsim.with_name(dsim.name + ".copiando")
         shutil.copy2(sim, tmp)
         os.replace(tmp, dsim)
-    if P.get("borrar_backups_sim") and dsim.is_file():
-        for b in M.SIMS.glob(f"{g['id']}.sim~*"):   # copias de seguridad de STAR-CCM+ de este caso: ya está entregado
-            b.unlink(missing_ok=True)
+    if P.get("borrar_backups_sim") and dsim.is_file() and sim.is_file():
+        for b in M.SIMS.glob(f"{g['id']}.sim~*"):
+            # copias de seguridad de STAR-CCM+: sobran si el último guardado es posterior (si el guardado final falló,
+            # el .sim~ puede ser la única copia buena y se queda)
+            if b.stat().st_mtime < sim.stat().st_mtime:
+                b.unlink(missing_ok=True)
     return dst
 
 
+MAX_LECCIONES_NUEVAS = 40
+
+
 def anotar_leccion(gid: str, leccion: str) -> str | None:
-    """Las lecciones del revisor no entran tal cual en el prompt del ejecutor: van validadas (una línea, corta, sin
-    repetir) a lecciones_revisor.md. lote/lecciones.md (la que lee el ejecutor) solo la cambia una persona."""
+    """Las lecciones del revisor no entran en el prompt del ejecutor: van filtradas (una línea, corta, sin repetir el
+    comienzo de otra, como mucho 40 sin consolidar) a lecciones_revisor.md. lote/lecciones.md (la que lee el ejecutor)
+    solo la cambia una persona."""
     t = re.sub(r"\s+", " ", (leccion or "")).strip()
     if not t or len(t) > 320:
+        return None
+    if Cfg.lecciones_rev.is_file() and Cfg.lecciones_rev.read_text(encoding="utf-8").split("## Nuevas")[-1].count("\n- ") >= MAX_LECCIONES_NUEVAS:
+        evento("aviso", gid, f"lecciones_revisor.md tiene {MAX_LECCIONES_NUEVAS} lecciones sin consolidar: no añado más")
         return None
     previo = Cfg.lecciones_rev.read_text(encoding="utf-8") if Cfg.lecciones_rev.is_file() else \
         "# Lecciones del revisor\n\nLas escribe el orquestador desde veredicto.json; las lee el revisor. Las útiles para el " \
@@ -752,8 +864,11 @@ def aprender(g: dict, lote: dict, ver: dict, P: dict) -> list[str]:
         ext = sum(v for k, v in (res.get("celdas_region") or {}).items() if k.startswith("ext_"))
         entrada = {"caso": g["clave"], "nq": lote["nq"], "D2_mm": D2, "base_mm": float(mb.group(1)),
                    "celdas_sin_ext": res["celdas"] - ext, "celdas": res["celdas"], "estado": ver.get("estado")}
-        if me:
-            entrada["ext_base_factor"] = round(float(me.group(1)) / float(mb.group(1)))
+        # base real de las extensiones: el que dejó la 02 (remalla con 2 × BASE_MM), no el que se puso en la 03
+        mj = (leer_json(caso / "malla.json", {}) or {}).get("malla_02") or {}
+        bext = mj.get("base_ext_mm") or (float(me.group(1)) if me else None)
+        if finito(bext):
+            entrada["ext_base_factor"] = round(bext / float(mb.group(1)))
         P["historial_malla"] = [e for e in P["historial_malla"] if e["caso"] != g["clave"]] + [entrada]
         cambios.append(f"historial de malla: {g['clave']} base {mb.group(1)} mm → {res['celdas']} celdas")
     prop = leer_json(Cfg.propuestas, []) or []
@@ -797,7 +912,7 @@ def commit_aprendizaje(casos: list[str]) -> None:
 
 # ---------------------------------------------------------------- tablas, consolidado e índice
 
-COLS = ["id", "estado", "alertas", "graves", "tipo", "nq", "Z", "dBeta2_deg", "fD2", "intentos", "iteracion", "H_m", "H_rel",
+COLS = ["id", "estado", "conflicto", "alertas", "graves", "tipo", "nq", "Z", "dBeta2_deg", "fD2", "intentos", "iteracion", "H_m", "H_rel",
         "H_ref_m", "H_rel_curva", "M_Nm", "eta", "deriva_H_pct_100it", "oscilacion_H_pct", "celdas", "base_mm",
         "D2_esperado_mm", "D2_medido_mm", "minutos", "coste_usd", "motivo", "fin"]
 
@@ -845,7 +960,17 @@ def fila_estado(gid: str, previo: dict | None = None) -> dict | None:
         e["estado"] = ver["estado"]
         e["motivo"] = ver.get("motivo", "")
         e["alertas"] = ver.get("alertas") or chq.get("avisos") or []
+    e["conflicto"] = conflicto(e.get("estado"), e["graves"], chq.get("extender_util"))
     return e
+
+
+def conflicto(estado_: str | None, graves: list, extender_util: bool | None) -> str:
+    """El veredicto se respeta, pero si los chequeos lo contradicen se dice en la tabla (no se reescribe en silencio)."""
+    if estado_ == "OK" and graves:
+        return "OK del revisor, pero los chequeos fallan: " + ", ".join(graves) + (" → --extender" if extender_util else "")
+    if estado_ == "REVISAR" and not graves:
+        return "REVISAR sin ningún chequeo grave: re-revisar"
+    return ""
 
 
 def curva_convergencia(caso: Path, ventana: int = 200) -> Path | None:
@@ -864,11 +989,22 @@ def curva_convergencia(caso: Path, ventana: int = 200) -> Path | None:
         return None
     it = [r[0] for r in d]
     i0 = next((i for i, x in enumerate(it) if x >= 50), 0)   # las primeras iteraciones aplastan la escala
+    v0 = it[-1] - ventana
     fig, axs = plt.subplots(len(cols), 1, figsize=(8, 2.2 * len(cols)), sharex=True)
     axs = axs if len(cols) > 1 else [axs]
     for ax, (n, j) in zip(axs, cols):
-        ax.plot(it[i0:], [r[j] for r in d[i0:]], lw=1)
-        ax.axvspan(max(it[-1] - ventana, it[i0]), it[-1], color="0.85", zorder=0)   # ventana del promedio
+        ys = [r[j] for r in d[i0:]]
+        ax.plot(it[i0:], ys, lw=1, color="#1f5fa8")
+        ax.axvspan(v0, it[-1], color="#f2c14e", alpha=0.25, zorder=0)              # ventana del promedio
+        fin = [r[j] for r in d if r[0] > v0]
+        m = sum(fin) / len(fin)
+        ax.axhline(m, color="#b35900", lw=1, ls="--")
+        ax.text(it[-1], m, f" {m:.3g}", va="center", fontsize=8, color="#b35900")
+        # escala de las últimas ~500 it.: el transitorio inicial no debe esconder la oscilación final
+        cola = [r[j] for r in d if r[0] > it[-1] - 500]
+        lo, hi = min(cola), max(cola)
+        pad = max(hi - lo, abs(m) * 0.02) * 0.6
+        ax.set_ylim(lo - pad, hi + pad)
         ax.set_ylabel({"H": "H [m]", "M": "M [N·m]", "eta": "η"}[n])
         ax.grid(alpha=0.3)
     axs[-1].set_xlabel("iteración")
@@ -892,8 +1028,14 @@ def consolidado(estado: dict) -> None:
         ws.append(COLS)
         for f in filas:
             ws.append([_celda(f.get(c)) for c in COLS])
+        fiable = lambda e: e.get("estado") == "OK" and not e.get("conflicto")
+        ws.append([])
+        ws.append(["TOTAL", f"OK {sum(f.get('estado') == 'OK' for f in filas)} · REVISAR "
+                            f"{sum(f.get('estado') == 'REVISAR' for f in filas)}"] + [""] * (COLS.index("minutos") - 2)
+                  + [round(sum(f.get("minutos") or 0 for f in filas), 1), round(sum(f.get("coste_usd") or 0 for f in filas), 2)])
         ws2 = wb.create_sheet("Base_vs_variantes")
-        ws2.append(["variante", "base", "nq", "Z", "dBeta2_deg", "fD2", "H_var_m", "H_base_m", "dH_pct", "eta_var", "eta_base", "deta"])
+        ws2.append(["variante", "base", "nq", "Z", "dBeta2_deg", "fD2", "H_var_m", "H_base_m", "dH_pct", "eta_var",
+                    "eta_base", "deta", "estado_var", "estado_base", "comparación fiable"])
         for f in filas:
             if f.get("tipo") != "variante":
                 continue
@@ -902,17 +1044,32 @@ def consolidado(estado: dict) -> None:
             if finito(f.get("H_m")) and finito(b.get("H_m")):
                 ws2.append([f["id"], lote.get("base_gid"), f.get("nq"), f.get("Z"), f.get("dBeta2_deg"), f.get("fD2"),
                             f["H_m"], b["H_m"], (f["H_m"] / b["H_m"] - 1) * 100, f.get("eta"), b.get("eta"),
-                            (f.get("eta") or 0) - (b.get("eta") or 0)])
+                            (f.get("eta") or 0) - (b.get("eta") or 0), f.get("estado"), b.get("estado"),
+                            "sí" if fiable(f) and fiable(b) else "no: " + ("base " if not fiable(b) else "") +
+                            ("variante" if not fiable(f) else "")])
         ws3 = wb.create_sheet("Chequeos")
         ws3.append(["id", "chequeo", "valor", "limite", "ok", "grave"])
         for f in filas:
             for c in (leer_json(M.CASES / f["id"] / "chequeos.json", {}) or {}).get("chequeos", []):
                 ws3.append([f["id"], c["chequeo"], _celda(c["valor"]) if not isinstance(c["valor"], (dict, list)) else str(c["valor"]),
                             c["limite"], c["ok"], c["grave"]])
+        from openpyxl.styles import Font, PatternFill
+        fmt = {"H_m": "0.0", "H_rel": "0.00", "H_ref_m": "0.0", "H_rel_curva": "0.00", "M_Nm": "0.0", "eta": "0.000",
+               "deriva_H_pct_100it": "0.00", "oscilacion_H_pct": "0.00", "celdas": "#,##0", "base_mm": "0.0",
+               "D2_esperado_mm": "0.0", "D2_medido_mm": "0.0", "minutos": "0.0", "coste_usd": "0.00", "fD2": "0.000",
+               "H_var_m": "0.0", "H_base_m": "0.0", "dH_pct": "0.0", "eta_var": "0.000", "eta_base": "0.000", "deta": "+0.000;-0.000"}
+        anchos = {"motivo": 60, "alertas": 40, "graves": 40, "conflicto": 40, "id": 16, "variante": 16, "chequeo": 40, "limite": 28}
         for w in (ws, ws2, ws3):
             w.freeze_panes = "B2"
-            for i in range(1, w.max_column + 1):
-                w.column_dimensions[get_column_letter(i)].width = 14
+            w.auto_filter.ref = f"A1:{get_column_letter(w.max_column)}{1 + len(filas) if w is ws else w.max_row}"
+            hdr = [c.value for c in w[1]]
+            for i, h in enumerate(hdr, start=1):
+                w.cell(1, i).font = Font(bold=True)
+                w.cell(1, i).fill = PatternFill("solid", fgColor="DDE6F0")
+                w.column_dimensions[get_column_letter(i)].width = anchos.get(h, 12)
+                if h in fmt:
+                    for row in w.iter_rows(min_row=2, min_col=i, max_col=i):
+                        row[0].number_format = fmt[h]
         out = Cfg.geo / "_resultados_CFD.xlsx"
         tmp = out.with_name("_resultados_CFD.tmp.xlsx")
         wb.save(tmp)
@@ -989,22 +1146,49 @@ def consolidar(estado: dict) -> dict:
 
 # ---------------------------------------------------------------- bucle
 
-def reanudable(gid: str, previo: dict) -> dict | None:
-    """Un caso que quedó «en curso» (corte, reinicio) con la ejecución del intento ya terminada se retoma desde los
-    chequeos, sin volver a gastar solver. Devuelve su lote.json o None."""
+def archivar_intento(caso: Path, gid: str, n: int, tipo_siguiente: str) -> None:
+    """Antes de un intento nuevo, lo que dejó el anterior se aparta a cases/<ID>/_intento<n>/: si el nuevo falla, sus
+    chequeos no pueden leer los resultados viejos como propios. En «rehacer» también se aparta el .sim (el ejecutor
+    empieza de cero) y las curvas; en «extender» el .sim y las curvas siguen (se continúa desde ahí)."""
+    dst = caso / f"_intento{n}"
+    dst.mkdir(exist_ok=True)
+    for f in ("resultado_solver.json", "ejecucion.json", "veredicto.json", "chequeos.json", "RESUMEN.md"):
+        if (caso / f).is_file():
+            shutil.move(str(caso / f), dst / f)
+    if tipo_siguiente == "rehacer":
+        for sub in ("reports", "images"):
+            if (caso / sub).is_dir():
+                shutil.move(str(caso / sub), dst / sub)
+                (caso / sub).mkdir()
+        sim = M.SIMS / f"{gid}.sim"
+        if sim.is_file() and not Cfg.seco:
+            (M.SIMS / "_previos").mkdir(exist_ok=True)
+            shutil.move(str(sim), M.SIMS / "_previos" / f"{gid}_intento{n}_{datetime.now():%Y%m%d_%H%M%S}.sim")
+
+
+def reanudable(gid: str, previo: dict) -> list | None:
+    """Qué intentos quedan de un caso que no terminó, sin volver a gastar solver en lo ya hecho:
+    - «en curso» o ERROR con la ejecución del intento terminada (corte, reinicio, fallo al entregar): ese intento desde
+      los chequeos;
+    - PENDIENTE (PARAR llegó cuando tocaba un segundo intento): ese segundo intento.
+    Devuelve [(intento, tipo, instrucciones, max_it, ya_ejecutado)] o None."""
     caso = M.CASES / gid
     lote = leer_json(caso / "lote.json")
-    if previo.get("estado") != "en curso" or not lote:
+    if not lote or previo.get("estado") not in ("en curso", "ERROR", "PENDIENTE"):
         return None
+    if previo.get("estado") == "PENDIENTE" and lote.get("pendiente"):
+        p = lote["pendiente"]
+        return [(p["intento"], p["tipo"], p["instrucciones"], p.get("max_it"), False)]
     eje = leer_json(caso / "ejecucion.json", {}) or {}
-    if eje.get("estado") in ("COMPLETO", "REVISAR") and (caso / "resultado_solver.json").is_file() \
-            and (caso / "resultado_solver.json").stat().st_mtime >= (caso / "lote.json").stat().st_mtime:
-        return lote
+    res = caso / "resultado_solver.json"
+    if eje.get("estado") in ("COMPLETO", "REVISAR") and res.is_file() and res.stat().st_mtime >= (caso / "lote.json").stat().st_mtime:
+        return [(lote["intento"], lote.get("tipo_intento", "completo"), lote.get("instrucciones_reintento", ""),
+                 lote.get("iteraciones"), True)]
     return None
 
 
 def parar_pedido() -> bool:
-    return (LOTE / "PARAR").is_file() and not Cfg.seco
+    return Cfg.parar.is_file()
 
 
 def una(g: dict, todas: list[dict], estado: dict, extender_hasta: int | None = None) -> None:
@@ -1023,11 +1207,11 @@ def una(g: dict, todas: list[dict], estado: dict, extender_hasta: int | None = N
         lj = leer_json(caso / "lote.json")
         if not lj or not (M.SIMS / f"{gid}.sim").is_file():
             raise RuntimeError(f"no hay caso o .sim que extender: {caso}, sims/{gid}.sim")
-        intentos = [(lj["intento"] + 1, "extender", f"Seguir iterando hasta {extender_hasta} sin remallar.", extender_hasta)]
+        intentos = [(lj["intento"] + 1, "extender", f"Seguir iterando hasta {extender_hasta} sin remallar.", extender_hasta, False)]
     elif retomar:
-        evento("aviso", gid, f"retomo el intento {retomar['intento']}: la ejecución ya había terminado")
-        intentos = [(retomar["intento"], retomar.get("tipo_intento", "completo"), retomar.get("instrucciones_reintento", ""),
-                     retomar.get("iteraciones"))]
+        evento("aviso", gid, f"retomo el intento {retomar[0][0]} ({retomar[0][1]})"
+                             + (": la ejecución ya había terminado" if retomar[0][4] else ""))
+        intentos = retomar
     else:
         # intento limpio: lo de un intento anterior se aparta (no se borra)
         if not Cfg.seco and (M.SIMS / f"{gid}.sim").is_file():
@@ -1037,49 +1221,73 @@ def una(g: dict, todas: list[dict], estado: dict, extender_hasta: int | None = N
         if caso.is_dir():
             (M.CASES / "_previos").mkdir(exist_ok=True)
             shutil.move(str(caso), M.CASES / "_previos" / f"{gid}_{datetime.now():%Y%m%d_%H%M%S}")
-        intentos = [(1, "completo", "", None)]
+        intentos = [(1, "completo", "", None, False)]
     ver, chq, lote = {}, {}, {}
     while intentos:
-        intento, tipo, instr, max_it = intentos.pop(0)
-        lote = preparar(g, todas, P, intento, tipo, instr, max_it) if not (retomar and intento == retomar["intento"]) else retomar
-        e["intentos"] = intento
-        if not (retomar and intento == retomar["intento"]):
+        intento, tipo, instr, max_it, ya = intentos.pop(0)
+        if ya:
+            lote = leer_json(caso / "lote.json")
+        else:
+            if intento > 1 and caso.is_dir():
+                archivar_intento(caso, gid, intento - 1, tipo)
+            lote = preparar(g, todas, P, intento, tipo, instr, max_it)
+            e["intentos"] = intento
+            escribir_json(Cfg.estado, estado)
             evento("inicio", gid, f"intento {intento} ({tipo}): nq {lote['nq']} {lote['tipo']}, Q {lote['Q_m3h']} m³/h, "
                                   f"H diseño {lote['H_diseno_m']} m, base {lote['base_mm']} mm, {lote['iteraciones']} it.")
+            t_int = time.time()
             r = ejecutar(g, lote)
             coste += r.get("coste_usd") or 0
             asegurar_solver_apagado(gid)
-            if not (caso / "resultado_solver.json").is_file() and (r.get("rc") or r.get("cortado") or r.get("subtipo") != "success"):
-                raise ErrorInfra(f"el ejecutor no dejó resultado (rc {r.get('rc')}, {r.get('subtipo')}, "
-                                 f"{'cortado por tiempo' if r.get('cortado') else 'sin corte'})")
+            res = caso / "resultado_solver.json"
+            fresco = res.is_file() and res.stat().st_mtime >= t_int - 1
+            if not fresco and es_infra(r):
+                raise ErrorInfra(f"el ejecutor no dejó resultado (rc {r.get('rc')}, {r.get('subtipo')})")
+            if not fresco:
+                evento("aviso", gid, f"el ejecutor terminó sin resultado ({r.get('subtipo')}"
+                                     f"{', cortado por tiempo' if r.get('cortado') else ''}): lo decide la revisión")
+        e["intentos"] = intento
         chq = chequear(g, lote, P, estado)
-        puede_extender = lote["iteraciones"] < P["iteraciones_extension"]
-        if chq["solo_falta_convergencia"] and intento == 1 and puede_extender and not parar_pedido():
-            # H aún se mueve y todo lo demás está bien: seguir iterando es lo que pediría el revisor; no se le gasta
+        # extender: hasta iteraciones_extension, y al menos 500 más de las que ya tiene (nq bajas empiezan en 1500)
+        hasta_ext = max(P["iteraciones_extension"], lote["iteraciones"] + 500)
+        puede_extender = intento == 1
+        siguiente = None
+        if chq["extender_util"] and intento == 1 and puede_extender:
+            # H (o η) aún deriva y todo lo demás está bien: seguir iterando es lo que pediría el revisor; no se le gasta
             ins = (f"H sigue moviéndose (deriva {chq['deriva_H_pct_100it']:.2f} %/100 it., oscilación "
-                   f"{chq['oscilacion_H_pct']:.2f} %): seguir de {lote['iteraciones']} a {P['iteraciones_extension']} it. sin remallar.")
-            evento("reintento", gid, ins)
-            intentos.append((2, "extender", ins, P["iteraciones_extension"]))
-            continue
-        rv = revisar(g, lote)
-        coste += rv.get("coste_usd") or 0
-        ver = leer_json(caso / "veredicto.json", {}) or veredicto_denegado(caso / "logs" / f"revisor_{intento}.jsonl")
-        if ver.get("estado") not in ("OK", "REINTENTAR", "REVISAR"):  # sin revisor: los chequeos deciden
-            ver = {"estado": "OK" if not chq["graves_fallidos"] else "REVISAR",
-                   "motivo": "sin veredicto del revisor; decidido por los chequeos: " + (", ".join(chq["graves_fallidos"]) or "todo bien")}
-        ver.setdefault("alertas", chq["avisos"])
-        escribir_json(caso / "veredicto.json", ver)
-        if ver["estado"] == "REINTENTAR" and intento == 1 and not parar_pedido():
-            tipo2 = "extender" if ver.get("reintento") == "extender" and puede_extender else "rehacer"
-            instr = ver.get("instrucciones_reintento") or ver.get("motivo", "")
-            evento("reintento", gid, f"{tipo2}: {instr[:280]}")
-            intentos.append((2, tipo2, instr, P["iteraciones_extension"] if tipo2 == "extender" else None))
-            continue
-        if ver["estado"] == "REINTENTAR":
-            ver["estado"] = "REVISAR"
-            escribir_json(caso / "veredicto.json", ver)
+                   f"{chq['oscilacion_H_pct']:.2f} %): seguir de {lote['iteraciones']} a {hasta_ext} it. sin remallar.")
+            siguiente = (2, "extender", ins, hasta_ext, False)
+        else:
+            rv = revisar(g, lote)
+            coste += rv.get("coste_usd") or 0
+            v = caso / "veredicto.json"
+            ver = (leer_json(v, {}) if v.is_file() and v.stat().st_mtime >= chq_mtime(caso) else {}) \
+                or veredicto_denegado(caso / "logs" / f"revisor_{intento}.jsonl")
+            if ver.get("estado") not in ("OK", "REINTENTAR", "REVISAR"):  # sin revisor: los chequeos deciden
+                ver = {"estado": "OK" if not chq["graves_fallidos"] else "REVISAR",
+                       "motivo": "sin veredicto del revisor; decidido por los chequeos: " + (", ".join(chq["graves_fallidos"]) or "todo bien")}
+            ver.setdefault("alertas", chq["avisos"])
+            if ver["estado"] == "REINTENTAR" and intento == 1:
+                tipo2 = "extender" if ver.get("reintento") == "extender" and puede_extender else "rehacer"
+                siguiente = (2, tipo2, ver.get("instrucciones_reintento") or ver.get("motivo", ""),
+                             hasta_ext if tipo2 == "extender" else None, False)
+            elif ver["estado"] == "REINTENTAR":
+                ver["estado"] = "REVISAR"
+            escribir_json(v, ver)
+        if siguiente:
+            if parar_pedido():
+                # PARAR: el segundo intento queda apuntado y se hará al relanzar (no se cierra el caso a medias)
+                lote["pendiente"] = dict(zip(("intento", "tipo", "instrucciones", "max_it"), siguiente[:4]))
+                escribir_json(caso / "lote.json", lote)
+                e.update(estado="PENDIENTE", motivo=f"PARAR antes del intento {siguiente[0]} ({siguiente[1]})", fin=ahora())
+                escribir_json(Cfg.estado, estado)
+                tabla(estado)
+                evento("aviso", gid, f"queda pendiente el intento {siguiente[0]} ({siguiente[1]}) por PARAR")
+                return
+            evento("reintento", gid, f"{siguiente[1]}: {siguiente[2][:280]}")
+            intentos.append(siguiente)
     destino = entregar(g, lote, P)
-    curva_convergencia(caso)
+    curva_convergencia(caso, P["ventana_promedio"])
     if (caso / "images" / "convergencia.png").is_file():
         shutil.copy2(caso / "images" / "convergencia.png", destino / "images" / "convergencia.png")
     cambios = aprender(g, lote, ver, P)
@@ -1087,6 +1295,7 @@ def una(g: dict, todas: list[dict], estado: dict, extender_hasta: int | None = N
     e.update({k: chq.get(k) for k in ("iteracion", "H_m", "H_rel", "H_ref_m", "H_rel_curva", "M_Nm", "eta",
                                       "deriva_H_pct_100it", "oscilacion_H_pct", "celdas", "D2_medido_mm")})
     e.update(estado=ver["estado"], motivo=ver.get("motivo", ""), alertas=ver.get("alertas", []), graves=chq["graves_fallidos"],
+             conflicto=conflicto(ver["estado"], chq["graves_fallidos"], chq.get("extender_util")),
              minutos=round((time.time() - t0) / 60, 1), coste_usd=round(coste, 2), fin=ahora(), destino=str(destino))
     escribir_json(Cfg.estado, estado)
     tabla(estado)
@@ -1094,6 +1303,18 @@ def una(g: dict, todas: list[dict], estado: dict, extender_hasta: int | None = N
     evento("fin", gid, f"{ver['estado']}: H {fmt(chq['H_m'])} m ({fmt((chq['H_rel'] or 0) * 100, 0)} % del diseño), "
                        f"η {fmt(chq['eta'], 3)}, {chq['celdas']} celdas, {e['minutos']} min. {ver.get('motivo', '')[:200]}",
            estado=ver["estado"], cambios=cambios)
+
+
+def chq_mtime(caso: Path) -> float:
+    f = caso / "chequeos.json"
+    return f.stat().st_mtime - 1 if f.is_file() else 0.0
+
+
+def esperar(segundos: float) -> None:
+    """Espera atenta a PARAR (para no tener el lote dormido si alguien quiere pararlo)."""
+    fin = time.time() + segundos
+    while time.time() < fin and not parar_pedido():
+        time.sleep(min(30.0, max(0.0, fin - time.time())))
 
 
 def main(argv: list[str]) -> int:
@@ -1106,6 +1327,9 @@ def main(argv: list[str]) -> int:
         for k in sorted(estado):
             print(k, estado[k].get("estado"), estado[k].get("H_m"), estado[k].get("eta"), str(estado[k].get("motivo", ""))[:80])
         return 0
+    if any(a in argv for a in ("--preparar", "--consolidar", "--limpiar-backups")) and (l := lote_vivo()):
+        print(f"Hay un lote corriendo (PID {l['pid']}): espera a que termine (o crea lote/PARAR) antes de esto.")
+        return 2
     if "--preparar" in argv:
         ids = arg("--preparar").split(",")
         P = leer_json(Cfg.params)
@@ -1120,13 +1344,25 @@ def main(argv: list[str]) -> int:
         print(f"consolidado: {len(estado)} casos → {Cfg.geo / '_resultados_CFD.xlsx'}, _lote_simulacion.csv, _indice_CFD.html")
         return 0
     if "--limpiar-backups" in argv:
+        # .sim~ de casos entregados; con --incluir-sims también sims/<ID>.sim cuando la copia entregada es idéntica en
+        # tamaño (deja de poderse --extender sin volver a copiarla desde CFD\)
         libres = 0
         for k, v in estado.items():
-            if v.get("estado") in ESTADOS_FINALES:
-                for b in M.SIMS.glob(f"{k}.sim~*"):
-                    libres += b.stat().st_size
+            if v.get("estado") not in ESTADOS_FINALES:
+                continue
+            borrar = list(M.SIMS.glob(f"{k}.sim~*"))
+            lote = leer_json(M.CASES / k / "lote.json", {}) or {}
+            sim, dsim = M.SIMS / f"{k}.sim", Path(lote.get("sim_destino", "")) if lote.get("sim_destino") else None
+            if "--incluir-sims" in argv and sim.is_file() and dsim and dsim.is_file() and dsim.stat().st_size == sim.stat().st_size:
+                borrar.append(sim)
+            for b in borrar:
+                try:
+                    tam = b.stat().st_size
                     b.unlink()
-        print(f"liberados {libres / 1e9:.1f} GB de sims/*.sim~")
+                    libres += tam
+                except OSError as ex:
+                    print(f"no pude borrar {b.name}: {ex}")
+        print(f"liberados {libres / 1e9:.1f} GB en sims/")
         return 0
     if not tomar_lock():
         return 2
@@ -1135,6 +1371,7 @@ def main(argv: list[str]) -> int:
         evento("arranque", "", f"PID {os.getpid()}")
         asegurar_solver_apagado("")       # un solver que dejó una corrida anterior caída no debe bloquear la licencia
         extender = arg("--extender")
+        hasta = None
         if extender:
             hasta = int(arg("--hasta") or leer_json(Cfg.params)["iteraciones_extension"])
             cola = [g for g in todas if any(g["clave"].startswith(s) for s in extender.split(","))]
@@ -1145,37 +1382,44 @@ def main(argv: list[str]) -> int:
                     and (estados is None or estado.get(g["id"], {}).get("estado") in estados)
                     and (solo is not None or estados is not None or estado.get(g["id"], {}).get("estado") not in ESTADOS_FINALES)]
         evento("lote_inicio", "", f"{len(cola)} geometrías: {', '.join(g['clave'] for g in cola)}")
-        infra = 0
-        for g in cola:
+        infra, i = 0, 0
+        while i < len(cola):
+            g = cola[i]
             if parar_pedido():
                 evento("lote_parado", "", "encontré lote/PARAR")
-                (LOTE / "PARAR").unlink(missing_ok=True)
                 break
             try:
-                una(g, todas, estado, hasta if extender else None)
+                una(g, todas, estado, hasta)
                 hechos.append(g["clave"])
-                infra = 0
+                infra, i = 0, i + 1
             except ErrorInfra as ex:
                 infra += 1
                 asegurar_solver_apagado(g["id"])
                 estado.setdefault(g["id"], {}).update(estado="ERROR_INFRA", motivo=str(ex)[:300], fin=ahora())
                 escribir_json(Cfg.estado, estado)
                 tabla(estado)
-                evento("error", g["id"], f"infraestructura: {str(ex)[:280]}")
-                if infra >= MAX_INFRA_SEGUIDOS:
+                if infra > MAX_INFRA_SEGUIDOS:
                     evento("lote_parado", "", f"{infra} fallos de infraestructura seguidos (¿cuota, red o sesión de claude?): "
-                                              "paro para no quemar la cola; relanzar retoma desde aquí")
+                                              "paro; relanzar retoma desde aquí")
                     break
+                evento("error", g["id"], f"infraestructura ({infra}/{MAX_INFRA_SEGUIDOS + 1}): {str(ex)[:220]}. "
+                                         f"Espero {Cfg.espera_infra // 60} min y lo reintento")
+                esperar(Cfg.espera_infra)    # cuota o red suelen volver solas; no se avanza para no quemar la cola
             except Exception as ex:  # noqa: BLE001  una geometría rota no para el lote
                 asegurar_solver_apagado(g["id"])
                 estado.setdefault(g["id"], {}).update(estado="ERROR", motivo=str(ex)[:300], fin=ahora())
-                escribir_json(Cfg.estado, estado)
+                try:
+                    escribir_json(Cfg.estado, estado)
+                except OSError:
+                    pass
                 tabla(estado)
                 evento("error", g["id"], str(ex)[:300])
+                infra, i = 0, i + 1
+        Cfg.parar.unlink(missing_ok=True)   # PARAR ya surtió efecto (o llegó en la última geometría)
         resumen = [v.get("estado") for v in estado.values()]
         consolidado(estado)
         evento("lote_fin", "", f"OK {resumen.count('OK')}, REVISAR {resumen.count('REVISAR')}, "
-                               f"ERROR {resumen.count('ERROR') + resumen.count('ERROR_INFRA')}")
+                               f"ERROR {resumen.count('ERROR') + resumen.count('ERROR_INFRA')}, PENDIENTE {resumen.count('PENDIENTE')}")
         return 0
     except KeyboardInterrupt:
         evento("lote_abortado", "", "interrumpido (Ctrl+C o cierre)")
@@ -1187,10 +1431,15 @@ def main(argv: list[str]) -> int:
 
 
 def seco() -> int:
-    """Prueba en seco de punta a punta con ejecutor y revisor falsos (lote/falso_claude.py), todo en un temporal y sin git.
-    Cubre: G002 base que deriva → extensión automática → OK; G034 variante con el par al revés → REINTENTAR → REVISAR;
-    G033 con claude caído → ERROR_INFRA; y luego reanudar un caso «en curso» con la ejecución ya hecha."""
+    """Prueba en seco de punta a punta con ejecutor y revisor falsos (lote/falso_claude.py), todo en un temporal, sin git
+    y con un prefijo propio del proceso (dos pruebas a la vez no se pisan). Cubre:
+    1. G002 (nq 15, empieza en 1500) que deriva → extensión automática → OK; G033 con claude caído 2 veces → espera y
+       reintento → OK; G034 con el par al revés → REINTENTAR, pero llega PARAR → PENDIENTE y el lote se para;
+    2. relanzar retoma G034 en su intento 2 (con lo del intento 1 apartado) → REVISAR;
+    3. G002 «en curso» con la ejecución hecha se retoma desde los chequeos, sin ejecutor;
+    4. --extender G002 con claude caído: los resultados viejos no cuentan como nuevos → ERROR_INFRA y lote parado."""
     tmp = Path(tempfile.mkdtemp(prefix="lote-seco-"))
+    pre = f"SECO{os.getpid()}_"
     try:
         (tmp / "geo").mkdir()
         shutil.copy2(GEO / "_estado.json", tmp / "geo" / "_estado.json")
@@ -1200,49 +1449,60 @@ def seco() -> int:
         shutil.copy2(LOTE / "parametros.json", tmp / "parametros.json")
         n0 = len(leer_json(tmp / "parametros.json")["historial_malla"])
         ids0 = {h["caso"] for h in leer_json(tmp / "parametros.json")["historial_malla"]}
-        Cfg.seco, Cfg.geo, Cfg.params, Cfg.estado, Cfg.eventos, Cfg.prefijo = True, tmp / "geo", tmp / "parametros.json", tmp / "estado.json", tmp / "eventos.log", "SECO_"
-        Cfg.propuestas, Cfg.lecciones_rev, Cfg.lock = tmp / "propuestas.json", tmp / "lecciones_revisor.md", tmp / ".lock"
-        os.environ["FALSO_CAIDO"] = "G033"
-        rc = main(["--solo", "G002,G033,G034"])
-        est = leer_json(Cfg.estado, {})
-        P = leer_json(Cfg.params)
+        Cfg.seco, Cfg.geo, Cfg.params, Cfg.estado, Cfg.eventos, Cfg.prefijo = True, tmp / "geo", tmp / "parametros.json", tmp / "estado.json", tmp / "eventos.log", pre
+        Cfg.propuestas, Cfg.lecciones_rev, Cfg.lock, Cfg.parar, Cfg.espera_infra =             tmp / "propuestas.json", tmp / "lecciones_revisor.md", tmp / ".lock", tmp / "PARAR", 0
+        os.environ.update(FALSO_DIR=str(tmp), FALSO_CAIDO="G033:2", FALSO_PARAR="G034")
+        g2, g33, g34 = pre + "G002_nq15_B", pre + "G033_nq65_B", pre + "G034_nq65_V"
+        est_ = lambda k, c="estado": (leer_json(Cfg.estado, {}) or {}).get(k, {}).get(c)
         fallos = []
-        exp = {"SECO_G002_nq15_B": "OK", "SECO_G034_nq65_V": "REVISAR", "SECO_G033_nq65_B": "ERROR_INFRA"}
-        for k, v in exp.items():
-            if est.get(k, {}).get("estado") != v:
-                fallos.append(f"{k}: {est.get(k, {}).get('estado')} (esperaba {v})")
-        if est.get("SECO_G002_nq15_B", {}).get("intentos") != 2 or est.get("SECO_G002_nq15_B", {}).get("iteracion") != P["iteraciones_extension"]:
-            fallos.append("G002 debía extenderse automáticamente a iteraciones_extension")
+        rc = main(["--solo", "G002,G033,G034"])
+        P = leer_json(Cfg.params)
+        for k, v in ((g2, "OK"), (g33, "OK"), (g34, "PENDIENTE")):
+            if est_(k) != v:
+                fallos.append(f"1: {k} {est_(k)} (esperaba {v})")
+        if est_(g2, "intentos") != 2 or est_(g2, "iteracion") != max(P["iteraciones_extension"], 1500 + 500):
+            fallos.append(f"1: G002 debía extenderse sola (intentos {est_(g2, 'intentos')}, it. {est_(g2, 'iteracion')})")
         if not (tmp / "geo" / "_lote_simulacion.csv").is_file() or not (tmp / "geo" / "_indice_CFD.html").is_file():
-            fallos.append("faltan _lote_simulacion.csv o _indice_CFD.html")
+            fallos.append("1: faltan _lote_simulacion.csv o _indice_CFD.html")
         if not any((tmp / "geo").glob("G002_*/CFD/*.sim")) or not any((tmp / "geo").glob("G002_*/CFD/images/*.png")):
-            fallos.append("la entrega de G002 no tiene .sim o imágenes")
-        if len(P["historial_malla"]) != len(ids0 | {"G002_nq15_B", "G034_nq65_V"}) or len(P["historial_malla"]) < n0:
-            fallos.append("historial de malla")
+            fallos.append("1: la entrega de G002 no tiene .sim o imágenes")
+        if len(P["historial_malla"]) < n0 or not {"G002_nq15_B", "G033_nq65_B"} <= {h["caso"] for h in P["historial_malla"]}:
+            fallos.append("1: historial de malla")
         if P["min_rotor_pct"] != 40.0 or P["iteraciones"] != 1000:
-            fallos.append("propuestas: límite o prohibición no aplicados")
-        if Cfg.lock.is_file():
-            fallos.append("quedó el .lock")
-        # reanudar: G002 «en curso» con la ejecución hecha → se retoma sin ejecutor (falso caído para todos)
-        est["SECO_G002_nq15_B"]["estado"] = "en curso"
+            fallos.append("1: propuestas: límite o prohibición no aplicados")
+        if Cfg.lock.is_file() or Cfg.parar.is_file():
+            fallos.append("1: quedó el .lock o PARAR")
+        os.environ.pop("FALSO_PARAR")
+        main(["--solo", "G034"])
+        if est_(g34) != "REVISAR" or est_(g34, "intentos") != 2 or not (M.CASES / g34 / "_intento1" / "veredicto.json").is_file():
+            fallos.append(f"2: G034 no se retomó en su intento 2 ({est_(g34)}, {est_(g34, 'intentos')})")
+        est = leer_json(Cfg.estado, {})
+        est[g2]["estado"] = "en curso"
         escribir_json(Cfg.estado, est)
         os.environ["FALSO_CAIDO"] = "todos"
-        (M.CASES / "SECO_G002_nq15_B" / "lote.json").touch()
-        os.utime(M.CASES / "SECO_G002_nq15_B" / "resultado_solver.json")
+        (M.CASES / g2 / "lote.json").touch()
+        os.utime(M.CASES / g2 / "resultado_solver.json")
         main(["--solo", "G002"])
-        if leer_json(Cfg.estado, {}).get("SECO_G002_nq15_B", {}).get("estado") != "OK":
-            fallos.append("no se retomó G002 desde los chequeos")
-        print("SECO:", "todo en verde" if not fallos and rc == 0 else "FALLA " + "; ".join(fallos),
-              json.dumps({k: v.get("estado") for k, v in leer_json(Cfg.estado, {}).items()}))
+        if est_(g2) != "OK":
+            fallos.append(f"3: no se retomó G002 desde los chequeos ({est_(g2)})")
+        main(["--extender", "G002", "--hasta", "2500"])
+        if est_(g2) != "ERROR_INFRA":
+            fallos.append(f"4: --extender con claude caído debía dar ERROR_INFRA y dio {est_(g2)}")
+        if "lote_parado" not in (tmp / "eventos.log").read_text(encoding="utf-8"):
+            fallos.append("4: tres fallos de infraestructura seguidos debían parar el lote")
+        ok = not fallos and rc == 0
+        print("SECO:", "todo en verde" if ok else "FALLA " + "; ".join(fallos),
+              json.dumps({k.replace(pre, ""): v.get("estado") for k, v in leer_json(Cfg.estado, {}).items()}))
         print((tmp / "eventos.log").read_text(encoding="utf-8"))
-        return 0 if not fallos and rc == 0 else 1
+        return 0 if ok else 1
     finally:
-        os.environ.pop("FALSO_CAIDO", None)
-        for d in M.CASES.glob("SECO_*"):
+        for k in ("FALSO_CAIDO", "FALSO_PARAR", "FALSO_DIR"):
+            os.environ.pop(k, None)
+        for d in M.CASES.glob(pre + "*"):
             shutil.rmtree(d, ignore_errors=True)
-        for d in (M.CASES / "_previos").glob("SECO_*") if (M.CASES / "_previos").is_dir() else []:
+        for d in (M.CASES / "_previos").glob(pre + "*") if (M.CASES / "_previos").is_dir() else []:
             shutil.rmtree(d, ignore_errors=True)
-        for f in M.SIMS.glob("SECO_*"):
+        for f in M.SIMS.glob(pre + "*"):
             f.unlink(missing_ok=True)
         shutil.rmtree(tmp, ignore_errors=True)
 

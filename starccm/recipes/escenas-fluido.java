@@ -6,6 +6,9 @@
 //      cámara según la normal de cada plano: el meridional salía de canto (cámara según el eje con un plano que contiene
 //      el eje). Cámara = foco del resetCamera + normal·distancia; vertical = eje de giro en el meridional y una
 //      perpendicular al eje en el medio (allí se mira a lo largo del eje). Setters de VisView (javadoc 2410).
+// Ronda 2 (solo compilado): el encuadre ya no lo fijan las extensiones ext_* (la de salida mide 5 D y dejaba el rotor
+//      diminuto): foco = origen del plano y distancia = 1,05·R/tan(ángulo/2), con R = máx. distancia de las fronteras
+//      de la bomba (regiones no ext_*) a ese origen (MaxReport temporal tmp_cam_r, siempre borrado).
 // Antes: exportar-superficies-ensight con PLANOS «auto» (crea los planos en su sitio) y reportes-euler-triangulos (crea
 // TotalHead). Velocidad relativa = la que ve el rodete que gira (en las regiones fijas es la absoluta): es la que
 // enseña cómo entra el agua a los álabes; la absoluta en el rotor está dominada por el giro (ω·r).
@@ -25,7 +28,26 @@ for (Region r : sim.getRegionManager().getRegions()) {
   catch (Exception e) { }
 }
 final double[] AXE = axE;
+// fronteras de la BOMBA (sin regiones ext_*): con ellas se mide el radio del encuadre (la extensión de salida mide 5 D)
+final java.util.List<Boundary> BOMBA = new java.util.ArrayList<Boundary>();
+for (Region r : sim.getRegionManager().getRegions()) if (!r.getPresentationName().startsWith("ext_")) BOMBA.addAll(r.getBoundaryManager().getBoundaries());
 class Esc {
+  // máxima distancia de las fronteras de la bomba al punto o (m); NaN si no se puede medir
+  double radio(double[] o) {
+    UserFieldFunction uf = null; MaxReport mx = null; double R = Double.NaN;
+    try {
+      for (FieldFunction f : ffm.getObjects()) if (f instanceof UserFieldFunction && f.getPresentationName().equals("tmp_cam_r")) uf = (UserFieldFunction) f;
+      if (uf == null) { uf = ffm.createFieldFunction(); uf.setPresentationName("tmp_cam_r"); uf.setFunctionName("tmp_cam_r"); }
+      uf.setDefinition("mag($$Position - [" + o[0] + ", " + o[1] + ", " + o[2] + "])");
+      mx = sim.getReportManager().createReport(MaxReport.class); mx.setPresentationName("tmp_cam_r"); mx.setFieldFunction(uf); mx.getParts().setObjects(BOMBA);
+      R = mx.getReportMonitorValue();
+    } catch (Exception e) { sim.println("WARN\tradio del encuadre: " + e.getMessage()); }
+    finally {
+      try { if (mx != null) sim.getReportManager().removeObjects(mx); } catch (Exception e) { }
+      try { if (uf != null) ffm.removeObjects(uf); } catch (Exception e) { }
+    }
+    return R;
+  }
   Scene nueva(String nm) {
     java.util.Vector<Scene> viejas = new java.util.Vector<Scene>();
     for (Scene s : sim.getSceneManager().getScenes()) if (s.getPresentationName().matches(java.util.regex.Pattern.quote(nm) + "( \\d+)?")) viejas.add(s);
@@ -48,11 +70,24 @@ class Esc {
       }
       CurrentView v = s.getCurrentView();
       DoubleVector f = v.getFocalPoint(), p = v.getPosition();
+      double[] fo = {f.get(0), f.get(1), f.get(2)};
       double d = Math.sqrt(Math.pow(p.get(0) - f.get(0), 2) + Math.pow(p.get(1) - f.get(1), 2) + Math.pow(p.get(2) - f.get(2), 2));
+      // encuadre SIN extensiones: foco en el origen del plano (sobre el eje) y distancia para que quepa la esfera que
+      // envuelve la bomba (rotor, voluta, estator); el resetCamera solo queda de reserva si no se puede medir
+      String como = "resetCamera";
+      try {
+        DoubleVector og = pl.getOriginCoordinate().getSIValue();
+        double[] o3 = {og.get(0), og.get(1), og.get(2)};
+        double R = radio(o3), ang = 30.0;
+        try { ang = v.getViewAngle().getValue(); } catch (Exception e) { }
+        if (!(ang > 1 && ang < 170)) ang = 30.0;
+        if (R > 0 && !Double.isInfinite(R)) { fo = o3; d = 1.05 * R / Math.tan(Math.toRadians(ang / 2)); como = "bomba R=" + R + " m"; }
+      } catch (Exception e) { sim.println("WARN\tencuadre de " + s.getPresentationName() + ": " + e.getMessage()); }
       if (!(d > 0)) d = 1.0;
-      v.setPosition(new DoubleVector(new double[] {f.get(0) + d * nn[0], f.get(1) + d * nn[1], f.get(2) + d * nn[2]}));
+      v.setFocalPoint(new DoubleVector(fo));
+      v.setPosition(new DoubleVector(new double[] {fo[0] + d * nn[0], fo[1] + d * nn[1], fo[2] + d * nn[2]}));
       v.setViewUp(new DoubleVector(up));
-      sim.println("CAMARA\t" + s.getPresentationName() + "\tnormal " + nn[0] + "," + nn[1] + "," + nn[2] + "\tvertical " + up[0] + "," + up[1] + "," + up[2]);
+      sim.println("CAMARA\t" + s.getPresentationName() + "\tnormal " + nn[0] + "," + nn[1] + "," + nn[2] + "\tvertical " + up[0] + "," + up[1] + "," + up[2] + "\t" + como);
     } catch (Exception e) { sim.println("WARN\tcámara de " + s.getPresentationName() + ": " + e); }
   } }
 Esc esc = new Esc();

@@ -6,8 +6,10 @@ Eres el **ejecutor** (Sonnet) de UNA geometría del lote. El orquestador ya prep
 `run_java_file`, leer la salida y reaccionar a los problemas conocidos. No escribas Java nuevo salvo que una macro falle y
 esta receta no lo cubra; entonces arregla la macro del caso (Edit en `cases/<ID>/macros/`) y di qué cambiaste en una línea.
 
-Herramientas: las del MCP `starccm`, Read, Glob, Grep, y Write/Edit solo dentro de `cases/<ID>/`. **No tienes Bash ni
-PowerShell** y no puedes leer `.env`: no lo intentes. Si una salida de herramienta es demasiado grande y se guarda en un
+Herramientas: del MCP `starccm` (server_start/stop/status, run_java, run_java_file, inspect, save, recipe_search,
+export_scene), Read, Glob, Grep, y Write/Edit solo dentro de `cases/<ID>/`. **No tienes Bash ni PowerShell**, no puedes
+guardar recetas (`recipes/` es de todos) y no puedes leer `.env`: no lo intentes. Esta receta manda sobre
+`starccm/CLAUDE.md` (que describe el uso interactivo). Si una salida de herramienta es demasiado grande y se guarda en un
 archivo, no la leas entera: `Grep` con `LOTE_OK|ITERACION|DIVERGE|MEDIA|CELLS|ERROR|WARN`.
 
 Lo FIJO (no lo cambies nunca, ni para arreglar algo): física (k-ω SST, estacionario, MRF), fronteras (presión total 0 Pa
@@ -41,23 +43,27 @@ Las macros se pueden volver a correr: si una falla a mitad, corrígela y córrel
 ## Intento «extender» (H todavía se movía)
 
 El caso ya existe. `server_start(name="<ID>")` abre `sims/<ID>.sim` con su solución. Corre `07` hasta `LOTE_OK 07 FIN`
-(seguirá desde la iteración guardada hasta `iteraciones` de `lote.json`), `save()`, y luego 08, 09, 12 (las escenas ya
-existen; 10 y 11 solo si faltan PNG), cierre. No remalles ni toques nada más.
+(seguirá desde la iteración guardada hasta `iteraciones` de `lote.json`), `save()`, y luego 08, 09, 10 (superficies
+con la solución nueva), 12 (las escenas ya existen; 11 solo si faltan PNG), cierre. No remalles ni toques nada más.
+Lo del intento anterior está apartado en `cases/<ID>/_intento<n>/`: escribe `RESUMEN.md` y `ejecucion.json` nuevos.
 
 ## Intento «rehacer»
 
-Caso nuevo desde la malla, con las `instrucciones_reintento` de `lote.json` (vienen del revisor). Mismo orden que
-«completo»; las macros ya llevan los cambios de tu intento anterior (p. ej. el base remallado).
+Caso nuevo con las `instrucciones_reintento` de `lote.json` (vienen del revisor). El orquestador ya apartó el .sim, las
+curvas y los resultados del intento anterior (`cases/<ID>/_intento<n>/`): `server_start(name="<ID>")` empieza una
+simulación nueva y se sigue el mismo orden que «completo». Las macros conservan los cambios de tu intento anterior
+(p. ej. el base remallado).
 
 ## Problemas conocidos y qué hacer
 
-**Celdas** (decide con el `CELLS_TOTAL` que imprime la 03, que ya incluye las extensiones): `max_celdas` y
-`objetivo_celdas` en `lote.json`.
-- `CELLS_TOTAL` > 0,95 × máximo: base nuevo = base × (CELLS_TOTAL / objetivo)^(1/3), redondeado a 0,1 mm. Edita
-  `double BASE_MM = …` en `02-malla.java` Y `double BASE_EXT_MM = …` (2 × base) en `03-extensiones.java`, y vuelve a
-  correr `02-malla.java` (remalla todo, extensiones incluidas; no repitas la 03).
+**Celdas** (decide con el `CELLS_TOTAL` que imprime la 03, que ya incluye las extensiones; tras un remallado, con el
+`CELLS_TOTAL` de la 02): `max_celdas`, `objetivo_celdas` y `exponente_malla` (k) en `lote.json`.
+- `CELLS_TOTAL` > 0,95 × máximo: base nuevo = base × (CELLS_TOTAL / objetivo)^(1/k), redondeado a 0,1 mm (k ≈ 1: las
+  celdas van casi como 1/base, NO como 1/base³). Edita SOLO `double BASE_MM = …` en `02-malla.java` y vuelve a correr la
+  02: remalla todo, y las extensiones con 2 × el base nuevo. No toques la 03 ni la repitas.
 - `CELLS_TOTAL` < 0,45 × objetivo: igual, afinando (base más pequeño). Solo una vez.
 - Como mucho 2 remallados. Si aún no cumple: `REVISAR`.
+- Si la 03 imprime `WARN extensiones rehechas`, vuelve a correr 04, 05 y 06 antes de iterar.
 
 **La malla falla** («Surface intersects self», «non-manifold», reparación que no cierra): vuelve a correr la 02 una vez
 con `MIN_ROTOR_PCT` 30; si sigue, `REVISAR` con el error.
@@ -66,7 +72,8 @@ con `MIN_ROTOR_PCT` 30; si sigue, `REVISAR` con el error.
 
 **Divergencia** (paso 7): la 07 imprime `DIVERGE` (continuidad > 1 o NaN). Una sola vez: `run_java` con la receta
 `bajar-relajacion-segregado` con velocidad 0,4 y presión 0,15, luego `run_java` con
-`sim.getSolution().clearSolution();`, Write `reports/convergencia.csv` con solo la cabecera y vuelve a iterar desde 0.
+`sim.getSolution().clearSolution();`, deja `reports/convergencia.csv` solo con su primera línea (Read con limit 1 y
+Write de esa línea; un archivo vacío rompe el CSV) y vuelve a iterar desde 0.
 La relajación es numérica, no física: está permitido. Si vuelve a divergir: `REVISAR`.
 
 **Par con signo de turbina o H negativa tras 300 iteraciones**: probablemente el sentido de giro. No lo cambies: sigue
@@ -77,8 +84,10 @@ hasta el final y `REVISAR` (el revisor lo decide).
 **El servidor muere** (`No hay servidor vivo`): `server_start(name="<ID>")` abre el último `sims/<ID>.sim` guardado;
 sigue desde ahí (la 07 continúa desde la iteración guardada). Dos caídas: `REVISAR`.
 
-**Avisos conocidos: no los anotes ni los investigues**: servidor con más procesos que los del `.env`; aviso de
-CasingHub/CasingShroud fuera del rotor (en flujo mixto están en el estator); un WARN de β2 en la 06.
+**Avisos conocidos: no los anotes ni los investigues**: el número de procesos del servidor (lo fija el `.env` de la
+máquina); `INFO` de CasingHub/CasingShroud fuera del rotor (en flujo mixto están en el estator); en la 06, `INIT`, las
+líneas `CAND`/`TE`, un WARN de β2 o «dada … no existe: elección automática»; `CAMARA` en las escenas; `WARN export sin
+yplus` en la 10 (las superficies salen igual).
 
 ## Al terminar
 

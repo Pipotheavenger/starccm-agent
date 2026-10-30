@@ -21,5 +21,8 @@ Para interpretar resultados, no para el ejecutor. Las nuevas las añade el orque
 - Malla: las extensiones con el mismo base que la bomba sumaban 7 % (nq ≤ 25) a 33 % (nq ≥ 70) de celdas; desde la
   receta v2 se mallan con base doble.
 - Z 7 con base 3,0 mm en nq 65 deja ~1,93 M celdas (rotor 848 k): cerca del límite.
+- H frente a la curva de CFturbo: ~0,95 de media en las variantes nq 15–50, pero ~0,69 en nq 65/80 (G034 0,43, G035 0,52,
+  G044 0,52) aun escalando por fD2²; en flujo mixto el f² no basta. Un aviso de «H fuera de lo que predice CFturbo» en
+  esas variantes no es un error de montaje.
 
 ## Nuevas

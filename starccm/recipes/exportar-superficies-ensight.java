@@ -109,7 +109,18 @@ for (String spec : planos.split(";")) {
   }
   planes.add(ps); sim.println("BOUNDARY\tPlanos/" + pname); meta.append("BOUNDARY\tPlanos/" + pname + "\n");
 }
-sim.getImportManager().export(resolvePath("OUT"), regs, bnds, planes, new java.util.Vector<PartSurface>(), ffs, false, true);
+// el alias «yplus» (UserFieldFunction = $WallYplus) no está verificado con el solver: si el export falla con él, se
+// repite sin él (mejor el .case sin y+ que ninguno) y se avisa con WARN «export sin yplus: <mensaje>»
+try {
+  sim.getImportManager().export(resolvePath("OUT"), regs, bnds, planes, new java.util.Vector<PartSurface>(), ffs, false, true);
+} catch (Exception ex) {
+  java.util.Vector<FieldFunction> sinY = new java.util.Vector<FieldFunction>();
+  for (FieldFunction f : ffs) if (!f.getPresentationName().equalsIgnoreCase("yplus")) sinY.add(f);
+  if (sinY.size() == ffs.size()) throw ex;
+  String msg = String.valueOf(ex.getMessage()).replaceAll("\\s+", " ");
+  sim.println("WARN\texport sin yplus: " + (msg.length() > 300 ? msg.substring(0, 300) + "…" : msg));
+  sim.getImportManager().export(resolvePath("OUT"), regs, bnds, planes, new java.util.Vector<PartSurface>(), sinY, false, true);
+}
 // Marcos rotatorios (MRF) y regiones que los usan: el visor gira esas regiones sobre el eje real
 // (vale para bombas, turbinas, ventiladores, compresores: el eje y el centro salen de STAR-CCM+, no se suponen).
 for (Region r : sim.getRegionManager().getRegions()) {

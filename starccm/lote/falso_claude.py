@@ -2,7 +2,9 @@
 Ejecutor (prompt «Caso <ID>…»): resultado_solver.json, ejecucion.json, RESUMEN.md, monitores_historial.csv, PNG y el .sim.
 - Bases: en el intento 1 H deriva (sube ~4 %/100 it.) → el orquestador debe extender solo; al extender, H plana → OK.
 - Variantes (_V): el par sale con signo de turbina (M_signo_ok false, fallo grave) → REINTENTAR → REVISAR.
-- FALSO_CAIDO=<clave>|todos: claude «caído» (sin salida, rc 1) para probar ERROR_INFRA y la reanudación.
+- FALSO_CAIDO=<clave>[:n]|todos: claude «caído» (sin salida, rc 1), siempre o las n primeras veces (FALSO_DIR guarda la
+  cuenta), para probar la espera y el reintento, ERROR_INFRA y la parada del lote.
+- FALSO_PARAR=<clave>: tras ejecutar ese caso crea FALSO_DIR/PARAR (alguien pide parar a mitad).
 Revisor (prompt «Revisa el caso…»): decide con chequeos.json; en un OK propone un cambio con límite y uno prohibido."""
 import json
 import os
@@ -13,9 +15,16 @@ from pathlib import Path
 ST = Path(__file__).resolve().parent.parent
 prompt = sys.argv[sys.argv.index("-p") + 1]
 gid = re.search(r"(?:Caso|caso) (\S+?)[ :(]", prompt).group(1)
-caido = os.environ.get("FALSO_CAIDO", "")
-if caido and (caido == "todos" or caido in gid):
+caido = os.environ.get("FALSO_CAIDO", "")          # «todos», «G033» o «G033:2» (solo las 2 primeras veces)
+if caido == "todos":
     sys.exit(1)
+if caido and caido.split(":")[0] in gid:
+    veces = int(caido.split(":")[1]) if ":" in caido else 10 ** 6
+    cnt = Path(os.environ.get("FALSO_DIR", ".")) / f"caido_{gid}.txt"
+    n = int(cnt.read_text()) if cnt.is_file() else 0
+    if n < veces:
+        cnt.write_text(str(n + 1))
+        sys.exit(1)
 caso = ST / "cases" / gid
 lote = json.loads((caso / "lote.json").read_text(encoding="utf-8"))
 mala = "_V" in gid
@@ -40,6 +49,8 @@ if prompt.startswith("Caso"):
     for n in ("presion_alabes", "velocidad_plano", "yplus", "fluido_medio", "fluido_meridional", "vectores_meridional", "malla"):
         (caso / "images" / f"{n}.png").write_bytes(b"\x89PNG falso")
     (ST / "sims" / f"{gid}.sim").write_bytes(b"sim falso")
+    if os.environ.get("FALSO_PARAR") and os.environ["FALSO_PARAR"] in gid:   # alguien pide PARAR mientras corre
+        (Path(os.environ["FALSO_DIR"]) / "PARAR").write_text("")
 else:
     chq = json.loads((caso / "chequeos.json").read_text(encoding="utf-8"))
     if chq["graves_fallidos"]:

@@ -8,6 +8,11 @@ Proyecto independiente dentro del repo `starccm-agent`: todo vive en `starccm/`.
 `cfturbo-agent` (el agente hermano de diseño 1D, repositorio aparte en `Documentos\cfturbo-agent`) ni lo toca. Uso paso a paso y endpoints: `README.md`.
 Servidor Linux (solo a mano, fuera del agente): `vm/SERVIDOR.md`.
 
+> **Modo lote.** Si te lanzó `lote/orquestador.py` (el prompt empieza por «Caso G0…» o «Revisa el caso G0…»), lo que
+> manda es `lote/receta.md` (ejecutor) o `lote/revision.md` (revisor), no este archivo: nadie contesta preguntas, no
+> guardes recetas ni escribas lecciones aquí, y los criterios de convergencia, balance e y+ son los del lote. El resto de
+> este documento describe el uso interactivo.
+
 ## Entorno
 
 El solver corre solo en este PC. La ejecución remota se retiró el 2026-10-24 (ver «Remoto (retirado el

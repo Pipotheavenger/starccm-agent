@@ -30,7 +30,8 @@
     "d2_nq_flujo_mixto": 60,
     "yplus_max": 300,
     "M_discos_max_frac": 0.25,
-    "escenas_min": 6
+    "escenas_min": 6,
+    "M_discos_max_frac_nq_bajo": 0.45
   },
   "historial_malla": [
     {
@@ -459,5 +460,9 @@
   ],
   "iteraciones_extension": 1500,
   "ventana_promedio": 200,
-  "borrar_backups_sim": true
+  "borrar_backups_sim": true,
+  "iteraciones_nq_bajo": {
+    "nq_max": 25,
+    "iteraciones": 1500
+  }
 }

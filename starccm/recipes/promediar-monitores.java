@@ -2,6 +2,7 @@
 // VERSION: 19.06.009-R8
 // FECHA: 2026-10-28 · 2026-10-30 (solo compilado, sin solver): ventana relativa a la última iteración, pendiente lineal y
 //        oscilación sin tendencia por monitor, y el plot temporal se borra al terminar (antes quedaba un promedio_<ms> por llamada)
+//        con PlotManager.removeObjects(StarPlot...) (deletePlots está deprecado; firma comprobada con javap 2410)
 // MONS: monitores separados por coma; CSV: ruta de salida (historial completo: iteración y un monitor por columna).
 // VENTANA: nº de iteraciones a promediar contando hacia atrás desde la última (defecto 200): se promedian las iteraciones
 //          > última − VENTANA, así un reintento con más iteraciones no hay que editarlo.
@@ -17,7 +18,7 @@ for (String nme : "MONS".split(",")) {
 }
 StarPlot p = sim.getPlotManager().createMonitorPlot(ms, "promedio_" + System.currentTimeMillis());
 p.export(csv, ",");
-try { sim.getPlotManager().deletePlots(new java.util.ArrayList<StarPlot>(java.util.Arrays.asList(p))); } catch (Exception e) { sim.println("WARN\tno pude borrar el plot temporal: " + e); }
+try { sim.getPlotManager().removeObjects(p); } catch (Exception e) { sim.println("WARN\tno pude borrar el plot temporal: " + e); }
 java.util.List<String> L = java.nio.file.Files.readAllLines(java.nio.file.Paths.get(csv));
 String[] h = L.get(0).replace("\"", "").split(",");
 java.util.List<double[]> filas = new java.util.ArrayList<double[]>();

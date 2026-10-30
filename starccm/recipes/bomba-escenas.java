@@ -4,6 +4,9 @@
 //        reusa los reportes), sin «velocidad_plano» (|v| en plano_medio: la cubren vectores_medio de escenas-fluido y
 //        plano_vectores), y la presión con rango fijo [p_in − 0,25Δ, p_out + 0,25Δ] (Δ = p_out − p_in, áreas medias en
 //        las fronteras Inflow*/Outflow* del rotor): el pico de succión del borde de ataque ya no aplasta la escala.
+//        Ronda 2 (solo compilado): los reportes temporales del rango (tmp_escena_p_in/out) se borran en finally (y los
+//        restos de una corrida cortada al empezar); la escena yplus pinta solo las paredes de la bomba (sin regiones
+//        ext_*), así su encuadre no lo fija la extensión de salida (5 D).
 Region rot = sim.getRegionManager().getRegion("rotor");
 List<Boundary> blades = new ArrayList<Boundary>();
 for (String n : new String[] {"BladeSS", "BladePS", "BladeLE", "BladeTE", "Hub"})
@@ -20,16 +23,22 @@ ScalarDisplayer d1 = s1.getDisplayerManager().createScalarDisplayer("p"); d1.ini
 d1.setRepresentation(sim.getRepresentationManager().getDefaultFvRepresentation());
 d1.getInputParts().setObjects(blades);
 d1.getScalarDisplayQuantity().setFieldFunction(pres);
+ReportManager rmP = sim.getReportManager();
+{ // restos de una corrida cortada antes del finally
+  List<Report> viejos = new ArrayList<Report>();
+  for (Report r : rmP.getObjects()) if (r.getPresentationName().startsWith("tmp_escena_p_")) viejos.add(r);
+  if (!viejos.isEmpty()) rmP.removeObjects(viejos);
+}
+AreaAverageReport ai = null, ao = null;
 try {
   List<Boundary> bi = new ArrayList<Boundary>(), bo = new ArrayList<Boundary>();
   for (Boundary b : rot.getBoundaryManager().getBoundaries()) {
     if (b.getPresentationName().startsWith("Inflow")) bi.add(b);
     if (b.getPresentationName().startsWith("Outflow")) bo.add(b);
   }
-  AreaAverageReport ai = sim.getReportManager().createReport(AreaAverageReport.class); ai.setFieldFunction(pres); ai.getParts().setObjects(bi);
-  AreaAverageReport ao = sim.getReportManager().createReport(AreaAverageReport.class); ao.setFieldFunction(pres); ao.getParts().setObjects(bo);
+  ai = rmP.createReport(AreaAverageReport.class); ai.setPresentationName("tmp_escena_p_in"); ai.setFieldFunction(pres); ai.getParts().setObjects(bi);
+  ao = rmP.createReport(AreaAverageReport.class); ao.setPresentationName("tmp_escena_p_out"); ao.setFieldFunction(pres); ao.getParts().setObjects(bo);
   double pi = ai.getReportMonitorValue(), po = ao.getReportMonitorValue(), dp = po - pi;
-  sim.getReportManager().removeObjects(ai, ao);
   if (dp > 0 && !Double.isNaN(dp) && !Double.isInfinite(dp)) {
     ScalarDisplayQuantity q = d1.getScalarDisplayQuantity();
     q.setAutoRange(AutoRangeMode.NONE);
@@ -37,11 +46,20 @@ try {
     q.setClip(ClipMode.NONE);
     sim.println("RANGO\tpresion_alabes\t" + (pi - 0.25 * dp) + " .. " + (po + 0.25 * dp) + " Pa");
   } else sim.println("WARN\tsin rango robusto de presión (p_in " + pi + ", p_out " + po + "): automático");
-} catch (Exception e) { sim.println("WARN\trango de presión: " + e); }
+} catch (Exception e) {
+  String m = String.valueOf(e).replaceAll("\\s+", " ");
+  sim.println("WARN\trango de presión: " + (m.length() > 300 ? m.substring(0, 300) + "…" : m));
+}
+finally {  // los dos reportes temporales nunca se quedan (ni si falla el rango)
+  try { if (ai != null) rmP.removeObjects(ai); } catch (Exception e) { sim.println("WARN\tno pude borrar tmp_escena_p_in: " + e.getMessage()); }
+  try { if (ao != null) rmP.removeObjects(ao); } catch (Exception e) { sim.println("WARN\tno pude borrar tmp_escena_p_out: " + e.getMessage()); }
+}
 s1.resetCamera(true);
+// y+ en las paredes de la BOMBA: sin las extensiones ext_* (la de salida mide 5 D y el encuadre dejaba el rotor diminuto)
 List<Region> regs = new ArrayList<Region>(sim.getRegionManager().getRegions());
 List<Boundary> walls = new ArrayList<Boundary>();
-for (Region r : regs) for (Boundary b : r.getBoundaryManager().getBoundaries()) if (b.getBoundaryType() instanceof WallBoundary) walls.add(b);
+for (Region r : regs) if (!r.getPresentationName().startsWith("ext_"))
+  for (Boundary b : r.getBoundaryManager().getBoundaries()) if (b.getBoundaryType() instanceof WallBoundary) walls.add(b);
 Scene s3 = esc.nueva("yplus");
 ScalarDisplayer d3 = s3.getDisplayerManager().createScalarDisplayer("y+"); d3.initialize();
 d3.setRepresentation(sim.getRepresentationManager().getDefaultFvRepresentation());
