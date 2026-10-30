@@ -75,3 +75,5 @@ Una línea por lección, con fecha y caso. Las escribe el revisor (Opus) y las l
 - 2026-10-30 · G036 · NQ65 variante Z 6, Δβ2 −6,9°, fD2 0,954: H 0,59 × diseño escalado con corrida sana; con fD2 > 0,95 el
   Δβ2 negativo no hunde H. El recorte se valida con r_salida_alabe frente a la base (G033: 115,2/121,0 = 0,952 ≈ fD2); el
   D2_cfturbo_mm del lote en las variantes NQ65 es el de la base.
+- 2026-10-30 · G037 · NQ65 variante Z 7, Δβ2 +2,8°, fD2 0,998: H 1,09 × base (48,1 vs 44,1 m) con η igual; con fD2 ≈ 1 y
+  Δβ2 positivo la variante supera a la base. Z 7 con base 3,0 mm deja 1,93 M celdas (rotor 848 k): cerca del límite.
