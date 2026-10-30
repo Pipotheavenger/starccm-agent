@@ -10,7 +10,11 @@ Herramientas: del MCP `starccm` (server_start/stop/status, run_java, run_java_fi
 export_scene), Read, Glob, Grep, y Write/Edit solo dentro de `cases/<ID>/`. **No tienes Bash ni PowerShell**, no puedes
 guardar recetas (`recipes/` es de todos) y no puedes leer `.env`: no lo intentes. Esta receta manda sobre
 `starccm/CLAUDE.md` (que describe el uso interactivo). Si una salida de herramienta es demasiado grande y se guarda en un
-archivo, no la leas entera: `Grep` con `LOTE_OK|ITERACION|DIVERGE|MEDIA|CELLS|ERROR|WARN`.
+archivo, no la leas entera: `Grep` sobre ese archivo con el patrón `(LOTE_OK|CELLS_TOTAL|ITERACION|DIVERGE|MEDIA|WARN|ERROR)[^"]{0,200}`,
+`output_mode: content` y `-o: true` (sin el `[^"]{0,200}` solo devuelve la palabra).
+
+Corre **una macro cada vez y espera su resultado** antes de la siguiente: cada una depende de la anterior (la 06 usa
+los reportes de la 05); nunca las lances en paralelo.
 
 Lo FIJO (no lo cambies nunca, ni para arreglar algo): física (k-ω SST, estacionario, MRF), fronteras (presión total 0 Pa
 en la entrada, caudal en la salida), extensiones 3 D / 5 D, iteraciones de `lote.json`, fluido. Tampoco edites
@@ -74,7 +78,8 @@ con el error.
 **La 03 dice que la cara no es plana o no encuentra Inflow/Outflow**: `REVISAR` (no inventes la extensión).
 
 **Divergencia** (paso 7): la 07 imprime `DIVERGE` (continuidad > 1 o NaN). Una sola vez: `run_java` con la receta
-`bajar-relajacion-segregado` con velocidad 0,4 y presión 0,15, luego `run_java` con
+`bajar-relajacion-segregado` con velocidad y presión 0,1 y 0,05 por debajo de `urf_v` y `urf_p` de
+`lote.json` (`parametros`), luego `run_java` con
 `sim.getSolution().clearSolution();`, deja `reports/convergencia.csv` solo con su primera línea (Read con limit 1 y
 Write de esa línea; un archivo vacío rompe el CSV) y vuelve a iterar desde 0.
 La relajación es numérica, no física: está permitido. Si vuelve a divergir: `REVISAR`.
@@ -90,7 +95,10 @@ sigue desde ahí (la 07 continúa desde la iteración guardada). Dos caídas: `R
 **Avisos conocidos: no los anotes ni los investigues**: el número de procesos del servidor (lo fija el `.env` de la
 máquina); `INFO` de CasingHub/CasingShroud fuera del rotor (en flujo mixto están en el estator); en la 06, `INIT`, las
 líneas `CAND`/`TE`, un WARN de β2 o «dada … no existe: elección automática»; `CAMARA` en las escenas; `WARN export sin
-yplus` en la 10 (las superficies salen igual).
+yplus` en la 10 (las superficies salen igual); en la 03, `WARN base de extensiones …` cuando se re-corre tras remallar
+(la 02 ya puso el base doble bueno); en la 06 o en los primeros bloques de la 07: «Non-finite value … eta_Euler»
+(antes de iterar el flujo es 0), «Bad Cell Detection» de pocos %, «Reversed flow on N faces on ext_entrada: inlet»,
+«UNSUBSCRIBING INVALID SUBSCRIBER». Solo cuentan si siguen pasada la iteración 300 o si la macro no da `LOTE_OK`.
 
 ## Al terminar
 
