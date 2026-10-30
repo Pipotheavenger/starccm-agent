@@ -68,3 +68,5 @@ Una línea por lección, con fecha y caso. Las escribe el revisor (Opus) y las l
 - 2026-10-29 · G030 · NQ55 base: H estable (±0,3 %) en 801–1000 con M bajando ~1 %; 1000 it. bastan, H 0,81 × diseño.
 - 2026-10-29 · G032 · NQ60 base: el D2 por BladeTE ya sale +4,1 % (241 vs 232 mm) con U2 Euler 36,38 m/s = diseño; el
   aviso de D2 de G047 empieza en nq ≈ 60, no solo ≳ 70.
+- 2026-10-29 · G034 · NQ65 variante Z 6, Δβ2 −3,4°, fD2 0,862: H 0,39 × diseño escalado (Vu2/U2 0,19, η 0,57) con corrida
+  sana; el hundimiento con fD2 < 0,9 y Δβ2 negativo sigue en NQ65: REVISAR, no reintentar.
