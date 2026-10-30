@@ -24,7 +24,7 @@ algo de esto, NO lo hagas: termina con `estado: "REVISAR"` y explica por qué.
 | 0 | servidor | `server_status`; si hay uno vivo con otro .sim: `server_stop(save=true)`. Luego `server_start(name="<ID>")` | arranca en 25–60 s |
 | 1 | importar | `run_java_file("cases/<ID>/macros/01-importar.java")` | `LOTE_OK 01 3 regiones` |
 | 2 | malla | `02-malla.java` (timeout_s 3600) | `CELLS_TOTAL` (detalle en `cases/<ID>/malla.json`) |
-| 3 | extensiones | `03-extensiones.java` | `FACE` de entrada y salida, `LOTE_OK 03`, `CELLS_TOTAL` con extensiones. Ver «Celdas» |
+| 3 | extensiones | `03-extensiones.java` | `LOTE_OK 03 … ext_entrada D= L= … ext_salida D= L=` y `CELLS_TOTAL` con extensiones (detalle de las caras en `malla.json`). Ver «Celdas» |
 | 4 | física | `04-fisica.java` | `MRF` con las rpm y el eje de `lote.json`; BC en `ext_entrada/inlet` y `ext_salida/outlet` |
 | 5 | reportes | `05-reportes.java` | `LOTE_OK 05` |
 | 6 | Euler | `06-euler.java` | reportes U1, U2, Vu1, Vu2, H_Euler; un WARN de β2 no es grave |
@@ -44,7 +44,7 @@ Las macros se pueden volver a correr: si una falla a mitad, corrígela y córrel
 
 El caso ya existe. `server_start(name="<ID>")` abre `sims/<ID>.sim` con su solución. Corre `07` hasta `LOTE_OK 07 FIN`
 (seguirá desde la iteración guardada hasta `iteraciones` de `lote.json`), `save()`, y luego 08, 09, 10 (superficies
-con la solución nueva), 12 (las escenas ya existen; 11 solo si faltan PNG), cierre. No remalles ni toques nada más.
+con la solución nueva), 11a–11d (escalas de color con la solución nueva) y 12, cierre. No remalles ni toques nada más.
 Lo del intento anterior está apartado en `cases/<ID>/_intento<n>/`: escribe `RESUMEN.md` y `ejecucion.json` nuevos.
 
 ## Intento «rehacer»
@@ -62,11 +62,14 @@ simulación nueva y se sigue el mismo orden que «completo». Las macros conserv
   celdas van casi como 1/base, NO como 1/base³). Edita SOLO `double BASE_MM = …` en `02-malla.java` y vuelve a correr la
   02: remalla todo, y las extensiones con 2 × el base nuevo. No toques la 03 ni la repitas.
 - `CELLS_TOTAL` < 0,45 × objetivo: igual, afinando (base más pequeño). Solo una vez.
-- Como mucho 2 remallados. Si aún no cumple: `REVISAR`.
+- «base» es siempre el `BASE_MM` que hay ahora en `02-malla.java` (en un «rehacer» puede ser ya el remallado).
+- Como mucho 2 remallados por caso (sumando los intentos: mira `remallados` en `_intento<n>/ejecucion.json`). Si aún
+  no cumple: `REVISAR`.
 - Si la 03 imprime `WARN extensiones rehechas`, vuelve a correr 04, 05 y 06 antes de iterar.
 
 **La malla falla** («Surface intersects self», «non-manifold», reparación que no cierra): vuelve a correr la 02 una vez
-con `MIN_ROTOR_PCT` 30; si sigue, `REVISAR` con el error.
+con `MIN_ROTOR_PCT` 10 puntos por encima del que tiene (máximo 40: más grueso en los huelgos); si sigue, `REVISAR`
+con el error.
 
 **La 03 dice que la cara no es plana o no encuentra Inflow/Outflow**: `REVISAR` (no inventes la extensión).
 

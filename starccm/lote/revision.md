@@ -18,7 +18,10 @@ Errores clave (de simulación o montaje):
 - par con signo de turbina (`M_signo_ok` false), H ≤ 0;
 - base con H fuera de 0,5–1,6 × diseño, o η fuera de 0,25–0,95 (rpm, caudal, fronteras o geometría mal);
 - variante con H < 0,25 × su propia curva (`H_referencia_m`);
-- H todavía moviéndose (deriva > 2 %/100 it. u oscilación sin tendencia > 4 %) al final del último intento;
+- H o η todavía moviéndose al final del último intento: chequeos `deriva de H|eta|M %/100 it.` (> 2 %/100 it. en las
+  últimas 200 y 400 it.) o `salto de la media de H|eta entre ventanas %` (> 5 %: oscilación lenta medida en una cresta).
+  Una `oscilación de H` > 4 % SIN deriva ni salto es física (carga parcial, nq bajas): la media es representativa →
+  `OK` con alerta;
 - escenas que muestran algo absurdo (flujo al revés en toda la salida, campo vacío).
 
 NO son errores clave (van a `alertas`/`observaciones`): H de una variante lejos del diseño o de su curva; D2 en flujo
@@ -40,7 +43,7 @@ mixto (nq ≥ 60); η distinta de las bases del lote; y+ en zona de transición;
 
 - `OK`: no hay error clave. Lo raro pero válido va en `alertas`.
 - `REINTENTAR` (solo si el prompt dice que puedes): un error clave que un segundo intento concreto arregla.
-  `reintento: "extender"` = reabrir el .sim y seguir iterando hasta `iteraciones_extension` (H sin asentar);
+  `reintento: "extender"` = reabrir el .sim y seguir iterando (el orquestador fija hasta dónde: al menos 500 it. más);
   `"rehacer"` = repetir el caso con instrucciones (remallar, bajar relajación…). El orquestador ya extiende solo cuando
   lo único que falla es la convergencia de H, así que rara vez lo pedirás tú.
 - `REVISAR`: error clave que pide a una persona (geometría mala, giro al revés, BC mal, una variante que no es lo que dice

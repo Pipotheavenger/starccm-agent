@@ -8,7 +8,7 @@ En cada revisión (cada ~20 min):
    última hora vista en `starccm/lote/.monitor_visto` (solo ese archivo puedes escribir).
 2. Notificación push (PushNotification) por cada evento:
    - `fin`: «G0xx OK · H 85,6 m (120 % diseño) · η 0,60 · 38 min» (o REVISAR con el motivo corto).
-   - `reintento`, `error`, `lote_parado`, `lote_abortado`, `lote_fin`: tal cual, corto. Un `error` que empieza por
+   - `reintento`, `error`, `pendiente`, `lote_parado`, `lote_abortado`, `lote_fin`: tal cual, corto. Un `error` que empieza por
      «infraestructura» suele ser cuota, red o sesión de `claude`: dilo así.
    - `aviso`: solo si habla del solver o de la licencia; el resto, no (ruido).
    - `inicio`, `arranque`, `lote_inicio`: no avises, salvo el primer `lote_inicio`.

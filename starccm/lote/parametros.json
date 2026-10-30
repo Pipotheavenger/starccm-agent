@@ -31,7 +31,8 @@
     "yplus_max": 300,
     "M_discos_max_frac": 0.25,
     "escenas_min": 6,
-    "M_discos_max_frac_nq_bajo": 0.45
+    "M_discos_max_frac_nq_bajo": 0.45,
+    "salto_media_max_pct": 5.0
   },
   "historial_malla": [
     {

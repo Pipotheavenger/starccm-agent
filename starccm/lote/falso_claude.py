@@ -5,6 +5,7 @@ Ejecutor (prompt «Caso <ID>…»): resultado_solver.json, ejecucion.json, RESUM
 - FALSO_CAIDO=<clave>[:n]|todos: claude «caído» (sin salida, rc 1), siempre o las n primeras veces (FALSO_DIR guarda la
   cuenta), para probar la espera y el reintento, ERROR_INFRA y la parada del lote.
 - FALSO_PARAR=<clave>: tras ejecutar ese caso crea FALSO_DIR/PARAR (alguien pide parar a mitad).
+- FALSO_LIMITE=1: cuota agotada (línea result con is_error y «usage limit», rc 1).
 Revisor (prompt «Revisa el caso…»): decide con chequeos.json; en un OK propone un cambio con límite y uno prohibido."""
 import json
 import os
@@ -15,6 +16,12 @@ from pathlib import Path
 ST = Path(__file__).resolve().parent.parent
 prompt = sys.argv[sys.argv.index("-p") + 1]
 gid = re.search(r"(?:Caso|caso) (\S+?)[ :(]", prompt).group(1)
+if os.environ.get("FALSO_LIMITE"):                  # así sale claude -p con la cuota agotada: result de error, rc 1
+    print(json.dumps({"type": "result", "subtype": "success", "is_error": True, "num_turns": 1,
+                      "result": "Claude AI usage limit reached|1793300000", "total_cost_usd": 0.0}))
+    sys.exit(1)
+if os.environ.get("FALSO_SIN_EJECUTOR") and prompt.startswith("Caso"):   # el ejecutor no debía ser llamado
+    sys.exit(1)
 caido = os.environ.get("FALSO_CAIDO", "")          # «todos», «G033» o «G033:2» (solo las 2 primeras veces)
 if caido == "todos":
     sys.exit(1)
