@@ -72,3 +72,6 @@ Una línea por lección, con fecha y caso. Las escribe el revisor (Opus) y las l
   sana; el hundimiento con fD2 < 0,9 y Δβ2 negativo sigue en NQ65: REVISAR, no reintentar.
 - 2026-10-30 · G035 · NQ65 variante Z 5, Δβ2 +6,7°, fD2 0,913: H 0,62 × diseño escalado (0,51 × base) con corrida sana, como
   G027; con Δβ2 positivo y fD2 > 0,9 no aparece el hundimiento de G034: OK, aunque roce el chequeo de H.
+- 2026-10-30 · G036 · NQ65 variante Z 6, Δβ2 −6,9°, fD2 0,954: H 0,59 × diseño escalado con corrida sana; con fD2 > 0,95 el
+  Δβ2 negativo no hunde H. El recorte se valida con r_salida_alabe frente a la base (G033: 115,2/121,0 = 0,952 ≈ fD2); el
+  D2_cfturbo_mm del lote en las variantes NQ65 es el de la base.
