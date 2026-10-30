@@ -285,6 +285,14 @@
       "base_mm": 3.2,
       "celdas_sin_ext": 1154621,
       "celdas": 1526764
+    },
+    {
+      "caso": "G033_nq65_B",
+      "nq": 65,
+      "D2_mm": 231.09,
+      "base_mm": 3.1,
+      "celdas_sin_ext": 1314343,
+      "celdas": 1728717
     }
   ]
 }
