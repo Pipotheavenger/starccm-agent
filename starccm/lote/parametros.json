@@ -333,6 +333,14 @@
       "base_mm": 2.9,
       "celdas_sin_ext": 1444174,
       "celdas": 1935670
+    },
+    {
+      "caso": "G039_nq72_B",
+      "nq": 72,
+      "D2_mm": 229.82,
+      "base_mm": 2.9,
+      "celdas_sin_ext": 1483184,
+      "celdas": 1965773
     }
   ]
 }

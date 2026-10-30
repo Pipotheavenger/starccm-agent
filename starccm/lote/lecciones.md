@@ -77,3 +77,5 @@ Una línea por lección, con fecha y caso. Las escribe el revisor (Opus) y las l
   D2_cfturbo_mm del lote en las variantes NQ65 es el de la base.
 - 2026-10-30 · G037 · NQ65 variante Z 7, Δβ2 +2,8°, fD2 0,998: H 1,09 × base (48,1 vs 44,1 m) con η igual; con fD2 ≈ 1 y
   Δβ2 positivo la variante supera a la base. Z 7 con base 3,0 mm deja 1,93 M celdas (rotor 848 k): cerca del límite.
+- 2026-10-30 · G039 · NQ72 base: las extensiones suman +33 % de celdas (1,48 → 1,97 M con base 2,9 mm), al borde de 2 M;
+  en nq ≳ 70 contar las extensiones al estimar objetivo_celdas.
