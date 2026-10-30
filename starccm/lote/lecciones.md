@@ -70,3 +70,5 @@ Una línea por lección, con fecha y caso. Las escribe el revisor (Opus) y las l
   aviso de D2 de G047 empieza en nq ≈ 60, no solo ≳ 70.
 - 2026-10-29 · G034 · NQ65 variante Z 6, Δβ2 −3,4°, fD2 0,862: H 0,39 × diseño escalado (Vu2/U2 0,19, η 0,57) con corrida
   sana; el hundimiento con fD2 < 0,9 y Δβ2 negativo sigue en NQ65: REVISAR, no reintentar.
+- 2026-10-30 · G035 · NQ65 variante Z 5, Δβ2 +6,7°, fD2 0,913: H 0,62 × diseño escalado (0,51 × base) con corrida sana, como
+  G027; con Δβ2 positivo y fD2 > 0,9 no aparece el hundimiento de G034: OK, aunque roce el chequeo de H.
