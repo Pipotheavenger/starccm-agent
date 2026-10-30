@@ -79,3 +79,5 @@ Una línea por lección, con fecha y caso. Las escribe el revisor (Opus) y las l
   Δβ2 positivo la variante supera a la base. Z 7 con base 3,0 mm deja 1,93 M celdas (rotor 848 k): cerca del límite.
 - 2026-10-30 · G039 · NQ72 base: las extensiones suman +33 % de celdas (1,48 → 1,97 M con base 2,9 mm), al borde de 2 M;
   en nq ≳ 70 contar las extensiones al estimar objetivo_celdas.
+- 2026-10-30 · G042 · NQ80 variante Z 7, Δβ2 +0,3°, fD2 0,894: H 0,58 × diseño escalado (0,47 × base) y η 0,68 frente a 0,84
+  de la base, con corrida sana y recorte verificado frente a G041 (108,1/121,2 mm); como G027/G035: OK aunque falle H/base.

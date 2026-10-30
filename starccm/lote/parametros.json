@@ -357,6 +357,14 @@
       "base_mm": 3.2,
       "celdas_sin_ext": 1288184,
       "celdas": 1703395
+    },
+    {
+      "caso": "G042_nq80_V",
+      "nq": 80,
+      "D2_mm": 227.91,
+      "base_mm": 3.2,
+      "celdas_sin_ext": 1311218,
+      "celdas": 1726263
     }
   ]
 }
