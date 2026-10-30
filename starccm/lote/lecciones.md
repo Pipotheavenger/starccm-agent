@@ -63,3 +63,5 @@ Una línea por lección, con fecha y caso. Las escribe el revisor (Opus) y las l
   las variantes dan ~0,7, no el hundimiento a 0,3 de fD2 < 0,9.
 - 2026-10-29 · G027 · NQ50 variante Z 6, Δβ2 +2,0°, fD2 0,888: H 0,62 × diseño escalado con corrida sana (0,49 × base, roza
   el chequeo); el hundimiento a ≈0,3 con fD2 < 0,9 fue propio de NQ35–37, no de NQ50.
+- 2026-10-29 · G029 · NQ50 variante Z 5, Δβ2 −5,8°, fD2 0,865: H 0,22 × diseño escalado (Vu2 en el borde ≈ 0,15·U2) con
+  corrida sana; el hundimiento con fD2 < 0,9 también sale en NQ50 si se junta con Δβ2 negativo: REVISAR, no reintentar.
