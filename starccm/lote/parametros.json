@@ -31,8 +31,7 @@
     "yplus_max": 300,
     "M_discos_max_frac": 0.25,
     "escenas_min": 6,
-    "M_discos_max_frac_nq_bajo": 0.45,
-    "salto_media_max_pct": 5.0
+    "M_discos_max_frac_nq_bajo": 0.45
   },
   "historial_malla": [
     {
@@ -196,15 +195,6 @@
       "celdas_sin_ext": 1483054,
       "celdas": 1783778,
       "estado": "OK"
-    },
-    {
-      "caso": "G018_nq35_V",
-      "nq": 35,
-      "D2_mm": 220.32,
-      "base_mm": 3.2,
-      "celdas_sin_ext": 1547957,
-      "celdas": 1862209,
-      "estado": "REVISAR"
     },
     {
       "caso": "G019_nq35_V",
@@ -457,6 +447,16 @@
       "celdas_sin_ext": 1262599,
       "celdas": 1658151,
       "estado": "OK"
+    },
+    {
+      "caso": "G018_nq35_V",
+      "nq": 35,
+      "D2_mm": 220.32,
+      "base_mm": 3.4,
+      "celdas_sin_ext": 1424650,
+      "celdas": 1492838,
+      "estado": "OK",
+      "ext_base_factor": 2
     }
   ],
   "iteraciones_extension": 1500,
