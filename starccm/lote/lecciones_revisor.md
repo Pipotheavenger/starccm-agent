@@ -26,3 +26,7 @@ Para interpretar resultados, no para el ejecutor. Las nuevas las añade el orque
   esas variantes no es un error de montaje.
 
 ## Nuevas
+- 2026-10-31 · G001_nq10_B · G001 nq 10: H aún sube y M aún baja a la it. 1500 (H +11 % entre 1100 y 1500, M −3 %); en nq 10 la convergencia puede pasar de 1500 it., no solo la de H: también M deriva lento.
+- 2026-10-31 · G002_nq15_B · 2026-10-31 · G002 · nq 15 base: entre 1000 y 1500 it. M sigue bajando (78→70 N·m) y η pasa de 0,48 a 0,60; en nq ≤ 15 la η a 1000 it. subestima mucho y 500 it. más no bastan para asentar M.
+- 2026-10-31 · G003_nq15_V · 2026-10-31 · G003 · nq 15 variante: igual que la base G002, M sigue bajando y η subiendo a 1500 it. (0,51→0,61 entre 1000 y 1500); en nq ≤ 15 bases y variantes necesitan > 1500 it. Variante/base a igual iteración (H 0,84) sí es comparable.
+- 2026-10-31 · G006_nq15_V · G006 nq 15 variante fD2≈1: H ≈ 1,28 × su curva CFturbo, igual que la base G002 (H/diseño 1,27); en nq 15 la curva de CFturbo subestima H un ~28 % a 1500 it., no es error de montaje.

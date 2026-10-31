@@ -36,15 +36,6 @@
   },
   "historial_malla": [
     {
-      "caso": "G002_nq15_B",
-      "nq": 15,
-      "D2_mm": 254.01,
-      "base_mm": 4.4,
-      "celdas_sin_ext": 1430243,
-      "celdas": 1528059,
-      "estado": "REVISAR"
-    },
-    {
       "caso": "G047_nq90_B",
       "nq": 90,
       "D2_mm": 224.09,
@@ -54,48 +45,12 @@
       "estado": "OK"
     },
     {
-      "caso": "G001_nq10_B",
-      "nq": 10,
-      "D2_mm": 257.83,
-      "base_mm": 4.4,
-      "celdas_sin_ext": 1498555,
-      "celdas": 1599390,
-      "estado": "OK"
-    },
-    {
-      "caso": "G003_nq15_V",
-      "nq": 15,
-      "D2_mm": 243.85,
-      "base_mm": 4.1,
-      "celdas_sin_ext": 1591599,
-      "celdas": 1703828,
-      "estado": "OK"
-    },
-    {
       "caso": "G004_nq15_V",
       "nq": 15,
       "D2_mm": 220.23,
       "base_mm": 3.7,
       "celdas_sin_ext": 1853997,
       "celdas": 1988643,
-      "estado": "OK"
-    },
-    {
-      "caso": "G005_nq15_V",
-      "nq": 15,
-      "D2_mm": 229.63,
-      "base_mm": 3.9,
-      "celdas_sin_ext": 1639685,
-      "celdas": 1761457,
-      "estado": "OK"
-    },
-    {
-      "caso": "G006_nq15_V",
-      "nq": 15,
-      "D2_mm": 250.71,
-      "base_mm": 4.3,
-      "celdas_sin_ext": 1505162,
-      "celdas": 1606424,
       "estado": "OK"
     },
     {
@@ -458,6 +413,51 @@
       "celdas": 1492838,
       "estado": "OK",
       "ext_base_factor": 2
+    },
+    {
+      "caso": "G001_nq10_B",
+      "nq": 10,
+      "D2_mm": 257.83,
+      "base_mm": 4.4,
+      "celdas_sin_ext": 1498555,
+      "celdas": 1599390,
+      "estado": "REVISAR"
+    },
+    {
+      "caso": "G002_nq15_B",
+      "nq": 15,
+      "D2_mm": 254.01,
+      "base_mm": 4.4,
+      "celdas_sin_ext": 1430243,
+      "celdas": 1528059,
+      "estado": "REVISAR"
+    },
+    {
+      "caso": "G003_nq15_V",
+      "nq": 15,
+      "D2_mm": 243.85,
+      "base_mm": 4.1,
+      "celdas_sin_ext": 1591599,
+      "celdas": 1703828,
+      "estado": "REVISAR"
+    },
+    {
+      "caso": "G005_nq15_V",
+      "nq": 15,
+      "D2_mm": 229.63,
+      "base_mm": 3.9,
+      "celdas_sin_ext": 1639685,
+      "celdas": 1761457,
+      "estado": "REVISAR"
+    },
+    {
+      "caso": "G006_nq15_V",
+      "nq": 15,
+      "D2_mm": 250.71,
+      "base_mm": 4.3,
+      "celdas_sin_ext": 1505162,
+      "celdas": 1606424,
+      "estado": "OK"
     }
   ],
   "iteraciones_extension": 1500,
