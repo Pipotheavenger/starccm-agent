@@ -45,15 +45,6 @@
       "estado": "OK"
     },
     {
-      "caso": "G004_nq15_V",
-      "nq": 15,
-      "D2_mm": 220.23,
-      "base_mm": 3.7,
-      "celdas_sin_ext": 1853997,
-      "celdas": 1988643,
-      "estado": "OK"
-    },
-    {
       "caso": "G007_nq20_B",
       "nq": 20,
       "D2_mm": 250.19,
@@ -457,6 +448,15 @@
       "base_mm": 4.3,
       "celdas_sin_ext": 1505162,
       "celdas": 1606424,
+      "estado": "OK"
+    },
+    {
+      "caso": "G004_nq15_V",
+      "nq": 15,
+      "D2_mm": 220.23,
+      "base_mm": 3.7,
+      "celdas_sin_ext": 1853997,
+      "celdas": 1988643,
       "estado": "OK"
     }
   ],
