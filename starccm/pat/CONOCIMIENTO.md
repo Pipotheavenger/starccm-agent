@@ -209,3 +209,9 @@ Corrida: barrido 2026-11-10 19:39 → 11-15 10:09 (1504 casos, 4,6 días, 4 → 
   REGION_FRAME (las de carcasa LAB_FRAME) → basta asignar RotatingMotion con frame Lab; activar el modelo transitorio
   ANTES de asignar el movimiento (con estacionario STAR lo rechaza con «Server Error», aunque lo deja puesto). El .sim queda
   en la .245 (`C:\trabajo\TRANSITORIO_G025\transitorio_fin.sim`, 1,8 GB). Resultados en `PAT_PAT1_resultados\transitorio_G025\`.
+- 2026-11-16 · **Video del transitorio** (`transitorio/video.java` + `armar_video.py`): 1 vuelta más desde transitorio_fin.sim
+  (180 pasos, fotograma cada 4°, ~35 min) con las escenas «vectores_medio» (velocidad relativa) y «plano_vectores» (absoluta),
+  rango de color fijo (0–35 y 0–40 m/s); el .sim no se guarda. GIF con Pillow (no hay ffmpeg en la .72):
+  `PAT_PAT1_resultados\transitorio_G025\G025_transitorio_vectores.gif` (91 cuadros, 7,5 MB). Lecciones: en Java,
+  `getDisplayerManager().getObjects()` devuelve DisplayerBase (iterar como Object); un lanzador con macro que no compila deja
+  STAR vivo y su `Stop-Process` final mata la siguiente corrida: matar todo antes de relanzar.

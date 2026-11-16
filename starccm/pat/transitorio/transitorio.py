@@ -77,3 +77,13 @@ if __name__ == "__main__":
         estado()
     elif cmd == "traer":
         traer()
+    elif cmd == "video":   # 1 vuelta más desde transitorio_fin.sim, un fotograma cada 4° (90 por escena)
+        java = (AQUI / "video.java").read_text(encoding="utf-8")
+        for k, v in {"PASOS": 180, "CADA": 2, "OUT": OUT.replace("\\", "/")}.items():
+            java = java.replace("{{" + k + "}}", str(v))
+        (AQUI / "_stage").mkdir(exist_ok=True); (AQUI / "_stage" / "video.java").write_text(java, encoding="utf-8")
+        w = OUT.replace("\\", "/")
+        doe.scp(AQUI / "_stage" / "video.java", IP, f"{w}/video.java"); doe.scp(AQUI / "video.ps1", IP, f"{w}/video.ps1")
+        print(doe.ssh(IP, rf"& '{OUT}\compilar.ps1' -Files '{OUT}\video.java'"))
+        cmd2 = rf"powershell -NoProfile -ExecutionPolicy Bypass -File {OUT}\video.ps1 -Out {OUT} -Limite 10800"
+        print(doe.ssh(IP, f"$r = Invoke-CimMethod Win32_Process -MethodName Create -Arguments @{{CommandLine='{cmd2}'; CurrentDirectory='{OUT}'}}; 'pid=' + $r.ProcessId"))
