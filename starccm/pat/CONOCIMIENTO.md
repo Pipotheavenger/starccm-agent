@@ -192,3 +192,20 @@ Corrida: barrido 2026-11-10 19:39 → 11-15 10:09 (1504 casos, 4,6 días, 4 → 
   antiguas); a G018 le faltan escenas en algunos casos (224 de 288 en el barrido). Hoja Embalamiento: 50 filas = 47 bombas a
   3000 rpm + G001 a 1500 rpm + 2 cruces de más en **G003** (M_turb cambia de signo en 0,49, 0,67 y 0,72 Qn: el caso de
   0,7 Qn sale en freno entre dos de turbina, con H sin estabilizar): su embalamiento queda entre 0,49 y 0,72 Qn, no fiable.
+- 2026-11-16 · **Sensibilidad** (`sensibilidad_pat.py` → `PAT_PAT1_resultados\sensibilidad\`): BEP de turbina a 3000 rpm
+  afinado con parábola; variantes frente a la base de su nq; regresión Δy = a(Z−6) + bΔβ2 + c(1−f_D2) por familia.
+  Bases: η_t máx 0,82–0,83 en nq 35–50, cae a 0,66 (nq 15) y 0,64 (nq 90); Q_t/Qn ≈ 2–2,4 (nq ≤ 25), 1,09–1,15 (nq 35–57),
+  ≈ 1,3 (nq 60–90); Q_emb/Qn ≈ 0,46 (nq 25–57) → 0,6–0,72 (nq 60–90). Variantes: el recorte (1−f_D2) es lo más fuerte y
+  estable (baja Q_t/Qn, sube H_t/Hn, baja η_b y η_t en nq medias); Z importa en nq altas (+1 álabe ≈ +0,04 de η_t; G043
+  Z5 Δβ2 −6,4° da η_t 0,60 frente a 0,75 de la base, curva limpia: es física, no numérica); Δβ2 > 0 mejora η_t en nq bajas.
+  Q_emb/Qn apenas depende de las variables (R² 0,2–0,5) salvo Z en nq altas. Límites: 8–10 variantes por familia, lineal,
+  sin interacciones; BEP fuera del barrido en G002, G003, G006 (> 2,4 Qn) y en G019, G021, G029 (< 0,8 Qn, recortes
+  f_D2 0,87–0,89): su η_t está subestimada.
+- 2026-11-16 · **Transitorio de referencia** (`transitorio/`: macro, lanzador y `transitorio.py`): G025 en su BEP de turbina a
+  3000 rpm, malla deslizante, URANS 2.º orden, 2°/paso, 8 it internas, 10 vueltas (~27 min/vuelta en 44 núcleos, 4,5 h).
+  Periódico desde la vuelta ~7. Medias vueltas 8–10 frente al estacionario MRF: **H −11,9 %, M −11,7 %, η +0,2 puntos**;
+  oscilación ±2,8 % en H y ±1,2 % en M a 300 Hz (Z·n). El rotor congelado sobreestima H y par en la misma proporción: η del
+  DOE es fiable, H y M absolutos ~12 % altos (al menos en el BEP de nq 50). Montaje: el rotor estaba con frame MRF y paredes
+  REGION_FRAME (las de carcasa LAB_FRAME) → basta asignar RotatingMotion con frame Lab; activar el modelo transitorio
+  ANTES de asignar el movimiento (con estacionario STAR lo rechaza con «Server Error», aunque lo deja puesto). El .sim queda
+  en la .245 (`C:\trabajo\TRANSITORIO_G025\transitorio_fin.sim`, 1,8 GB). Resultados en `PAT_PAT1_resultados\transitorio_G025\`.

@@ -46,3 +46,4 @@ starccm/pat/**/_stage/
 starccm/pat/**/estado.json
 starccm/pat/**/*.tmp
 starccm/doe/rango.json
+starccm/pat/transitorio/_traido/
