@@ -1,0 +1,135 @@
+{
+ "doe": "PAT-2026-11_PAT1_emb2",
+ "geometrias": {
+  "G019_nq35_V": {
+   "worker": "172.17.76.244",
+   "dir": "C:\\trabajo\\PAT-2026-11_PAT1_emb2\\G019_nq35_V",
+   "fase": "entregada",
+   "solo": null,
+   "its": 1500,
+   "Q_m3h": [
+    84.63,
+    72.54
+   ],
+   "orden": [
+    0,
+    1
+   ],
+   "Flujo_kg_s": [
+    1.0,
+    2.0
+   ],
+   "carpeta": "C:\\Users\\investigacion\\Desktop\\Geometrias_Prueba\\G019_nq35_variante_Z6_dBeta2-3.1deg_fD2-0.869_Q241.8m3h_H62.4m_n3000rpm",
+   "preparada": "2026-11-15T16:44:59",
+   "lanzada": "2026-11-15T16:46:46",
+   "render": "2026-11-15T17:33:57",
+   "excel": "C:\\Users\\investigacion\\Desktop\\Geometrias_Prueba\\G019_nq35_variante_Z6_dBeta2-3.1deg_fD2-0.869_Q241.8m3h_H62.4m_n3000rpm\\PAT\\G019_nq35_V_PAT.xlsx",
+   "v2": true
+  },
+  "G027_nq50_V": {
+   "worker": "172.17.76.245",
+   "dir": "C:\\trabajo\\PAT-2026-11_PAT1_emb2\\G027_nq50_V",
+   "fase": "entregada",
+   "solo": null,
+   "its": 1500,
+   "Q_m3h": [
+    146.02,
+    125.16
+   ],
+   "orden": [
+    0,
+    1
+   ],
+   "Flujo_kg_s": [
+    1.0,
+    2.0
+   ],
+   "carpeta": "C:\\Users\\investigacion\\Desktop\\Geometrias_Prueba\\G027_nq50_variante_Z6_dBeta2+2.0deg_fD2-0.888_Q417.2m3h_H55.8m_n3000rpm",
+   "preparada": "2026-11-15T16:47:10",
+   "lanzada": "2026-11-15T16:48:54",
+   "render": "2026-11-15T17:25:27",
+   "excel": "C:\\Users\\investigacion\\Desktop\\Geometrias_Prueba\\G027_nq50_variante_Z6_dBeta2+2.0deg_fD2-0.888_Q417.2m3h_H55.8m_n3000rpm\\PAT\\G027_nq50_V_PAT.xlsx",
+   "v2": true
+  },
+  "G029_nq50_V": {
+   "worker": "172.17.77.9",
+   "dir": "C:\\trabajo\\PAT-2026-11_PAT1_emb2\\G029_nq50_V",
+   "fase": "entregada",
+   "solo": null,
+   "its": 1500,
+   "Q_m3h": [
+    146.02,
+    125.16
+   ],
+   "orden": [
+    0,
+    1
+   ],
+   "Flujo_kg_s": [
+    1.0,
+    2.0
+   ],
+   "carpeta": "C:\\Users\\investigacion\\Desktop\\Geometrias_Prueba\\G029_nq50_variante_Z5_dBeta2-5.8deg_fD2-0.865_Q417.2m3h_H55.8m_n3000rpm",
+   "preparada": "2026-11-15T16:49:18",
+   "lanzada": "2026-11-15T16:51:04",
+   "render": "2026-11-15T17:33:58",
+   "excel": "C:\\Users\\investigacion\\Desktop\\Geometrias_Prueba\\G029_nq50_variante_Z5_dBeta2-5.8deg_fD2-0.865_Q417.2m3h_H55.8m_n3000rpm\\PAT\\G029_nq50_V_PAT.xlsx",
+   "v2": true
+  },
+  "G004_nq15_V": {
+   "worker": "172.17.76.222",
+   "dir": "C:\\trabajo\\PAT-2026-11_PAT1_emb2\\G004_nq15_V",
+   "fase": "entregada",
+   "solo": null,
+   "its": 1500,
+   "Q_m3h": [
+    18.935,
+    16.23
+   ],
+   "orden": [
+    0,
+    1
+   ],
+   "Flujo_kg_s": [
+    1.0,
+    2.0
+   ],
+   "carpeta": "C:\\Users\\investigacion\\Desktop\\Geometrias_Prueba\\G004_nq15_variante_Z7_dBeta2-2.8deg_fD2-0.867_Q54.1m3h_H71.3m_n3000rpm",
+   "preparada": "2026-11-15T16:51:31",
+   "lanzada": "2026-11-15T16:53:37",
+   "render": "2026-11-15T17:36:38",
+   "excel": "C:\\Users\\investigacion\\Desktop\\Geometrias_Prueba\\G004_nq15_variante_Z7_dBeta2-2.8deg_fD2-0.867_Q54.1m3h_H71.3m_n3000rpm\\PAT\\G004_nq15_V_PAT.xlsx",
+   "v2": true
+  },
+  "G010_nq25_V": {
+   "worker": "172.17.76.207",
+   "dir": "C:\\trabajo\\PAT-2026-11_PAT1_emb2\\G010_nq25_V",
+   "fase": "entregada",
+   "solo": null,
+   "its": 1500,
+   "Q_m3h": [
+    47.845,
+    41.01
+   ],
+   "orden": [
+    0,
+    1
+   ],
+   "Flujo_kg_s": [
+    1.0,
+    2.0
+   ],
+   "carpeta": "C:\\Users\\investigacion\\Desktop\\Geometrias_Prueba\\G010_nq25_variante_Z6_dBeta2-4.9deg_fD2-0.854_Q136.7m3h_H66.9m_n3000rpm",
+   "preparada": "2026-11-15T16:54:04",
+   "lanzada": "2026-11-15T16:55:50",
+   "render": "2026-11-15T17:33:56",
+   "excel": "C:\\Users\\investigacion\\Desktop\\Geometrias_Prueba\\G010_nq25_variante_Z6_dBeta2-4.9deg_fD2-0.854_Q136.7m3h_H66.9m_n3000rpm\\PAT\\G010_nq25_V_PAT.xlsx",
+   "v2": true
+  }
+ },
+ "auto": true,
+ "excluir": [
+  "172.17.76.218",
+  "172.17.76.230"
+ ]
+}

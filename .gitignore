@@ -35,3 +35,14 @@ starccm/lote/PARAR
 starccm/lote/.monitor_visto
 starccm/lote/.lock
 starccm/lote/*.tmp
+
+# DOE distribuido (doe/, pat/): estado de la corrida y datos traídos de los workers (no es código)
+starccm/doe/_traido/
+starccm/doe/_stage/
+starccm/doe/estado.json
+starccm/doe/*.tmp
+starccm/pat/**/_traido/
+starccm/pat/**/_stage/
+starccm/pat/**/estado.json
+starccm/pat/**/*.tmp
+starccm/doe/rango.json
